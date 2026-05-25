@@ -1,0 +1,29 @@
+[package]
+name = "officecli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "officecli"
+path = "src/main.rs"
+
+[dependencies]
+handler-common = { path = "../handler-common" }
+oxml = { path = "../oxml" }
+docx-handler = { path = "../docx-handler" }
+xlsx-handler = { path = "../xlsx-handler" }
+pptx-handler = { path = "../pptx-handler" }
+pdf-handler = { path = "../pdf-handler" }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+colored = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+tower-http = { version = "0.6", features = ["cors"] }
+tracing = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+futures = "0.3"
+async-stream = "0.3"
