@@ -1,0 +1,132 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            name: officecli-mac-arm64
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            name: officecli-mac-x64
+            os: macos-13  # Intel macOS runner
+          - target: x86_64-unknown-linux-gnu
+            name: officecli-linux-x64
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            name: officecli-linux-arm64
+            os: ubuntu-latest
+          - target: x86_64-unknown-linux-musl
+            name: officecli-linux-alpine-x64
+            os: ubuntu-latest
+          - target: x86_64-pc-windows-msvc
+            name: officecli-win-x64.exe
+            os: windows-latest
+          - target: aarch64-pc-windows-msvc
+            name: officecli-win-arm64.exe
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Install cross-compilation tools (Linux musl)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Rename output
+        run: |
+          mkdir -p publish
+          src="target/${{ matrix.target }}/release/officecli"
+          if [ -f "${src}.exe" ]; then
+            cp "${src}.exe" "publish/${{ matrix.name }}"
+          else
+            cp "${src}" "publish/${{ matrix.name }}"
+          fi
+
+      - name: Ad-hoc codesign (macOS)
+        if: startsWith(matrix.target, 'aarch64-apple-darwin') || startsWith(matrix.target, 'x86_64-apple-darwin')
+        run: codesign -s - -f publish/${{ matrix.name }}
+
+      - name: Smoke test (native runner)
+        if: >-
+          (matrix.target == 'aarch64-apple-darwin') ||
+          (matrix.target == 'x86_64-apple-darwin') ||
+          (matrix.target == 'x86_64-unknown-linux-gnu') ||
+          (matrix.target == 'x86_64-pc-windows-msvc')
+        env:
+          MSYS_NO_PATHCONV: '1'
+          MSYS2_ARG_CONV_EXCL: '*'
+        run: |
+          chmod +x publish/${{ matrix.name }}
+          publish/${{ matrix.name }} create test_smoke.docx
+          publish/${{ matrix.name }} view test_smoke.docx --mode stats
+          rm -f test_smoke.docx
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.name }}
+          path: publish/${{ matrix.name }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts and generate checksums
+        run: |
+          mkdir -p flat
+          find artifacts -type f -exec mv {} flat/ \;
+          rm -rf artifacts
+          mv flat artifacts
+          cd artifacts
+          sha256sum officecli-* > SHA256SUMS
+          echo "=== SHA256SUMS ==="
+          cat SHA256SUMS
+
+      - name: Create Draft Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
+          draft: true

@@ -1,0 +1,11 @@
+[package]
+name = "pdf-handler"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+handler-common = { path = "../handler-common" }
+lopdf = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

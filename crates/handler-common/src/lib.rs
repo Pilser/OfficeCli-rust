@@ -1,0 +1,21 @@
+pub mod document_handler;
+pub mod document_node;
+pub mod insert_position;
+pub mod path_aliases;
+pub mod path_segment;
+pub mod text_map;
+pub mod validation_error;
+pub mod document_issue;
+pub mod output_format;
+pub mod selector;
+
+pub use document_handler::{DocumentHandler, HandlerError};
+pub use document_node::DocumentNode;
+pub use insert_position::InsertPosition;
+pub use path_aliases::PathAliases;
+pub use path_segment::PathSegment;
+pub use text_map::{TextOffsetMap, OffsetSpan, TextMapMeta};
+pub use validation_error::ValidationError;
+pub use document_issue::{DocumentIssue, IssueSeverity};
+pub use output_format::{OutputFormat, ViewOptions, RawOptions, BinaryInfo};
+pub use selector::Selector;

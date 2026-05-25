@@ -1,0 +1,14 @@
+[package]
+name = "oxml"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+zip = { workspace = true }
+quick-xml = { workspace = true }
+roxmltree = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+handler-common = { path = "../handler-common" }
+tempfile = { workspace = true }
