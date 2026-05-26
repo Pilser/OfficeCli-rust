@@ -1,6 +1,7 @@
 use handler_common::HandlerError;
 use clap::Args;
 
+/// Export full document structure and content as JSON
 #[derive(Args)]
 pub struct DumpCommand {
     pub file: String,

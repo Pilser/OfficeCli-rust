@@ -13,6 +13,16 @@ use std::path::PathBuf;
 #[command(name = "officecli")]
 #[command(version = "0.1.0")]
 #[command(about = "Create, view, query, and modify Office documents and PDFs")]
+#[command(after_help = "\
+EXAMPLES:
+  officecli create demo.docx              Create a blank Word document
+  officecli view demo.docx                View document as plain text
+  officecli view demo.docx -m outline     View outline with metadata
+  officecli view demo.pdf -m annotated    View PDF with bbox coordinates
+  officecli get demo.docx '/body/p[1]'    Get a specific paragraph
+  officecli set demo.docx '/body/p[1]' text='Hello'  Replace text
+  officecli query demo.docx paragraph     Find all paragraphs
+  officecli extract-text demo.docx        Extract text with offset→path mapping")]
 struct Cli {
     /// Internal flag: run as resident IPC server (do not use directly)
     #[arg(long, hide = true)]
@@ -27,7 +37,24 @@ struct Cli {
 }
 
 fn main() {
-    let cli = Cli::parse();
+    // Parse CLI args — if invalid, print full help + error instead of terse usage
+    let cli = match Cli::try_parse() {
+        Ok(c) => c,
+        Err(e) => {
+            use clap::CommandFactory;
+            if e.kind() == clap::error::ErrorKind::UnknownArgument
+                || e.kind() == clap::error::ErrorKind::InvalidSubcommand
+                || e.kind() == clap::error::ErrorKind::MissingSubcommand
+            {
+                // Print full help then the error message
+                let _ = Cli::command().print_help();
+                eprintln!("\n\n{}", e);
+                std::process::exit(1);
+            }
+            // For other errors (wrong types, etc.), use default clap output
+            e.exit();
+        }
+    };
 
     // Handle internal resident server mode
     if let Some(file_path) = cli.resident_serve {
@@ -44,7 +71,11 @@ fn main() {
     let format = if cli.json { OutputFormat::Json } else { OutputFormat::Text };
 
     let command = cli.command.unwrap_or_else(|| {
-        eprintln!("Error: a subcommand is required (unless using --resident-serve)");
+        // No subcommand → print full help and exit with error code
+        use clap::CommandFactory;
+        let mut cmd = Cli::command();
+        cmd.print_help().unwrap();
+        eprintln!("\nError: a subcommand is required. See above for available commands.");
         std::process::exit(1);
     });
 

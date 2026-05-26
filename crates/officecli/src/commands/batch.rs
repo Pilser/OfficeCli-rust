@@ -2,6 +2,7 @@ use handler_common::{HandlerError, InsertPosition, OutputFormat};
 use clap::Args;
 use std::collections::HashMap;
 
+/// Execute multiple commands from a batch file
 #[derive(Args)]
 pub struct BatchCommand {
     pub file: String,

@@ -1,6 +1,7 @@
 use handler_common::HandlerError;
 use clap::Args;
 
+/// Create a blank document (docx, xlsx, pptx, pdf)
 #[derive(Args)]
 pub struct CreateCommand {
     /// File path to create

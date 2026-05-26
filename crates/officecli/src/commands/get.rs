@@ -1,6 +1,7 @@
 use handler_common::{HandlerError, OutputFormat};
 use clap::Args;
 
+/// Retrieve a specific element at a path with its content and metadata
 #[derive(Args)]
 pub struct GetCommand {
     /// Document file path

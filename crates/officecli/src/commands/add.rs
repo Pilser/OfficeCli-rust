@@ -2,6 +2,7 @@ use handler_common::{HandlerError, OutputFormat, InsertPosition};
 use clap::Args;
 use std::collections::HashMap;
 
+/// Insert a new element (paragraph, table, slide, image) into the document
 #[derive(Args)]
 pub struct AddCommand {
     /// Document file path

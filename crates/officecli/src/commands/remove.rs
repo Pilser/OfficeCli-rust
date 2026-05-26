@@ -1,6 +1,7 @@
 use handler_common::{HandlerError, OutputFormat};
 use clap::Args;
 
+/// Delete an element at a specified path
 #[derive(Args)]
 pub struct RemoveCommand {
     pub file: String,

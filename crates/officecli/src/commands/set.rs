@@ -2,6 +2,7 @@ use handler_common::{HandlerError, OutputFormat};
 use clap::Args;
 use std::collections::HashMap;
 
+/// Modify properties of an element at a path (text, style, content)
 #[derive(Args)]
 pub struct SetCommand {
     /// Document file path

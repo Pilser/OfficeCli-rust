@@ -1,6 +1,7 @@
 use handler_common::{HandlerError, OutputFormat};
 use clap::Args;
 
+/// Persist changes back to the original file
 #[derive(Args)]
 pub struct SaveCommand {
     pub file: String,

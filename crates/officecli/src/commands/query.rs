@@ -1,6 +1,7 @@
 use handler_common::{HandlerError, OutputFormat};
 use clap::Args;
 
+/// Find all elements of a given type (paragraph, table, image, page, text-block)
 #[derive(Args)]
 pub struct QueryCommand {
     /// Document file path

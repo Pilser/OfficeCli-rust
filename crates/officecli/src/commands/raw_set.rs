@@ -1,6 +1,7 @@
 use handler_common::{HandlerError, OutputFormat};
 use clap::Args;
 
+/// Modify raw XML or PDF content stream
 #[derive(Args)]
 pub struct RawSetCommand {
     pub file: String,

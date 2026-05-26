@@ -75,26 +75,47 @@ pub struct McpCommand;
 
 #[derive(clap::Subcommand)]
 pub enum Command {
+    /// View document content (text, outline, annotated, html, svg)
     View(ViewCommand),
+    /// Get a specific element by path (e.g. '/page[1]/text[1]', '/body/p[2]')
     Get(GetCommand),
+    /// Query elements by type (paragraph, table, image, text-block, page)
     Query(QueryCommand),
+    /// Set properties on a specific element (text, font, size, color, style)
     Set(SetCommand),
+    /// Add a new element (paragraph, table, slide, image)
     Add(AddCommand),
+    /// Remove an element at a path
     Remove(RemoveCommand),
+    /// Move an element to a new position
     Move(MoveCommand),
+    /// View raw XML/PDF content of a part
     Raw(RawCommand),
+    /// Modify raw XML/PDF content
     RawSet(RawSetCommand),
+    /// Validate document structure
     Validate(ValidateCommand),
+    /// Save changes back to the file
     Save(SaveCommand),
+    /// Extract text with offset→path mapping for AI agent positioning
     ExtractText(ExtractTextCommand),
+    /// Create a blank document (docx, xlsx, pptx, pdf)
     Create(CreateCommand),
+    /// Dump document structure to JSON
     Dump(DumpCommand),
+    /// Run commands from a batch file
     Batch(BatchCommand),
+    /// Show info about the tool or document topics
     Info(InfoCommand),
+    /// Open a document in resident mode (keeps handler in memory for fast subsequent commands)
     Open(OpenCommand),
+    /// Close a document in resident mode (stops the background server)
     Close(CloseCommand),
+    /// Start a live preview HTTP server for the document
     Watch(WatchCommand),
+    /// Stop a running watch server for the document
     Unwatch(UnwatchCommand),
+    /// Start an MCP stdio server for AI agent integration
     Mcp(McpCommand),
 }
 

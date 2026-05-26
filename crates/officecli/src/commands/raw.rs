@@ -1,6 +1,7 @@
 use handler_common::{HandlerError, OutputFormat, RawOptions};
 use clap::Args;
 
+/// View raw XML or PDF content stream of a document part
 #[derive(Args)]
 pub struct RawCommand {
     pub file: String,

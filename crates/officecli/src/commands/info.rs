@@ -1,6 +1,7 @@
 use handler_common::HandlerError;
 use clap::Args;
 
+/// Display tool information and help topics (formats, commands, paths)
 #[derive(Args)]
 pub struct InfoCommand {
     /// Topic to get info on

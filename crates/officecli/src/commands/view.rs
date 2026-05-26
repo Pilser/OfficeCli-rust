@@ -1,6 +1,7 @@
 use handler_common::{HandlerError, OutputFormat, ViewOptions};
 use clap::Args;
 
+/// Display document content in various modes (text, outline, annotated, html, svg)
 #[derive(Args)]
 pub struct ViewCommand {
     /// Document file path

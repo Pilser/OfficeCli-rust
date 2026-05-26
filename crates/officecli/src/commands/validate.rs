@@ -1,6 +1,7 @@
 use handler_common::{HandlerError, OutputFormat};
 use clap::Args;
 
+/// Check document structure for errors or issues
 #[derive(Args)]
 pub struct ValidateCommand {
     pub file: String,

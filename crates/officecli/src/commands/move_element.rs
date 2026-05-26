@@ -1,6 +1,7 @@
 use handler_common::{HandlerError, OutputFormat};
 use clap::Args;
 
+/// Reorder an element within the document
 #[derive(Args)]
 pub struct MoveCommand {
     pub file: String,
