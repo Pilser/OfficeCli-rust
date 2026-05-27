@@ -139,7 +139,17 @@ fn handle_close(cmd: commands::CloseCommand) -> Result<String, HandlerError> {
 fn handle_watch(cmd: commands::WatchCommand) -> Result<String, HandlerError> {
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
     rt.block_on(async {
-        watch::run_server(&cmd.file, cmd.port)
+        let abs_path = std::fs::canonicalize(&cmd.file)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| {
+                if let Ok(curr) = std::env::current_dir() {
+                    curr.join(&cmd.file).to_string_lossy().to_string()
+                } else {
+                    cmd.file.clone()
+                }
+            });
+
+        watch::run_server(&cmd.file, &abs_path, cmd.port, cmd.id)
             .await
             .map(|_| "Watch server stopped".to_string())
             .map_err(|e| HandlerError::OperationFailed(e.to_string()))

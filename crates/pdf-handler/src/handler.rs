@@ -237,32 +237,66 @@ impl DocumentHandler for PdfHandler {
             let color_val = properties.get("color").and_then(|s| parse_color(s));
             let char_spacing_val = properties.get("charSpacing").and_then(|s| s.parse::<f32>().ok());
             let word_spacing_val = properties.get("wordSpacing").and_then(|s| s.parse::<f32>().ok());
+            let bg_color_val = properties.get("bgColor").and_then(|s| parse_color(s));
+            let font_file_val = properties.get("fontFile").map(|s| s.as_str());
 
             let mut reader = self.reader.borrow_mut();
 
-            // If only text property, use simple targeted replacement
-            if text_val.is_some() && font_val.is_none() && size_val.is_none()
-                && color_val.is_none() && char_spacing_val.is_none() && word_spacing_val.is_none()
+            // Optional: embed a user-provided TTF (or the bundled NotoSansSC) before text edit,
+            // so that font_val / fallback can resolve unencodable characters.
+            if let Some(text_str) = text_val {
+                let needs_embed = font_val.is_some() && font_file_val.is_some();
+                let should_check_fallback = font_file_val.is_some()
+                    || (text_str.chars().any(|c| !c.is_ascii()) && font_val.is_none());
+
+                if needs_embed || should_check_fallback {
+                    let chars_needed: std::collections::HashSet<char> = text_str.chars().collect();
+                    let _ = crate::font_embedder::ensure_cjk_font_for_chars(
+                        reader.document_mut(),
+                        page_num,
+                        &chars_needed,
+                        font_val,
+                        font_file_val,
+                    );
+                }
+            }
+
+            if text_val.is_some()
+                && font_val.is_none()
+                && size_val.is_none()
+                && color_val.is_none()
+                && char_spacing_val.is_none()
+                && word_spacing_val.is_none()
+                && bg_color_val.is_none()
             {
                 crate::modifier::replace_text_at_path(
-                    reader.document_mut(), page_num, text_index, text_val.unwrap(),
+                    reader.document_mut(),
+                    page_num,
+                    text_index,
+                    text_val.unwrap(),
+                    font_val,
                 )?;
             } else {
-                // Use style-aware replacement
                 crate::modifier::replace_text_with_style(
-                    reader.document_mut(), page_num, text_index,
+                    reader.document_mut(),
+                    page_num,
+                    text_index,
                     text_val,
                     font_val,
                     size_val,
                     color_val.as_ref(),
                     char_spacing_val,
                     word_spacing_val,
+                    bg_color_val.as_ref(),
                 )?;
             }
 
-            // Collect unsupported properties
             for (key, _) in properties {
-                if !matches!(key.as_str(), "text" | "content" | "font" | "size" | "color" | "charSpacing" | "wordSpacing") {
+                if !matches!(
+                    key.as_str(),
+                    "text" | "content" | "font" | "size" | "color"
+                        | "charSpacing" | "wordSpacing" | "bgColor" | "fontFile"
+                ) {
                     unsupported.push(key.clone());
                 }
             }
