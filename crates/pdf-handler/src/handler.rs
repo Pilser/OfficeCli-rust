@@ -482,7 +482,13 @@ impl DocumentHandler for PdfHandler {
         }
 
         let file_path = self.reader.borrow().file_path().to_string();
-        self.reader.borrow_mut().document_mut().save(&file_path)
+        let mut reader = self.reader.borrow_mut();
+        // Remove "Prev" key from the trailer dictionary. Since lopdf saves
+        // the PDF as a single flattened document, keeping a legacy "Prev"
+        // key from incremental updates will point to invalid offsets and
+        // corrupt the file trailer for subsequent loads.
+        reader.document_mut().trailer.remove(b"Prev");
+        reader.document_mut().save(&file_path)
             .map_err(|e| HandlerError::SaveError(format!("failed to save PDF: {}", e)))?;
         Ok(())
     }

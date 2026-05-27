@@ -271,7 +271,7 @@ pub fn replace_text_with_style(
 
     // Insert background-color rectangle BEFORE the BT block (outside text object)
     if let Some(bg) = bg_color {
-        let bb = &target_block.bbox;
+        let bb = &target_block.user_bbox;
         let (r, g, b_val) = match bg {
             PdfColor::Gray(g) => (*g, *g, *g),
             PdfColor::Rgb(r, g, b) => (*r, *g, *b),

@@ -4,6 +4,34 @@ use std::collections::HashMap;
 
 /// Modify properties of an element at a path (text, style, content)
 #[derive(Args)]
+#[command(after_help = "\
+SUPPORTED PROPERTIES BY FORMAT:
+
+PDF:
+  text=VALUE         Set text content
+  font=FONT_NAME     Set font name (e.g. HeitiSC, Helvetica)
+  fontFile=PATH.ttf  Subset and embed a custom TrueType font file
+  size=NUMBER        Set font size in pt
+  color=COLOR        Set text color (hex '#FF0000', 'FF0000', or 'rgb(255,0,0)')
+  bgColor=COLOR      Set block background color (hex '#FFFF00', 'FFFF00')
+  charSpacing=NUM    Set character spacing (f32)
+  wordSpacing=NUM    Set word spacing (f32)
+
+Word (.docx):
+  text=VALUE         Set text content of a paragraph or run
+  style=STYLE_NAME   Set style name (e.g. Heading1, Normal)
+
+Excel (.xlsx):
+  text=VALUE         Set cell text content
+
+PowerPoint (.pptx):
+  text=VALUE         Set textbox text content
+
+EXAMPLES:
+  officecli set demo.pdf '/page[1]/text[5]' text='New Title' color='#FF0000' bgColor='#FFFF00'
+  officecli set demo.pdf '/page[1]/text[5]' fontFile='assets/MyFont.ttf' size=14.5
+  officecli set demo.docx '/body/p[1]' text='Hello World' style='Heading1'
+")]
 pub struct SetCommand {
     /// Document file path
     pub file: String,

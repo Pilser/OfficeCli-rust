@@ -21,6 +21,8 @@ EXAMPLES:
   officecli view demo.pdf -m annotated    View PDF with bbox coordinates
   officecli get demo.docx '/body/p[1]'    Get a specific paragraph
   officecli set demo.docx '/body/p[1]' text='Hello'  Replace text
+  officecli set demo.pdf '/page[1]/text[1]' text='Title' color='#FF0000' bgColor='#FFFF00'
+  officecli set demo.pdf '/page[1]/text[1]' fontFile='assets/MyFont.ttf' size=14.5
   officecli query demo.docx paragraph     Find all paragraphs
   officecli extract-text demo.docx        Extract text with offset→path mapping")]
 struct Cli {

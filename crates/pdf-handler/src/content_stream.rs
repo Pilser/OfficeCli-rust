@@ -57,6 +57,8 @@ pub struct PdfTextBlock {
     pub text: String,
     /// Bounding box computed from Tm position + text width + font size
     pub bbox: BBox,
+    /// Bounding box computed in raw user space before CTM is applied
+    pub user_bbox: BBox,
     /// Style properties active at the time of text rendering
     pub style: TextStyle,
     /// Starting line index of the BT section in the raw content stream
@@ -773,10 +775,56 @@ pub fn tokenize_pdf_line(line: &str) -> Vec<String> {
             }
             let token: String = chars[start..i].iter().collect();
             tokens.push(token);
-        } else {
-            // Parse regular token (word, number, name, operator)
+        } else if chars[i] == '/' {
+            // PDF Name: read until next whitespace or any delimiter (including '/').
             let start = i;
-            while i < chars.len() && !chars[i].is_whitespace() && chars[i] != '(' && chars[i] != '<' && chars[i] != '[' && chars[i] != ')' && chars[i] != '>' && chars[i] != ']' {
+            i += 1;
+            while i < chars.len() {
+                let c = chars[i];
+                if c.is_whitespace()
+                    || matches!(c, '(' | ')' | '<' | '>' | '[' | ']' | '{' | '}' | '/' | '%')
+                {
+                    break;
+                }
+                i += 1;
+            }
+            let token: String = chars[start..i].iter().collect();
+            tokens.push(token);
+        } else {
+            // Regular tokens (numbers and operators). PowerPoint/Pages PDFs frequently
+            // omit whitespace between adjacent tokens (e.g. `Tf0.05`, `q1`, `Tr10`,
+            // `j0.6006`, `RGq`). To split correctly we classify by the first character:
+            //
+            //   * digit / sign / '.'  -> number, continue while [0-9.] (sign only at start)
+            //   * letter              -> operator name, continue while [A-Za-z*'"]
+            //                          (PDF operators include `T*`, `f*`, `B*`, `'`, `"`)
+            //   * anything else       -> single character
+            let start = i;
+            let first = chars[i];
+            let starts_number = first.is_ascii_digit() || first == '+' || first == '-' || first == '.';
+            let starts_word = first.is_ascii_alphabetic();
+
+            if starts_number {
+                i += 1;
+                while i < chars.len() {
+                    let c = chars[i];
+                    if c.is_ascii_digit() || c == '.' {
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+            } else if starts_word {
+                i += 1;
+                while i < chars.len() {
+                    let c = chars[i];
+                    if c.is_ascii_alphabetic() || c == '*' || c == '\'' || c == '"' {
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+            } else {
                 i += 1;
             }
             let token: String = chars[start..i].iter().collect();
@@ -886,12 +934,51 @@ fn add_or_merge_text_block(
     let (width, height) = compute_block_dimensions(&text, font_map, state);
     let effective_font_size = state.font_size * state.tm_d.abs();
 
-    let merged = if let Some(last) = text_blocks.last_mut() {
-        // Must be on the exact same vertical line
-        let same_y = (last.bbox.y - state.line_y).abs() < 0.1;
+    let user_bbox = BBox {
+        x: state.cursor_x,
+        y: state.line_y,
+        width,
+        height,
+    };
 
-        // And horizontally adjacent (within 2.0 characters of width)
-        let gap = state.cursor_x - (last.bbox.x + last.bbox.width);
+    let transform_bbox = |bb: &BBox| -> BBox {
+        let c1x = bb.x;
+        let c1y = bb.y;
+        let c2x = bb.x + bb.width;
+        let c2y = bb.y;
+        let c3x = bb.x;
+        let c3y = bb.y + bb.height;
+        let c4x = bb.x + bb.width;
+        let c4y = bb.y + bb.height;
+
+        let tx1 = c1x * state.ctm_a + c1y * state.ctm_c + state.ctm_e;
+        let ty1 = c1x * state.ctm_b + c1y * state.ctm_d + state.ctm_f;
+        let tx2 = c2x * state.ctm_a + c2y * state.ctm_c + state.ctm_e;
+        let ty2 = c2x * state.ctm_b + c2y * state.ctm_d + state.ctm_f;
+        let tx3 = c3x * state.ctm_a + c3y * state.ctm_c + state.ctm_e;
+        let ty3 = c3x * state.ctm_b + c3y * state.ctm_d + state.ctm_f;
+        let tx4 = c4x * state.ctm_a + c4y * state.ctm_c + state.ctm_e;
+        let ty4 = c4x * state.ctm_b + c4y * state.ctm_d + state.ctm_f;
+
+        let min_x = tx1.min(tx2).min(tx3).min(tx4);
+        let max_x = tx1.max(tx2).max(tx3).max(tx4);
+        let min_y = ty1.min(ty2).min(ty3).min(ty4);
+        let max_y = ty1.max(ty2).max(ty3).max(ty4);
+
+        BBox {
+            x: min_x,
+            y: min_y,
+            width: max_x - min_x,
+            height: max_y - min_y,
+        }
+    };
+
+    let merged = if let Some(last) = text_blocks.last_mut() {
+        // Must be on the exact same vertical line in user space
+        let same_y = (last.user_bbox.y - state.line_y).abs() < 0.1;
+
+        // And horizontally adjacent in user space (within 2.0 characters of width)
+        let gap = state.cursor_x - (last.user_bbox.x + last.user_bbox.width);
         let close_x = gap.abs() < 2.0 * effective_font_size;
 
         // And must have the exact same style properties to prevent style loss (e.g. key words in different color/weight)
@@ -908,7 +995,8 @@ fn add_or_merge_text_block(
                 last.text.push(' ');
             }
             last.text.push_str(&text);
-            last.bbox.width = state.cursor_x + width - last.bbox.x;
+            last.user_bbox.width = state.cursor_x + width - last.user_bbox.x;
+            last.bbox = transform_bbox(&last.user_bbox);
             last.bt_end_line = line_idx;
             true
         } else {
@@ -920,15 +1008,12 @@ fn add_or_merge_text_block(
 
     if !merged {
         *block_counter += 1;
+        let bbox = transform_bbox(&user_bbox);
         text_blocks.push(PdfTextBlock {
             index: *block_counter,
             text,
-            bbox: BBox {
-                x: state.cursor_x,
-                y: state.line_y,
-                width,
-                height,
-            },
+            bbox,
+            user_bbox,
             style: TextStyle {
                 font_name: state.font_name.clone(),
                 font_size: Some(effective_font_size),
@@ -1445,9 +1530,9 @@ pub fn parse_page_content_stream(
                         if operands.len() >= 2 {
                             let dx = parse_float(&operands[0]);
                             let dy = parse_float(&operands[1]);
-                            // Displacements are scaled by both font_size and active matrix!
-                            state.line_x = dx * state.font_size * state.tm_a + dy * state.font_size * state.tm_c + state.line_x;
-                            state.line_y = dx * state.font_size * state.tm_b + dy * state.font_size * state.tm_d + state.line_y;
+                            // Displacements are transformed by the active text matrix!
+                            state.line_x = dx * state.tm_a + dy * state.tm_c + state.line_x;
+                            state.line_y = dx * state.tm_b + dy * state.tm_d + state.line_y;
                             state.cursor_x = state.line_x;
                             state.tm_set = true;
                         }
@@ -1743,6 +1828,55 @@ mod tests {
 
         let tokens = tokenize_pdf_line("(Hello) Tj");
         assert_eq!(tokens, vec!["(Hello)", "Tj"]);
+    }
+
+    /// Cover the PowerPoint/Pages style PDFs where operators and operands are
+    /// packed without whitespace (the parser previously could not handle this).
+    #[test]
+    fn test_tokenize_compact_ppt_style() {
+        // Tf followed by next operand without space
+        let tokens = tokenize_pdf_line("/FT47 360 Tf0.05 0 0 -0.05 64 63.675 Tm");
+        assert_eq!(
+            tokens,
+            vec!["/FT47", "360", "Tf", "0.05", "0", "0", "-0.05", "64", "63.675", "Tm"]
+        );
+
+        // Single-letter operators packed with following numbers
+        let tokens = tokenize_pdf_line("q1 0 0 -1 0 405 cm");
+        assert_eq!(tokens, vec!["q", "1", "0", "0", "-1", "0", "405", "cm"]);
+
+        let tokens = tokenize_pdf_line("0.12 w2 M2 J2 j0.5148 w");
+        assert_eq!(
+            tokens,
+            vec!["0.12", "w", "2", "M", "2", "J", "2", "j", "0.5148", "w"]
+        );
+
+        // Color + state save run on
+        let tokens = tokenize_pdf_line("0 0 0 RG/GS8 gs");
+        assert_eq!(tokens, vec!["0", "0", "0", "RG", "/GS8", "gs"]);
+
+        // Tr with digit (text rendering mode)
+        let tokens = tokenize_pdf_line("2 Tr10 M0 J");
+        assert_eq!(tokens, vec!["2", "Tr", "10", "M", "0", "J"]);
+
+        // Hex string + Tj + TD chain
+        let tokens = tokenize_pdf_line("<0CE7>Tj 361 -0 TD<1029>Tj");
+        assert_eq!(
+            tokens,
+            vec!["<0CE7>", "Tj", "361", "-0", "TD", "<1029>", "Tj"]
+        );
+
+        // Operator suffix characters: T*, f*, B*
+        let tokens = tokenize_pdf_line("T* f* B*");
+        assert_eq!(tokens, vec!["T*", "f*", "B*"]);
+
+        // Name immediately followed by operator (no space)
+        let tokens = tokenize_pdf_line("/FT86 420 Tf");
+        assert_eq!(tokens, vec!["/FT86", "420", "Tf"]);
+
+        // Negative numbers stay grouped
+        let tokens = tokenize_pdf_line("-0.5 1.0 -.25 +3");
+        assert_eq!(tokens, vec!["-0.5", "1.0", "-.25", "+3"]);
     }
 
     #[test]
