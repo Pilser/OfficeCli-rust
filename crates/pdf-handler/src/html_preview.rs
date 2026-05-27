@@ -1,6 +1,6 @@
-use handler_common::HandlerError;
-use crate::reader::PdfReader;
 use crate::content_stream::PdfColor;
+use crate::reader::PdfReader;
+use handler_common::HandlerError;
 
 /// Render the PDF document as HTML for browser preview.
 /// Each page is rendered as a relative container with a physical size in points,
@@ -9,7 +9,7 @@ pub fn view_as_html(reader: &PdfReader) -> Result<String, HandlerError> {
     let mut pages_html = String::new();
 
     for i in 1..=reader.page_count() {
-        let mut width = 612.0;  // default Letter width
+        let mut width = 612.0; // default Letter width
         let mut height = 792.0; // default Letter height
         let mut llx = 0.0;
         let mut lly = 0.0;
@@ -17,21 +17,31 @@ pub fn view_as_html(reader: &PdfReader) -> Result<String, HandlerError> {
         let pages = reader.document().get_pages();
         if let Some(&page_id) = pages.get(&(i as u32)) {
             if let Ok(page_dict) = reader.document().get_dictionary(page_id) {
-                let box_obj = page_dict.get(b"MediaBox").or_else(|_| page_dict.get(b"CropBox"));
+                let box_obj = page_dict
+                    .get(b"MediaBox")
+                    .or_else(|_| page_dict.get(b"CropBox"));
                 if let Ok(obj) = box_obj {
-                    let resolved = reader.document().dereference(obj).map(|(_, o)| o).unwrap_or(obj);
+                    let resolved = reader
+                        .document()
+                        .dereference(obj)
+                        .map(|(_, o)| o)
+                        .unwrap_or(obj);
                     if let Ok(arr) = resolved.as_array() {
                         if arr.len() == 4 {
-                            let x0 = arr[0].as_float()
+                            let x0 = arr[0]
+                                .as_float()
                                 .or_else(|_| arr[0].as_i64().map(|x| x as f32))
                                 .unwrap_or(0.0);
-                            let y0 = arr[1].as_float()
+                            let y0 = arr[1]
+                                .as_float()
                                 .or_else(|_| arr[1].as_i64().map(|x| x as f32))
                                 .unwrap_or(0.0);
-                            let x1 = arr[2].as_float()
+                            let x1 = arr[2]
+                                .as_float()
                                 .or_else(|_| arr[2].as_i64().map(|x| x as f32))
                                 .unwrap_or(612.0);
-                            let y1 = arr[3].as_float()
+                            let y1 = arr[3]
+                                .as_float()
                                 .or_else(|_| arr[3].as_i64().map(|x| x as f32))
                                 .unwrap_or(792.0);
                             llx = x0;
@@ -50,22 +60,44 @@ pub fn view_as_html(reader: &PdfReader) -> Result<String, HandlerError> {
         ));
 
         if let Some(parsed) = reader.parse_page_text_blocks(i) {
+            // 1. Render XObject Images (so text renders on top of them)
+            for img in &parsed.image_blocks {
+                if let Some(data_uri) = parsed.image_map.get(&img.xobject_name) {
+                    let bbox = &img.bbox;
+                    let top = height - (bbox.y - lly) - bbox.height;
+                    let left = bbox.x - llx;
+                    pages_html.push_str(&format!(
+                        "  <img class=\"page-image\" data-path=\"/page[{}]/image[{}]\" data-bbox=\"{:.1},{:.1},{:.1},{:.1}\" src=\"{}\" style=\"position:absolute; left:{:.1}pt; top:{:.1}pt; width:{:.1}pt; height:{:.1}pt; object-fit:fill; pointer-events:none;\" />\n",
+                        i, img.index, bbox.x, bbox.y, bbox.width, bbox.height, data_uri, left, top, bbox.width, bbox.height
+                    ));
+                }
+            }
+
+            // 2. Render Text Blocks
             for block in &parsed.text_blocks {
                 let escaped = html_escape(&block.text);
                 let bbox = &block.bbox;
                 let font = block.style.font_name.as_deref().unwrap_or("sans-serif");
                 let size = block.style.font_size.unwrap_or(12.0);
 
-                let color_style = block.style.fill_color.as_ref().map(|c| {
-                    match c {
-                        PdfColor::Gray(g) => format!("rgb({},{},{})", (g*255.0) as u8, (g*255.0) as u8, (g*255.0) as u8),
-                        PdfColor::Rgb(r, g, b) => format!("rgb({},{},{})", (r*255.0) as u8, (g*255.0) as u8, (b*255.0) as u8),
-                        PdfColor::Cmyk(c, m, y, k) => {
-                            let r = ((1.0-c)*(1.0-k)*255.0) as u8;
-                            let g = ((1.0-m)*(1.0-k)*255.0) as u8;
-                            let b = ((1.0-y)*(1.0-k)*255.0) as u8;
-                            format!("rgb({},{},{})", r, g, b)
-                        }
+                let color_style = block.style.fill_color.as_ref().map(|c| match c {
+                    PdfColor::Gray(g) => format!(
+                        "rgb({},{},{})",
+                        (g * 255.0) as u8,
+                        (g * 255.0) as u8,
+                        (g * 255.0) as u8
+                    ),
+                    PdfColor::Rgb(r, g, b) => format!(
+                        "rgb({},{},{})",
+                        (r * 255.0) as u8,
+                        (g * 255.0) as u8,
+                        (b * 255.0) as u8
+                    ),
+                    PdfColor::Cmyk(c, m, y, k) => {
+                        let r = ((1.0 - c) * (1.0 - k) * 255.0) as u8;
+                        let g = ((1.0 - m) * (1.0 - k) * 255.0) as u8;
+                        let b = ((1.0 - y) * (1.0 - k) * 255.0) as u8;
+                        format!("rgb({},{},{})", r, g, b)
                     }
                 });
 
@@ -82,7 +114,7 @@ pub fn view_as_html(reader: &PdfReader) -> Result<String, HandlerError> {
                     i, block.index, bbox.x, bbox.y, bbox.width, bbox.height, left, top, bbox.width, bbox.height, font, size, color_attr, escaped
                 ));
             }
-            if parsed.text_blocks.is_empty() {
+            if parsed.text_blocks.is_empty() && parsed.image_blocks.is_empty() {
                 pages_html.push_str("  <div class=\"no-text\" style=\"position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#999; font-style:italic;\">(no extractable text)</div>\n");
             }
         } else {
@@ -92,7 +124,8 @@ pub fn view_as_html(reader: &PdfReader) -> Result<String, HandlerError> {
         pages_html.push_str("</div>\n");
     }
 
-    Ok(format!(r#"<!DOCTYPE html>
+    Ok(format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -154,12 +187,13 @@ h1 {{
 </style>
 </head>
 <body>
-<h1>PDF Document Preview</h1>
 <div class="page-container">
 {}
 </div>
 </body>
-</html>"#, pages_html))
+</html>"#,
+        pages_html
+    ))
 }
 
 fn html_escape(s: &str) -> String {
