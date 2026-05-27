@@ -253,24 +253,24 @@ fn parse_cid_width_array(arr: &[Object], widths: &mut HashMap<u32, f32>) {
 
 // --- String extraction utilities (reused from reader.rs) ---
 
-/// Extract a PDF string literal: (Hello World) -> "Hello World"
-fn extract_pdf_string(s: &str) -> Option<String> {
+/// Extract raw bytes from a PDF string literal or hex string.
+fn extract_pdf_string_bytes(s: &str) -> Option<Vec<u8>> {
     let s = s.trim();
     if s.starts_with('(') && s.ends_with(')') {
         let inner = &s[1..s.len()-1];
-        let mut result = String::new();
+        let mut result = Vec::new();
         let mut chars = inner.chars().peekable();
         while let Some(c) = chars.next() {
             if c == '\\' {
                 match chars.next() {
-                    Some('n') => result.push('\n'),
-                    Some('r') => result.push('\r'),
-                    Some('t') => result.push('\t'),
-                    Some('b') => result.push('\u{08}'),
-                    Some('f') => result.push('\u{0C}'),
-                    Some('(') => result.push('('),
-                    Some(')') => result.push(')'),
-                    Some('\\') => result.push('\\'),
+                    Some('n') => result.push(b'\n'),
+                    Some('r') => result.push(b'\r'),
+                    Some('t') => result.push(b'\t'),
+                    Some('b') => result.push(0x08),
+                    Some('f') => result.push(0x0C),
+                    Some('(') => result.push(b'('),
+                    Some(')') => result.push(b')'),
+                    Some('\\') => result.push(b'\\'),
                     Some(d) if d.is_ascii_digit() => {
                         let mut octal = String::from(d);
                         for _ in 0..2 {
@@ -279,23 +279,57 @@ fn extract_pdf_string(s: &str) -> Option<String> {
                                 else { break; }
                             }
                         }
-                        if let Ok(code) = u8::from_str_radix(&octal, 8) { result.push(code as char); }
+                        if let Ok(code) = u8::from_str_radix(&octal, 8) { result.push(code); }
                     }
-                    Some(other) => result.push(other),
-                    None => result.push('\\'),
+                    Some(other) => {
+                        let mut buf = [0; 4];
+                        for &byte in other.encode_utf8(&mut buf).as_bytes() {
+                            result.push(byte);
+                        }
+                    }
+                    None => result.push(b'\\'),
                 }
-            } else { result.push(c); }
+            } else {
+                let mut buf = [0; 4];
+                for &byte in c.encode_utf8(&mut buf).as_bytes() {
+                    result.push(byte);
+                }
+            }
         }
         Some(result)
     } else if s.starts_with('<') && s.ends_with('>') {
-        Some(decode_hex_string(&s[1..s.len()-1]))
+        Some(decode_hex_string_bytes(&s[1..s.len()-1]))
     } else {
         None
     }
 }
 
-/// Extract text from a PDF array: [(Hello)-5(World)] TJ
-fn extract_pdf_array_text(s: &str) -> Option<String> {
+fn decode_hex_string_bytes(hex: &str) -> Vec<u8> {
+    let hex = hex.trim();
+    let mut result = Vec::new();
+    let mut i = 0;
+    while i + 2 <= hex.len() {
+        if let Ok(byte) = u8::from_str_radix(&hex[i..i+2], 16) {
+            result.push(byte);
+        }
+        i += 2;
+    }
+    result
+}
+
+/// Decode a single PDF string or hex string using the specified encoding.
+fn decode_pdf_string(s: &str, encoding: Option<&lopdf::Encoding>) -> Option<String> {
+    let extracted_bytes = extract_pdf_string_bytes(s)?;
+    if let Some(enc) = encoding {
+        if let Ok(decoded) = lopdf::Document::decode_text(enc, &extracted_bytes) {
+            return Some(decoded);
+        }
+    }
+    Some(String::from_utf8_lossy(&extracted_bytes).to_string())
+}
+
+/// Decode text from a PDF array TJ operator, applying font encoding to each string segment.
+fn decode_pdf_array_text(s: &str, encoding: Option<&lopdf::Encoding>) -> Option<String> {
     let s = s.trim();
     if !s.starts_with('[') || !s.ends_with(']') { return None; }
 
@@ -317,15 +351,32 @@ fn extract_pdf_array_text(s: &str) -> Option<String> {
                 i += 1;
             }
             let string_content = std::str::from_utf8(&bytes[start..i-1]).unwrap_or("");
-            if let Some(extracted) = extract_pdf_string(&format!("({})", string_content)) {
-                result.push_str(&extracted);
+            if let Some(extracted_bytes) = extract_pdf_string_bytes(&format!("({})", string_content)) {
+                if let Some(enc) = encoding {
+                    if let Ok(decoded) = lopdf::Document::decode_text(enc, &extracted_bytes) {
+                        result.push_str(&decoded);
+                    } else {
+                        result.push_str(&String::from_utf8_lossy(&extracted_bytes));
+                    }
+                } else {
+                    result.push_str(&String::from_utf8_lossy(&extracted_bytes));
+                }
             }
         } else if c == '<' {
             let start = i + 1;
             i += 1;
             while i < bytes.len() && bytes[i] as char != '>' { i += 1; }
             let hex_content = std::str::from_utf8(&bytes[start..i]).unwrap_or("");
-            result.push_str(&decode_hex_string(hex_content));
+            let extracted_bytes = decode_hex_string_bytes(hex_content);
+            if let Some(enc) = encoding {
+                if let Ok(decoded) = lopdf::Document::decode_text(enc, &extracted_bytes) {
+                    result.push_str(&decoded);
+                } else {
+                    result.push_str(&String::from_utf8_lossy(&extracted_bytes));
+                }
+            } else {
+                result.push_str(&String::from_utf8_lossy(&extracted_bytes));
+            }
             i += 1;
         } else if c.is_ascii_digit() || c == '-' || c == '.' {
             i += 1;
@@ -337,17 +388,6 @@ fn extract_pdf_array_text(s: &str) -> Option<String> {
         } else { i += 1; }
     }
     Some(result)
-}
-
-fn decode_hex_string(hex: &str) -> String {
-    let hex = hex.trim();
-    let mut result = String::new();
-    let mut i = 0;
-    while i + 2 <= hex.len() {
-        if let Ok(byte) = u8::from_str_radix(&hex[i..i+2], 16) { result.push(byte as char); }
-        i += 2;
-    }
-    result
 }
 
 /// Encode a text string as a PDF literal string.
@@ -373,17 +413,106 @@ fn parse_float(s: &str) -> f32 {
     s.trim().parse::<f32>().unwrap_or(0.0)
 }
 
+/// Tokenize a PDF content stream line, respecting self-delimiting tokens like strings (parentheses),
+/// hex strings (angle brackets), and arrays (square brackets) so they are parsed correctly even if
+/// there is no space between them and their following operators (e.g. `<xxx>Tj`, `(xxx)Tj`, `[xxx]TJ`).
+pub fn tokenize_pdf_line(line: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        // Skip whitespace
+        if chars[i].is_whitespace() {
+            i += 1;
+            continue;
+        }
+
+        if chars[i] == '(' {
+            // Parse string literal
+            let start = i;
+            i += 1;
+            let mut depth = 1;
+            let mut escaped = false;
+            while i < chars.len() && depth > 0 {
+                if escaped {
+                    escaped = false;
+                } else if chars[i] == '\\' {
+                    escaped = true;
+                } else if chars[i] == '(' {
+                    depth += 1;
+                } else if chars[i] == ')' {
+                    depth -= 1;
+                }
+                i += 1;
+            }
+            let token: String = chars[start..i].iter().collect();
+            tokens.push(token);
+        } else if chars[i] == '<' {
+            // Parse hex string or dictionary start
+            let start = i;
+            i += 1;
+            if i < chars.len() && chars[i] == '<' {
+                // Dictionary start <<
+                i += 1;
+                let token: String = chars[start..i].iter().collect();
+                tokens.push(token);
+            } else {
+                // Hex string
+                while i < chars.len() && chars[i] != '>' {
+                    i += 1;
+                }
+                if i < chars.len() {
+                    i += 1; // include '>'
+                }
+                let token: String = chars[start..i].iter().collect();
+                tokens.push(token);
+            }
+        } else if chars[i] == '>' {
+            let start = i;
+            i += 1;
+            if i < chars.len() && chars[i] == '>' {
+                // Dictionary end >>
+                i += 1;
+                let token: String = chars[start..i].iter().collect();
+                tokens.push(token);
+            } else {
+                tokens.push(">".to_string());
+            }
+        } else if chars[i] == '[' {
+            // Parse array (can contain strings, numbers, etc. but we can just parse until matching ']')
+            let start = i;
+            i += 1;
+            let mut depth = 1;
+            while i < chars.len() && depth > 0 {
+                if chars[i] == '[' {
+                    depth += 1;
+                } else if chars[i] == ']' {
+                    depth -= 1;
+                }
+                i += 1;
+            }
+            let token: String = chars[start..i].iter().collect();
+            tokens.push(token);
+        } else {
+            // Parse regular token (word, number, name, operator)
+            let start = i;
+            while i < chars.len() && !chars[i].is_whitespace() && chars[i] != '(' && chars[i] != '<' && chars[i] != '[' && chars[i] != ')' && chars[i] != '>' && chars[i] != ']' {
+                i += 1;
+            }
+            let token: String = chars[start..i].iter().collect();
+            tokens.push(token);
+        }
+    }
+    tokens
+}
+
 /// Extract the operand portion before the operator from a content stream line.
 /// For example: "72 0 0 72 100 200 Tm" -> operands ["72","0","0","72","100","200"], operator "Tm"
 fn split_line_into_operands_and_operator(line: &str) -> (Vec<String>, String) {
-    let line = line.trim();
-    // Operators are alphabetic tokens (possibly with * or ')
-    // Find the last token that looks like an operator
-    let tokens: Vec<&str> = line.split_whitespace().collect();
+    let tokens = tokenize_pdf_line(line);
     if tokens.is_empty() { return (Vec::new(), String::new()); }
 
-    // The operator is the last token that is purely alphabetic (+ * ')
-    // Find the rightmost operator token
+    // Find the rightmost token that looks like an operator (purely alphabetic, *, or ')
     let mut op_idx = None;
     for (i, token) in tokens.iter().enumerate().rev() {
         if token.chars().all(|c| c.is_alphabetic() || c == '*' || c == '\'') && !token.is_empty() {
@@ -393,12 +522,12 @@ fn split_line_into_operands_and_operator(line: &str) -> (Vec<String>, String) {
     }
 
     if let Some(idx) = op_idx {
-        let operands = tokens[..idx].iter().map(|s| s.to_string()).collect();
-        let operator = tokens[idx].to_string();
+        let operands = tokens[..idx].iter().cloned().collect();
+        let operator = tokens[idx].clone();
         (operands, operator)
     } else {
         // No operator found — treat entire line as operands
-        (tokens.iter().map(|s| s.to_string()).collect(), String::new())
+        (tokens, String::new())
     }
 }
 
@@ -451,6 +580,17 @@ pub fn parse_page_content_stream(
 
     // Step 2: Extract font info
     let font_map = extract_page_fonts(doc, page_id);
+
+    // Also load actual lopdf encodings for ToUnicode mapping
+    let mut encodings = std::collections::HashMap::new();
+    if let Ok(fonts) = doc.get_page_fonts(page_id) {
+        for (name, font) in fonts {
+            let font_name = String::from_utf8_lossy(&name).to_string();
+            if let Ok(encoding) = font.get_font_encoding(doc) {
+                encodings.insert(font_name, encoding);
+            }
+        }
+    }
 
     // Step 3: Walk lines, build text blocks
     let mut state = TextState::default();
@@ -551,61 +691,65 @@ pub fn parse_page_content_stream(
                 }
             }
             "Tj" => {
-                if state.in_bt && !trimmed.is_empty() {
-                    let string_part = trimmed.trim_end_matches("Tj").trim();
-                    if let Some(text) = extract_pdf_string(string_part) {
-                        if !text.is_empty() {
-                            block_counter += 1;
-                            let (width, height) = compute_block_dimensions(
-                                &text, &font_map, &state
-                            );
-                            text_blocks.push(PdfTextBlock {
-                                index: block_counter,
-                                text,
-                                bbox: BBox { x: state.cursor_x, y: state.line_y, width, height },
-                                style: TextStyle {
-                                    font_name: state.font_name.clone(),
-                                    font_size: Some(state.font_size),
-                                    fill_color: state.fill_color.clone(),
-                                    char_spacing: state.char_spacing,
-                                    word_spacing: state.word_spacing,
-                                },
-                                bt_start_line: state.bt_start_line,
-                                bt_end_line: line_idx,
-                                text_line_index: line_idx,
-                                is_array_text: false,
-                            });
-                            state.cursor_x += width;
+                if state.in_bt {
+                    if let Some(operand) = operands.last() {
+                        let active_encoding = state.font_name.as_ref().and_then(|name| encodings.get(name));
+                        if let Some(text) = decode_pdf_string(operand, active_encoding) {
+                            if !text.is_empty() {
+                                block_counter += 1;
+                                let (width, height) = compute_block_dimensions(
+                                    &text, &font_map, &state
+                                );
+                                text_blocks.push(PdfTextBlock {
+                                    index: block_counter,
+                                    text,
+                                    bbox: BBox { x: state.cursor_x, y: state.line_y, width, height },
+                                    style: TextStyle {
+                                        font_name: state.font_name.clone(),
+                                        font_size: Some(state.font_size),
+                                        fill_color: state.fill_color.clone(),
+                                        char_spacing: state.char_spacing,
+                                        word_spacing: state.word_spacing,
+                                    },
+                                    bt_start_line: state.bt_start_line,
+                                    bt_end_line: line_idx,
+                                    text_line_index: line_idx,
+                                    is_array_text: false,
+                                });
+                                state.cursor_x += width;
+                            }
                         }
                     }
                 }
             }
             "TJ" => {
-                if state.in_bt && !trimmed.is_empty() {
-                    let array_part = trimmed.trim_end_matches("TJ").trim();
-                    if let Some(text) = extract_pdf_array_text(array_part) {
-                        if !text.is_empty() {
-                            block_counter += 1;
-                            let (width, height) = compute_block_dimensions(
-                                &text, &font_map, &state
-                            );
-                            text_blocks.push(PdfTextBlock {
-                                index: block_counter,
-                                text,
-                                bbox: BBox { x: state.cursor_x, y: state.line_y, width, height },
-                                style: TextStyle {
-                                    font_name: state.font_name.clone(),
-                                    font_size: Some(state.font_size),
-                                    fill_color: state.fill_color.clone(),
-                                    char_spacing: state.char_spacing,
-                                    word_spacing: state.word_spacing,
-                                },
-                                bt_start_line: state.bt_start_line,
-                                bt_end_line: line_idx,
-                                text_line_index: line_idx,
-                                is_array_text: true,
-                            });
-                            state.cursor_x += width;
+                if state.in_bt {
+                    if let Some(operand) = operands.last() {
+                        let active_encoding = state.font_name.as_ref().and_then(|name| encodings.get(name));
+                        if let Some(text) = decode_pdf_array_text(operand, active_encoding) {
+                            if !text.is_empty() {
+                                block_counter += 1;
+                                let (width, height) = compute_block_dimensions(
+                                    &text, &font_map, &state
+                                );
+                                text_blocks.push(PdfTextBlock {
+                                    index: block_counter,
+                                    text,
+                                    bbox: BBox { x: state.cursor_x, y: state.line_y, width, height },
+                                    style: TextStyle {
+                                        font_name: state.font_name.clone(),
+                                        font_size: Some(state.font_size),
+                                        fill_color: state.fill_color.clone(),
+                                        char_spacing: state.char_spacing,
+                                        word_spacing: state.word_spacing,
+                                    },
+                                    bt_start_line: state.bt_start_line,
+                                    bt_end_line: line_idx,
+                                    text_line_index: line_idx,
+                                    is_array_text: true,
+                                });
+                                state.cursor_x += width;
+                            }
                         }
                     }
                 }
@@ -670,6 +814,14 @@ fn compute_block_dimensions(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn extract_pdf_string(s: &str) -> Option<String> {
+        decode_pdf_string(s, None)
+    }
+
+    fn extract_pdf_array_text(s: &str) -> Option<String> {
+        decode_pdf_array_text(s, None)
+    }
 
     #[test]
     fn test_extract_pdf_string() {

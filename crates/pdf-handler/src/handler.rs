@@ -101,11 +101,34 @@ impl DocumentHandler for PdfHandler {
                     } else {
                         page_text.clone()
                     };
-                    children.push(
-                        DocumentNode::new(&format!("/page[{}]", i), "page")
-                            .with_text(&page_text)
-                            .with_preview(&preview)
-                    );
+                    let mut page_node = DocumentNode::new(&format!("/page[{}]", i), "page")
+                        .with_text(&page_text)
+                        .with_preview(&preview);
+
+                    if depth > 1 {
+                        if let Some(parsed) = reader.parse_page_text_blocks(i) {
+                            let mut page_children = Vec::new();
+                            for block in &parsed.text_blocks {
+                                let block_path = format!("/page[{}]/text[{}]", i, block.index);
+                                let mut block_node = DocumentNode::new(&block_path, "text-block")
+                                    .with_text(&block.text)
+                                    .with_format("bbox_x", serde_json::json!(block.bbox.x))
+                                    .with_format("bbox_y", serde_json::json!(block.bbox.y))
+                                    .with_format("bbox_width", serde_json::json!(block.bbox.width))
+                                    .with_format("bbox_height", serde_json::json!(block.bbox.height));
+
+                                if let Some(ref font) = block.style.font_name {
+                                    block_node = block_node.with_format("font", serde_json::json!(font));
+                                }
+                                if let Some(size) = block.style.font_size {
+                                    block_node = block_node.with_format("font_size", serde_json::json!(size));
+                                }
+                                page_children.push(block_node);
+                            }
+                            page_node = page_node.with_children(page_children);
+                        }
+                    }
+                    children.push(page_node);
                 }
                 root_node = root_node.with_children(children);
             }
