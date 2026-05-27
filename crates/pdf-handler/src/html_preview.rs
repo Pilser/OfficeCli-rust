@@ -2,13 +2,89 @@ use crate::content_stream::PdfColor;
 use crate::reader::PdfReader;
 use handler_common::HandlerError;
 
+/// Map a PDF BaseFont name (like "TimesNewRomanPS-BoldItalicMT" or "Helvetica-Bold")
+/// to standard web CSS font family, weight, and style properties.
+fn map_pdf_font_to_css(base_font_name: &str) -> (String, String, String) {
+    // Strip subset prefix (e.g. "AAAAAA+Arial" -> "Arial")
+    let clean_name = if let Some(pos) = base_font_name.find('+') {
+        &base_font_name[pos + 1..]
+    } else {
+        base_font_name
+    };
+
+    let name_lower = clean_name.to_lowercase();
+
+    // Determine Font Weight
+    let weight = if name_lower.contains("bold")
+        || name_lower.contains("heavy")
+        || name_lower.contains("black")
+        || name_lower.contains("bd")
+    {
+        "bold"
+    } else {
+        "normal"
+    };
+
+    // Determine Font Style
+    let style = if name_lower.contains("italic")
+        || name_lower.contains("oblique")
+        || name_lower.contains("it")
+    {
+        "italic"
+    } else {
+        "normal"
+    };
+
+    // Determine Font Family
+    let family = if name_lower.contains("song") || name_lower.contains("simsun") {
+        "SimSun, 'Songti SC', Georgia, 'Times New Roman', Times, serif"
+    } else if name_lower.contains("hei")
+        || name_lower.contains("simhei")
+        || name_lower.contains("gothic")
+    {
+        "'Microsoft YaHei', SimHei, 'Heiti SC', sans-serif"
+    } else if name_lower.contains("kai") || name_lower.contains("simkai") {
+        "KaiTi, 'Kaiti SC', Georgia, serif"
+    } else if name_lower.contains("fangsong") {
+        "FangSong, 'FangSong SC', Georgia, serif"
+    } else if name_lower.contains("times")
+        || name_lower.contains("roman")
+        || name_lower.contains("serif")
+        || name_lower.contains("minion")
+        || name_lower.contains("georgia")
+    {
+        "Georgia, 'Times New Roman', Times, serif"
+    } else if name_lower.contains("courier")
+        || name_lower.contains("mono")
+        || name_lower.contains("consolas")
+        || name_lower.contains("code")
+    {
+        "Consolas, Monaco, 'Courier New', Courier, monospace"
+    } else if name_lower.contains("arial")
+        || name_lower.contains("helvetica")
+        || name_lower.contains("sans")
+    {
+        "Arial, Helvetica, sans-serif"
+    } else {
+        "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+    };
+
+    (family.to_string(), weight.to_string(), style.to_string())
+}
+
 /// Render the PDF document as HTML for browser preview.
 /// Each page is rendered as a relative container with a physical size in points,
 /// and each text block is absolutely positioned within it using inverted PDF coordinates.
 pub fn view_as_html(reader: &PdfReader) -> Result<String, HandlerError> {
     let mut pages_html = String::new();
 
-    for i in 1..=reader.page_count() {
+    let file_name = std::path::Path::new(reader.file_path())
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("Document.pdf");
+    let total_pages = reader.page_count();
+
+    for i in 1..=total_pages {
         let mut width = 612.0; // default Letter width
         let mut height = 792.0; // default Letter height
         let mut llx = 0.0;
@@ -55,7 +131,7 @@ pub fn view_as_html(reader: &PdfReader) -> Result<String, HandlerError> {
         }
 
         pages_html.push_str(&format!(
-            "<div class=\"page\" data-path=\"/page[{}]\" style=\"position:relative; width:{:.1}pt; height:{:.1}pt; background:white; box-shadow:0 4px 16px rgba(0,0,0,0.15); margin:20px auto; border-radius:4px; overflow:hidden;\">\n  <div class=\"page-number\">Page {}</div>\n",
+            "<div class=\"page\" data-path=\"/page[{}]\" style=\"position:relative; width:{:.1}pt; height:{:.1}pt; background:white; border-radius:4px; overflow:hidden;\">\n  <div class=\"page-number-label\">Page {}</div>\n",
             i, width, height, i
         ));
 
@@ -77,7 +153,6 @@ pub fn view_as_html(reader: &PdfReader) -> Result<String, HandlerError> {
             for block in &parsed.text_blocks {
                 let escaped = html_escape(&block.text);
                 let bbox = &block.bbox;
-                let font = block.style.font_name.as_deref().unwrap_or("sans-serif");
                 let size = block.style.font_size.unwrap_or(12.0);
 
                 let color_style = block.style.fill_color.as_ref().map(|c| match c {
@@ -103,15 +178,30 @@ pub fn view_as_html(reader: &PdfReader) -> Result<String, HandlerError> {
 
                 let color_attr = color_style.as_deref().unwrap_or("black");
 
+                // Map font resources to standard styles
+                let mut font_family = "sans-serif".to_string();
+                let mut font_weight = "normal".to_string();
+                let mut font_style = "normal".to_string();
+
+                if let Some(ref font_id) = block.style.font_name {
+                    if let Some(font_info) = parsed.font_map.get(font_id) {
+                        if let Some(ref base_font) = font_info.base_font {
+                            let (fam, w, s) = map_pdf_font_to_css(base_font);
+                            font_family = fam;
+                            font_weight = w;
+                            font_style = s;
+                        }
+                    }
+                }
+
                 // PDF y coordinate is bottom-up (0 is bottom).
                 // HTML y coordinate is top-down (0 is top).
-                // Subtract bbox.y - lly from page height to get top offset, and subtract height of block
                 let top = height - (bbox.y - lly) - bbox.height;
                 let left = bbox.x - llx;
 
                 pages_html.push_str(&format!(
-                    "  <span class=\"text-block\" data-path=\"/page[{}]/text[{}]\" data-bbox=\"{:.1},{:.1},{:.1},{:.1}\" style=\"position:absolute; left:{:.1}pt; top:{:.1}pt; width:{:.1}pt; height:{:.1}pt; font-family:'{}', sans-serif; font-size:{:.1}pt; color:{}; white-space:nowrap;\">{}</span>\n",
-                    i, block.index, bbox.x, bbox.y, bbox.width, bbox.height, left, top, bbox.width, bbox.height, font, size, color_attr, escaped
+                    "  <span class=\"text-block\" data-path=\"/page[{}]/text[{}]\" data-bbox=\"{:.1},{:.1},{:.1},{:.1}\" style=\"position:absolute; left:{:.1}pt; top:{:.1}pt; width:{:.1}pt; height:{:.1}pt; font-family:{}; font-size:{:.1}pt; font-weight:{}; font-style:{}; color:{}; white-space:nowrap;\">{}</span>\n",
+                    i, block.index, bbox.x, bbox.y, bbox.width, bbox.height, left, top, bbox.width, bbox.height, font_family, size, font_weight, font_style, color_attr, escaped
                 ));
             }
             if parsed.text_blocks.is_empty() && parsed.image_blocks.is_empty() {
@@ -130,7 +220,7 @@ pub fn view_as_html(reader: &PdfReader) -> Result<String, HandlerError> {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PDF Preview</title>
+<title>{} - PDF Preview</title>
 <style>
 body {{
     font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif;
@@ -156,11 +246,28 @@ h1 {{
     align-items: center;
 }}
 .page {{
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    border-radius: 4px;
     transition: transform 0.2s, box-shadow 0.2s;
 }}
 .page:hover {{
     transform: translateY(-2px);
     box-shadow: 0 8px 24px rgba(0,0,0,0.2) !important;
+}}
+.page-number-label {{
+    position: absolute;
+    bottom: 10px;
+    right: 15px;
+    color: #bbb;
+    font-size: 10px;
+    z-index: 50;
+    pointer-events: none;
+    user-select: none;
+    background: rgba(248, 250, 252, 0.85);
+    backdrop-filter: blur(4px);
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(226, 232, 240, 0.8);
 }}
 .text-block {{
     display: inline-block;
@@ -174,25 +281,33 @@ h1 {{
     outline: 1px dashed #4CAF50;
     z-index: 100;
 }}
-.page-number {{
-    position: absolute;
-    bottom: 10px;
-    right: 15px;
-    color: #bbb;
-    font-size: 10px;
-    z-index: 50;
-    pointer-events: none;
-    user-select: none;
-}}
 </style>
 </head>
 <body>
 <div class="page-container">
 {}
 </div>
+<script>
+function adjustTextScaling() {{
+    const blocks = document.querySelectorAll(".text-block");
+    blocks.forEach(block => {{
+        block.style.transform = "";
+        const expectedWidth = block.getBoundingClientRect().width;
+        const actualWidth = block.scrollWidth;
+        if (actualWidth > expectedWidth && expectedWidth > 0) {{
+            const scale = expectedWidth / actualWidth;
+            block.style.transform = "scaleX(" + scale + ")";
+        }}
+    }});
+}}
+window.addEventListener("load", adjustTextScaling);
+if (document.fonts && document.fonts.ready) {{
+    document.fonts.ready.then(adjustTextScaling);
+}}
+</script>
 </body>
 </html>"#,
-        pages_html
+        file_name, pages_html
     ))
 }
 

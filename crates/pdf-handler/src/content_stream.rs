@@ -600,6 +600,23 @@ fn is_pdf_operator(token: &str) -> bool {
     )
 }
 
+fn colors_equal(c1: Option<&PdfColor>, c2: Option<&PdfColor>) -> bool {
+    match (c1, c2) {
+        (None, None) => true,
+        (Some(PdfColor::Gray(g1)), Some(PdfColor::Gray(g2))) => (g1 - g2).abs() < 0.001,
+        (Some(PdfColor::Rgb(r1, g1, b1)), Some(PdfColor::Rgb(r2, g2, b2))) => {
+            (r1 - r2).abs() < 0.001 && (g1 - g2).abs() < 0.001 && (b1 - b2).abs() < 0.001
+        }
+        (Some(PdfColor::Cmyk(c1, m1, y1, k1)), Some(PdfColor::Cmyk(c2, m2, y2, k2))) => {
+            (c1 - c2).abs() < 0.001
+                && (m1 - m2).abs() < 0.001
+                && (y1 - y2).abs() < 0.001
+                && (k1 - k2).abs() < 0.001
+        }
+        _ => false,
+    }
+}
+
 fn add_or_merge_text_block(
     text_blocks: &mut Vec<PdfTextBlock>,
     text: String,
@@ -620,7 +637,15 @@ fn add_or_merge_text_block(
         let gap = state.cursor_x - (last.bbox.x + last.bbox.width);
         let close_x = gap.abs() < 2.0 * effective_font_size;
 
-        if same_y && close_x {
+        // And must have the exact same style properties to prevent style loss (e.g. key words in different color/weight)
+        let same_font = last.style.font_name == state.font_name;
+        let same_size = match last.style.font_size {
+            Some(last_sz) => (last_sz - effective_font_size).abs() < 0.01,
+            None => false,
+        };
+        let same_color = colors_equal(last.style.fill_color.as_ref(), state.fill_color.as_ref());
+
+        if same_y && close_x && same_font && same_size && same_color {
             // If there's a small gap, inject a space character between segments
             if gap > 0.15 * effective_font_size && !last.text.ends_with(' ') && !text.starts_with(' ') {
                 last.text.push(' ');
