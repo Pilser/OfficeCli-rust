@@ -178,6 +178,29 @@ pub fn view_as_html(reader: &PdfReader) -> Result<String, HandlerError> {
 
                 let color_attr = color_style.as_deref().unwrap_or("black");
 
+                let bg_color_style = block.style.bg_color.as_ref().map(|c| match c {
+                    PdfColor::Gray(g) => format!(
+                        "rgb({},{},{})",
+                        (g * 255.0) as u8,
+                        (g * 255.0) as u8,
+                        (g * 255.0) as u8
+                    ),
+                    PdfColor::Rgb(r, g, b) => format!(
+                        "rgb({},{},{})",
+                        (r * 255.0) as u8,
+                        (g * 255.0) as u8,
+                        (b * 255.0) as u8
+                    ),
+                    PdfColor::Cmyk(c, m, y, k) => {
+                        let r = ((1.0 - c) * (1.0 - k) * 255.0) as u8;
+                        let g = ((1.0 - m) * (1.0 - k) * 255.0) as u8;
+                        let b = ((1.0 - y) * (1.0 - k) * 255.0) as u8;
+                        format!("rgb({},{},{})", r, g, b)
+                    }
+                });
+
+                let bg_style_str = bg_color_style.as_ref().map(|bg| format!("background-color:{};", bg)).unwrap_or_default();
+
                 // Map font resources to standard styles
                 let mut font_family = "sans-serif".to_string();
                 let mut font_weight = "normal".to_string();
@@ -200,8 +223,8 @@ pub fn view_as_html(reader: &PdfReader) -> Result<String, HandlerError> {
                 let left = bbox.x - llx;
 
                 pages_html.push_str(&format!(
-                    "  <span class=\"text-block\" data-path=\"/page[{}]/text[{}]\" data-bbox=\"{:.1},{:.1},{:.1},{:.1}\" style=\"position:absolute; left:{:.1}pt; top:{:.1}pt; width:{:.1}pt; height:{:.1}pt; font-family:{}; font-size:{:.1}pt; font-weight:{}; font-style:{}; color:{}; white-space:nowrap;\">{}</span>\n",
-                    i, block.index, bbox.x, bbox.y, bbox.width, bbox.height, left, top, bbox.width, bbox.height, font_family, size, font_weight, font_style, color_attr, escaped
+                    "  <span class=\"text-block\" data-path=\"/page[{}]/text[{}]\" data-bbox=\"{:.1},{:.1},{:.1},{:.1}\" style=\"position:absolute; left:{:.1}pt; top:{:.1}pt; width:{:.1}pt; height:{:.1}pt; font-family:{}; font-size:{:.1}pt; font-weight:{}; font-style:{}; color:{}; {}white-space:nowrap;\">{}</span>\n",
+                    i, block.index, bbox.x, bbox.y, bbox.width, bbox.height, left, top, bbox.width, bbox.height, font_family, size, font_weight, font_style, color_attr, bg_style_str, escaped
                 ));
             }
             if parsed.text_blocks.is_empty() && parsed.image_blocks.is_empty() {

@@ -20,6 +20,16 @@ pub enum PdfColor {
     Cmyk(f32, f32, f32, f32),
 }
 
+/// Filled rectangle drawn in the graphics state (background highlight).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FilledRect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub color: PdfColor,
+}
+
 /// Style properties extracted from PDF operators for a text block.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TextStyle {
@@ -33,6 +43,7 @@ pub struct TextStyle {
     pub fill_color: Option<PdfColor>,
     pub char_spacing: f32,
     pub word_spacing: f32,
+    pub bg_color: Option<PdfColor>,
 }
 
 impl Default for TextStyle {
@@ -44,6 +55,7 @@ impl Default for TextStyle {
             fill_color: None,
             char_spacing: 0.0,
             word_spacing: 0.0,
+            bg_color: None,
         }
     }
 }
@@ -864,6 +876,8 @@ struct TextState {
     ctm_e: f32,
     ctm_f: f32,
     ctm_stack: Vec<[f32; 6]>,
+    filled_rects: Vec<FilledRect>,
+    last_rect: Option<(f32, f32, f32, f32)>,
 }
 
 impl Default for TextState {
@@ -891,6 +905,8 @@ impl Default for TextState {
             ctm_e: 0.0,
             ctm_f: 0.0,
             ctm_stack: Vec::new(),
+            filled_rects: Vec::new(),
+            last_rect: None,
         }
     }
 }
@@ -900,7 +916,7 @@ impl Default for TextState {
 fn is_pdf_operator(token: &str) -> bool {
     matches!(
         token,
-        "BT" | "ET" | "Tm" | "Td" | "TD" | "T*" | "Tf" | "Tc" | "Tw" | "Tj" | "TJ" | "rg" | "g" | "k" | "q" | "Q" | "cm" | "Do"
+        "BT" | "ET" | "Tm" | "Td" | "TD" | "T*" | "Tf" | "Tc" | "Tw" | "Tj" | "TJ" | "rg" | "g" | "k" | "q" | "Q" | "cm" | "Do" | "re" | "f" | "F" | "f*" | "B" | "B*" | "b" | "b*"
     )
 }
 
@@ -973,6 +989,19 @@ fn add_or_merge_text_block(
         }
     };
 
+    let find_bg_color = |bb: &BBox, rects: &[FilledRect]| -> Option<PdfColor> {
+        for rect in rects {
+            let x_ok = rect.x <= bb.x + 2.0 && rect.x >= bb.x - 20.0;
+            let y_ok = rect.y <= bb.y + 2.0 && rect.y >= bb.y - 10.0;
+            let w_ok = rect.width >= bb.width - 2.0 && rect.width <= bb.width + 100.0;
+            let h_ok = rect.height >= bb.height - 2.0 && rect.height <= bb.height + 20.0;
+            if x_ok && y_ok && w_ok && h_ok {
+                return Some(rect.color.clone());
+            }
+        }
+        None
+    };
+
     let merged = if let Some(last) = text_blocks.last_mut() {
         // Must be on the exact same vertical line in user space
         let same_y = (last.user_bbox.y - state.line_y).abs() < 0.1;
@@ -998,6 +1027,7 @@ fn add_or_merge_text_block(
             last.user_bbox.width = state.cursor_x + width - last.user_bbox.x;
             last.bbox = transform_bbox(&last.user_bbox);
             last.bt_end_line = line_idx;
+            last.style.bg_color = find_bg_color(&last.user_bbox, &state.filled_rects);
             true
         } else {
             false
@@ -1009,6 +1039,7 @@ fn add_or_merge_text_block(
     if !merged {
         *block_counter += 1;
         let bbox = transform_bbox(&user_bbox);
+        let bg_color = find_bg_color(&user_bbox, &state.filled_rects);
         text_blocks.push(PdfTextBlock {
             index: *block_counter,
             text,
@@ -1021,6 +1052,7 @@ fn add_or_merge_text_block(
                 fill_color: state.fill_color.clone(),
                 char_spacing: state.char_spacing,
                 word_spacing: state.word_spacing,
+                bg_color,
             },
             bt_start_line: state.bt_start_line,
             bt_end_line: line_idx,
@@ -1510,6 +1542,7 @@ pub fn parse_page_content_stream(
                         state.tm_c = 0.0;
                         state.tm_d = 1.0;
                         bt_stack.push(line_idx);
+                        state.last_rect = None;
                     }
                     "ET" => {
                         state.in_bt = false;
@@ -1596,6 +1629,7 @@ pub fn parse_page_content_stream(
                             state.ctm_e,
                             state.ctm_f,
                         ]);
+                        state.last_rect = None;
                     }
                     "Q" => {
                         if let Some(restored) = state.ctm_stack.pop() {
@@ -1606,6 +1640,7 @@ pub fn parse_page_content_stream(
                             state.ctm_e = restored[4];
                             state.ctm_f = restored[5];
                         }
+                        state.last_rect = None;
                     }
                     "cm" => {
                         if operands.len() >= 6 {
@@ -1629,6 +1664,27 @@ pub fn parse_page_content_stream(
                             state.ctm_d = new_d;
                             state.ctm_e = new_e;
                             state.ctm_f = new_f;
+                        }
+                        state.last_rect = None;
+                    }
+                    "re" => {
+                        if operands.len() >= 4 {
+                            let rx = parse_float(&operands[0]);
+                            let ry = parse_float(&operands[1]);
+                            let rw = parse_float(&operands[2]);
+                            let rh = parse_float(&operands[3]);
+                            state.last_rect = Some((rx, ry, rw, rh));
+                        }
+                    }
+                    "f" | "F" | "f*" | "B" | "B*" | "b" | "b*" => {
+                        if let Some((rx, ry, rw, rh)) = state.last_rect.take() {
+                            state.filled_rects.push(FilledRect {
+                                x: rx,
+                                y: ry,
+                                width: rw,
+                                height: rh,
+                                color: state.fill_color.clone().unwrap_or(PdfColor::Gray(0.0)),
+                            });
                         }
                     }
                     "Do" => {

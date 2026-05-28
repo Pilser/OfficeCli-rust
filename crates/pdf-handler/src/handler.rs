@@ -150,19 +150,24 @@ impl DocumentHandler for PdfHandler {
             }
 
             let block = &parsed.text_blocks[block_idx];
-            let node = DocumentNode::new(path, "text-block")
+            let mut node = DocumentNode::new(path, "text-block")
                 .with_text(&block.text)
                 .with_format("bbox_x", serde_json::json!(block.bbox.x))
                 .with_format("bbox_y", serde_json::json!(block.bbox.y))
                 .with_format("bbox_width", serde_json::json!(block.bbox.width))
                 .with_format("bbox_height", serde_json::json!(block.bbox.height));
 
-            let mut node = node;
             if let Some(ref font) = block.style.font_name {
                 node = node.with_format("font", serde_json::json!(font));
             }
             if let Some(size) = block.style.font_size {
                 node = node.with_format("font_size", serde_json::json!(size));
+            }
+            if let Some(ref color) = block.style.fill_color {
+                node = node.with_format("color", serde_json::json!(format_pdf_color(color)));
+            }
+            if let Some(ref bg) = block.style.bg_color {
+                node = node.with_format("bgColor", serde_json::json!(format_pdf_color(bg)));
             }
 
             return Ok(node);
@@ -198,19 +203,24 @@ impl DocumentHandler for PdfHandler {
                     if let Some(parsed_stream) = reader.parse_page_text_blocks(page_num) {
                         for block in &parsed_stream.text_blocks {
                             let path = format!("/page[{}]/text[{}]", page_num, block.index);
-                            let node = DocumentNode::new(&path, "text-block")
+                            let mut node = DocumentNode::new(&path, "text-block")
                                 .with_text(&block.text)
                                 .with_format("bbox_x", serde_json::json!(block.bbox.x))
                                 .with_format("bbox_y", serde_json::json!(block.bbox.y))
                                 .with_format("bbox_width", serde_json::json!(block.bbox.width))
                                 .with_format("bbox_height", serde_json::json!(block.bbox.height));
 
-                            let mut node = node;
                             if let Some(ref font) = block.style.font_name {
                                 node = node.with_format("font", serde_json::json!(font));
                             }
                             if let Some(size) = block.style.font_size {
                                 node = node.with_format("font_size", serde_json::json!(size));
+                            }
+                            if let Some(ref color) = block.style.fill_color {
+                                node = node.with_format("color", serde_json::json!(format_pdf_color(color)));
+                            }
+                            if let Some(ref bg) = block.style.bg_color {
+                                node = node.with_format("bgColor", serde_json::json!(format_pdf_color(bg)));
                             }
                             results.push(node);
                         }
@@ -547,4 +557,26 @@ fn parse_color(s: &str) -> Option<PdfColor> {
     }
 
     None
+}
+
+/// Format a PdfColor as a hex color string (e.g. #FF0000).
+fn format_pdf_color(color: &PdfColor) -> String {
+    match color {
+        PdfColor::Gray(g) => {
+            let val = (g * 255.0).round() as u8;
+            format!("#{:02X}{:02X}{:02X}", val, val, val)
+        }
+        PdfColor::Rgb(r, g, b) => {
+            let rv = (r * 255.0).round() as u8;
+            let gv = (g * 255.0).round() as u8;
+            let bv = (b * 255.0).round() as u8;
+            format!("#{:02X}{:02X}{:02X}", rv, gv, bv)
+        }
+        PdfColor::Cmyk(c, m, y, k) => {
+            let r = (((1.0 - c) * (1.0 - k)) * 255.0).round() as u8;
+            let g = (((1.0 - m) * (1.0 - k)) * 255.0).round() as u8;
+            let b = (((1.0 - y) * (1.0 - k)) * 255.0).round() as u8;
+            format!("#{:02X}{:02X}{:02X}", r, g, b)
+        }
+    }
 }
