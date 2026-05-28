@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use handler_common::HandlerError;
 use lopdf::{Document as LopdfDocument, ObjectId, Object, Dictionary};
 
@@ -363,19 +363,166 @@ fn decode_hex_string_bytes(hex: &str) -> Vec<u8> {
     result
 }
 
-/// Decode a single PDF string or hex string using the specified encoding.
-fn decode_pdf_string(s: &str, encoding: Option<&lopdf::Encoding>) -> Option<String> {
-    let extracted_bytes = extract_pdf_string_bytes(s)?;
-    if let Some(enc) = encoding {
-        if let Ok(decoded) = lopdf::Document::decode_text(enc, &extracted_bytes) {
-            return Some(decoded);
+pub fn parse_to_unicode_cmap(cmap_str: &str) -> HashMap<u32, String> {
+    let mut map = HashMap::new();
+    let mut in_bfchar = false;
+    let mut in_bfrange = false;
+
+    for line in cmap_str.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains("beginbfchar") {
+            in_bfchar = true;
+            continue;
+        }
+        if trimmed.contains("endbfchar") {
+            in_bfchar = false;
+            continue;
+        }
+        if trimmed.contains("beginbfrange") {
+            in_bfrange = true;
+            continue;
+        }
+        if trimmed.contains("endbfrange") {
+            in_bfrange = false;
+            continue;
+        }
+
+        if in_bfchar {
+            let parts: Vec<&str> = trimmed.split('<')
+                .filter_map(|p| p.split('>').next())
+                .filter(|p| !p.is_empty())
+                .collect();
+            if parts.len() >= 2 {
+                if let Ok(cid) = u32::from_str_radix(parts[0], 16) {
+                    if let Some(unicode_str) = hex_to_string(parts[1]) {
+                        map.insert(cid, unicode_str);
+                    }
+                }
+            }
+        }
+
+        if in_bfrange {
+            let has_array = trimmed.contains('[');
+            let parts: Vec<&str> = trimmed.split('<')
+                .filter_map(|p| p.split('>').next())
+                .filter(|p| !p.is_empty())
+                .collect();
+            if parts.len() >= 3 {
+                if let (Ok(start), Ok(end)) = (u32::from_str_radix(parts[0], 16), u32::from_str_radix(parts[1], 16)) {
+                    if has_array {
+                        for (idx, hex_val) in parts[2..].iter().enumerate() {
+                            let cid = start + idx as u32;
+                            if cid <= end {
+                                if let Some(unicode_str) = hex_to_string(hex_val) {
+                                    map.insert(cid, unicode_str);
+                                }
+                            }
+                        }
+                    } else {
+                        if let Ok(start_unicode) = u32::from_str_radix(parts[2], 16) {
+                            for offset in 0..=(end - start) {
+                                let cid = start + offset;
+                                let unicode_val = start_unicode + offset;
+                                if let Some(ch) = std::char::from_u32(unicode_val) {
+                                    map.insert(cid, ch.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
-    Some(String::from_utf8_lossy(&extracted_bytes).to_string())
+    map
+}
+
+fn hex_to_string(hex: &str) -> Option<String> {
+    let mut u16_chars = Vec::new();
+    let mut i = 0;
+    while i + 4 <= hex.len() {
+        if let Ok(val) = u16::from_str_radix(&hex[i..i+4], 16) {
+            u16_chars.push(val);
+        } else {
+            return None;
+        }
+        i += 4;
+    }
+    if u16_chars.is_empty() && hex.len() == 2 {
+        if let Ok(val) = u16::from_str_radix(hex, 16) {
+            u16_chars.push(val);
+        }
+    }
+    Some(String::from_utf16_lossy(&u16_chars))
+}
+
+fn decode_bytes(
+    bytes: &[u8],
+    encoding: Option<&lopdf::Encoding>,
+    custom_to_unicode: Option<&HashMap<u32, String>>,
+    is_cid: bool,
+) -> String {
+    if is_cid {
+        let mut decoded = String::new();
+        let mut i = 0;
+        while i + 2 <= bytes.len() {
+            let cid = ((bytes[i] as u32) << 8) | (bytes[i+1] as u32);
+            if let Some(custom_map) = custom_to_unicode {
+                if let Some(mapped_str) = custom_map.get(&cid) {
+                    decoded.push_str(mapped_str);
+                    i += 2;
+                    continue;
+                }
+            }
+            if let Some(lopdf::Encoding::UnicodeMapEncoding(cmap)) = encoding {
+                if let Some(unicode_vec) = cmap.get(cid as u16) {
+                    decoded.push_str(&String::from_utf16_lossy(&unicode_vec));
+                    i += 2;
+                    continue;
+                }
+            }
+            if let Some(ch) = std::char::from_u32(cid) {
+                decoded.push(ch);
+            }
+            i += 2;
+        }
+        decoded
+    } else {
+        if let Some(custom_map) = custom_to_unicode {
+            let mut decoded = String::new();
+            for &b in bytes {
+                if let Some(mapped_str) = custom_map.get(&(b as u32)) {
+                    decoded.push_str(mapped_str);
+                } else {
+                    decoded.push(b as char);
+                }
+            }
+            decoded
+        } else if let Some(enc) = encoding {
+            lopdf::Document::decode_text(enc, bytes).unwrap_or_else(|_| String::from_utf8_lossy(bytes).to_string())
+        } else {
+            String::from_utf8_lossy(bytes).to_string()
+        }
+    }
+}
+
+/// Decode a single PDF string or hex string using the specified encoding.
+fn decode_pdf_string(
+    s: &str,
+    encoding: Option<&lopdf::Encoding>,
+    custom_to_unicode: Option<&HashMap<u32, String>>,
+    is_cid: bool,
+) -> Option<String> {
+    let extracted_bytes = extract_pdf_string_bytes(s)?;
+    Some(decode_bytes(&extracted_bytes, encoding, custom_to_unicode, is_cid))
 }
 
 /// Decode text from a PDF array TJ operator, applying font encoding to each string segment.
-fn decode_pdf_array_text(s: &str, encoding: Option<&lopdf::Encoding>) -> Option<String> {
+fn decode_pdf_array_text(
+    s: &str,
+    encoding: Option<&lopdf::Encoding>,
+    custom_to_unicode: Option<&HashMap<u32, String>>,
+    is_cid: bool,
+) -> Option<String> {
     let s = s.trim();
     if !s.starts_with('[') || !s.ends_with(']') { return None; }
 
@@ -398,15 +545,8 @@ fn decode_pdf_array_text(s: &str, encoding: Option<&lopdf::Encoding>) -> Option<
             }
             let string_content = std::str::from_utf8(&bytes[start..i-1]).unwrap_or("");
             if let Some(extracted_bytes) = extract_pdf_string_bytes(&format!("({})", string_content)) {
-                if let Some(enc) = encoding {
-                    if let Ok(decoded) = lopdf::Document::decode_text(enc, &extracted_bytes) {
-                        result.push_str(&decoded);
-                    } else {
-                        result.push_str(&String::from_utf8_lossy(&extracted_bytes));
-                    }
-                } else {
-                    result.push_str(&String::from_utf8_lossy(&extracted_bytes));
-                }
+                let segment_text = decode_bytes(&extracted_bytes, encoding, custom_to_unicode, is_cid);
+                result.push_str(&segment_text);
             }
         } else if c == '<' {
             let start = i + 1;
@@ -414,15 +554,8 @@ fn decode_pdf_array_text(s: &str, encoding: Option<&lopdf::Encoding>) -> Option<
             while i < bytes.len() && bytes[i] as char != '>' { i += 1; }
             let hex_content = std::str::from_utf8(&bytes[start..i]).unwrap_or("");
             let extracted_bytes = decode_hex_string_bytes(hex_content);
-            if let Some(enc) = encoding {
-                if let Ok(decoded) = lopdf::Document::decode_text(enc, &extracted_bytes) {
-                    result.push_str(&decoded);
-                } else {
-                    result.push_str(&String::from_utf8_lossy(&extracted_bytes));
-                }
-            } else {
-                result.push_str(&String::from_utf8_lossy(&extracted_bytes));
-            }
+            let segment_text = decode_bytes(&extracted_bytes, encoding, custom_to_unicode, is_cid);
+            result.push_str(&segment_text);
             i += 1;
         } else if c.is_ascii_digit() || c == '-' || c == '.' {
             i += 1;
@@ -532,6 +665,45 @@ pub fn encode_chunk_with_font(
         if String::from_utf8_lossy(&name) != font_name {
             continue;
         }
+
+        // Try our custom ToUnicode CMap mapping first!
+        let mut custom_cmap: Option<HashMap<u32, String>> = None;
+        if let Ok(to_unicode) = font.get(b"ToUnicode") {
+            if let Ok(ref_id) = to_unicode.as_reference() {
+                if let Ok(Object::Stream(stream)) = doc.get_object(ref_id) {
+                    let content = String::from_utf8_lossy(&stream.content);
+                    let cmap = parse_to_unicode_cmap(&content);
+                    if !cmap.is_empty() {
+                        custom_cmap = Some(cmap);
+                    }
+                }
+            }
+        }
+
+        if let Some(ref cmap) = custom_cmap {
+            let mut bytes = Vec::with_capacity(text.len() * 2);
+            let mut missing = String::new();
+            for ch in text.chars() {
+                // Find CID that maps to ch
+                let found_cid = cmap.iter()
+                    .find(|(_, val)| val.contains(ch))
+                    .map(|(cid, _)| *cid);
+                if let Some(cid) = found_cid {
+                    bytes.push((cid >> 8) as u8);
+                    bytes.push((cid & 0xFF) as u8);
+                } else {
+                    missing.push(ch);
+                }
+            }
+            if !missing.is_empty() {
+                return Err(HandlerError::OperationFailed(format!(
+                    "characters not encodable in font '{}': {}",
+                    font_name, missing
+                )));
+            }
+            return Ok(format_pdf_hex_bytes(&bytes));
+        }
+
         let encoding = font.get_font_encoding(doc).map_err(|e| {
             HandlerError::OperationFailed(format!("failed to resolve encoding for '{}': {:?}", font_name, e))
         })?;
@@ -594,50 +766,98 @@ pub fn pick_fonts_for_text(
         return Ok(Vec::new());
     }
 
-    // Collect page fonts with their encodings, partitioned into CID and one-byte buckets.
-    let mut cid_fonts: Vec<(String, HashMap<u32, u16>)> = Vec::new();
-    let mut one_byte_fonts: Vec<(String, lopdf::Encoding)> = Vec::new();
-    if let Ok(fonts) = doc.get_page_fonts(page_id) {
-        for (name, font) in fonts {
-            let name_str = String::from_utf8_lossy(&name).to_string();
-            if let Ok(encoding) = font.get_font_encoding(doc) {
-                if let Some(map) = build_unicode_to_cid_map(&encoding) {
-                    cid_fonts.push((name_str, map));
-                } else {
-                    one_byte_fonts.push((name_str, encoding));
+    // Collect page fonts and their properties
+    let mut custom_to_unicode = HashMap::new();
+    let mut font_original_chars: HashMap<String, HashSet<char>> = HashMap::new();
+    let mut is_subset_font: HashMap<String, bool> = HashMap::new();
+    let mut page_fonts: HashMap<String, &Dictionary> = HashMap::new();
+
+    // Parse content stream to gather original text characters for each font
+    if let Ok(content_bytes) = doc.get_page_content(page_id) {
+        if let Ok(parsed) = parse_page_content_stream(&content_bytes, page_id, doc) {
+            for block in &parsed.text_blocks {
+                if let Some(ref f_name) = block.style.font_name {
+                    let set = font_original_chars.entry(f_name.clone()).or_default();
+                    for ch in block.text.chars() {
+                        set.insert(ch);
+                    }
                 }
             }
         }
     }
 
+    if let Ok(fonts) = doc.get_page_fonts(page_id) {
+        for (name, font) in fonts {
+            let font_name = String::from_utf8_lossy(&name).to_string();
+            let is_sub = font.get(b"BaseFont")
+                .ok()
+                .and_then(|v| v.as_name_str().ok())
+                .map(|s| s.contains('+'))
+                .unwrap_or(false);
+            is_subset_font.insert(font_name.clone(), is_sub);
+            page_fonts.insert(font_name.clone(), font);
+
+            if let Ok(to_unicode) = font.get(b"ToUnicode") {
+                if let Ok(ref_id) = to_unicode.as_reference() {
+                    if let Ok(Object::Stream(stream)) = doc.get_object(ref_id) {
+                        let content = String::from_utf8_lossy(&stream.content);
+                        let cmap = parse_to_unicode_cmap(&content);
+                        if !cmap.is_empty() {
+                            custom_to_unicode.insert(font_name, cmap);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let font_supports_char = |font_name: &str, ch: char| -> bool {
+        // 1. Check custom ToUnicode CMap if present
+        if let Some(cmap) = custom_to_unicode.get(font_name) {
+            let found_cid = cmap.iter().find(|(_, val)| val.contains(ch));
+            if found_cid.is_some() {
+                return true;
+            }
+        }
+
+        // 2. If the font is subsetted, it only supports the character if it was originally in the original characters
+        let is_sub = is_subset_font.get(font_name).copied().unwrap_or(false);
+        if is_sub {
+            if let Some(set) = font_original_chars.get(font_name) {
+                if set.contains(&ch) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // 3. If not subsetted, check via standard encoding
+        if let Some(font_dict) = page_fonts.get(font_name) {
+            if let Ok(encoding) = font_dict.get_font_encoding(doc) {
+                if font_supports_char_via_encoding(&encoding, ch) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    };
+
     // Determine the font that can render a single character, honoring preferred order.
     let pick_font_for = |ch: char| -> Option<String> {
         if let Some(pref) = preferred_font {
-            if let Some((name, map)) = cid_fonts.iter().find(|(n, _)| n == pref) {
-                if map.contains_key(&(ch as u32)) {
-                    return Some(name.clone());
-                }
-            }
-            if let Some((name, enc)) = one_byte_fonts.iter().find(|(n, _)| n == pref) {
-                if font_supports_char_via_encoding(enc, ch) {
-                    return Some(name.clone());
-                }
+            if page_fonts.contains_key(pref) && font_supports_char(pref, ch) {
+                return Some(pref.to_string());
             }
         }
-        for (name, map) in &cid_fonts {
-            if Some(name.as_str()) == preferred_font {
+        
+        // Check other fonts on the page
+        for font_name in page_fonts.keys() {
+            if Some(font_name.as_str()) == preferred_font {
                 continue;
             }
-            if map.contains_key(&(ch as u32)) {
-                return Some(name.clone());
-            }
-        }
-        for (name, enc) in &one_byte_fonts {
-            if Some(name.as_str()) == preferred_font {
-                continue;
-            }
-            if font_supports_char_via_encoding(enc, ch) {
-                return Some(name.clone());
+            if font_supports_char(font_name, ch) {
+                return Some(font_name.clone());
             }
         }
         None
@@ -1503,11 +1723,23 @@ pub fn parse_page_content_stream(
 
     // Also load actual lopdf encodings for ToUnicode mapping
     let mut encodings = std::collections::HashMap::new();
+    let mut custom_to_unicode = std::collections::HashMap::new();
     if let Ok(fonts) = doc.get_page_fonts(page_id) {
         for (name, font) in fonts {
             let font_name = String::from_utf8_lossy(&name).to_string();
             if let Ok(encoding) = font.get_font_encoding(doc) {
-                encodings.insert(font_name, encoding);
+                encodings.insert(font_name.clone(), encoding);
+            }
+            if let Ok(to_unicode) = font.get(b"ToUnicode") {
+                if let Ok(ref_id) = to_unicode.as_reference() {
+                    if let Ok(lopdf::Object::Stream(stream)) = doc.get_object(ref_id) {
+                        let content = String::from_utf8_lossy(&stream.content);
+                        let cmap = parse_to_unicode_cmap(&content);
+                        if !cmap.is_empty() {
+                            custom_to_unicode.insert(font_name, cmap);
+                        }
+                    }
+                }
             }
         }
     }
@@ -1548,21 +1780,23 @@ pub fn parse_page_content_stream(
                         state.in_bt = false;
                     }
                     "Tm" => {
-                        if operands.len() >= 6 {
-                            state.tm_a = parse_float(&operands[0]);
-                            state.tm_b = parse_float(&operands[1]);
-                            state.tm_c = parse_float(&operands[2]);
-                            state.tm_d = parse_float(&operands[3]);
-                            state.line_x = parse_float(&operands[4]);
-                            state.line_y = parse_float(&operands[5]);
+                        let len = operands.len();
+                        if len >= 6 {
+                            state.tm_a = parse_float(&operands[len - 6]);
+                            state.tm_b = parse_float(&operands[len - 5]);
+                            state.tm_c = parse_float(&operands[len - 4]);
+                            state.tm_d = parse_float(&operands[len - 3]);
+                            state.line_x = parse_float(&operands[len - 2]);
+                            state.line_y = parse_float(&operands[len - 1]);
                             state.cursor_x = state.line_x;
                             state.tm_set = true;
                         }
                     }
                     "Td" | "TD" => {
-                        if operands.len() >= 2 {
-                            let dx = parse_float(&operands[0]);
-                            let dy = parse_float(&operands[1]);
+                        let len = operands.len();
+                        if len >= 2 {
+                            let dx = parse_float(&operands[len - 2]);
+                            let dy = parse_float(&operands[len - 1]);
                             // Displacements are transformed by the active text matrix!
                             state.line_x = dx * state.tm_a + dy * state.tm_c + state.line_x;
                             state.line_y = dx * state.tm_b + dy * state.tm_d + state.line_y;
@@ -1575,48 +1809,54 @@ pub fn parse_page_content_stream(
                         state.cursor_x = state.line_x;
                     }
                     "Tf" => {
-                        if operands.len() >= 2 {
-                            let font_name_raw = operands[0].trim();
+                        let len = operands.len();
+                        if len >= 2 {
+                            let font_name_raw = operands[len - 2].trim();
                             let font_name = if font_name_raw.starts_with('/') {
                                 font_name_raw[1..].to_string()
                             } else {
                                 font_name_raw.to_string()
                             };
                             state.font_name = Some(font_name);
-                            state.font_size = parse_float(&operands[1]);
+                            state.font_size = parse_float(&operands[len - 1]);
                         }
                     }
                     "Tc" => {
-                        if !operands.is_empty() {
-                            state.char_spacing = parse_float(&operands[0]);
+                        let len = operands.len();
+                        if len >= 1 {
+                            state.char_spacing = parse_float(&operands[len - 1]);
                         }
                     }
                     "Tw" => {
-                        if !operands.is_empty() {
-                            state.word_spacing = parse_float(&operands[0]);
+                        let len = operands.len();
+                        if len >= 1 {
+                            state.word_spacing = parse_float(&operands[len - 1]);
                         }
                     }
                     "rg" => {
-                        if operands.len() >= 3 {
+                        let len = operands.len();
+                        if len >= 3 {
                             state.fill_color = Some(PdfColor::Rgb(
-                                parse_float(&operands[0]),
-                                parse_float(&operands[1]),
-                                parse_float(&operands[2]),
+                                parse_float(&operands[len - 3]),
+                                parse_float(&operands[len - 2]),
+                                parse_float(&operands[len - 1]),
                             ));
                         }
                     }
                     "g" => {
-                        if !operands.is_empty() {
-                            state.fill_color = Some(PdfColor::Gray(parse_float(&operands[0])));
+                        let len = operands.len();
+                        if len >= 1 {
+                            state.fill_color = Some(PdfColor::Gray(parse_float(&operands[len - 1])));
                         }
                     }
                     "k" => {
-                        if operands.len() >= 4 {
+                        let len = operands.len();
+                        if len >= 4 {
                             state.fill_color = Some(PdfColor::Cmyk(
-                                parse_float(&operands[0]),
-                                parse_float(&operands[1]),
-                                parse_float(&operands[2]),
-                                parse_float(&operands[3]),
+                                parse_float(&operands[len - 4]),
+                                parse_float(&operands[len - 3]),
+                                parse_float(&operands[len - 2]),
+                                parse_float(&operands[len - 1]),
                             ));
                         }
                     }
@@ -1643,13 +1883,14 @@ pub fn parse_page_content_stream(
                         state.last_rect = None;
                     }
                     "cm" => {
-                        if operands.len() >= 6 {
-                            let ma = parse_float(&operands[0]);
-                            let mb = parse_float(&operands[1]);
-                            let mc = parse_float(&operands[2]);
-                            let md = parse_float(&operands[3]);
-                            let me = parse_float(&operands[4]);
-                            let mf = parse_float(&operands[5]);
+                        let len = operands.len();
+                        if len >= 6 {
+                            let ma = parse_float(&operands[len - 6]);
+                            let mb = parse_float(&operands[len - 5]);
+                            let mc = parse_float(&operands[len - 4]);
+                            let md = parse_float(&operands[len - 3]);
+                            let me = parse_float(&operands[len - 2]);
+                            let mf = parse_float(&operands[len - 1]);
                             
                             let new_a = ma * state.ctm_a + mb * state.ctm_c;
                             let new_b = ma * state.ctm_b + mb * state.ctm_d;
@@ -1668,11 +1909,12 @@ pub fn parse_page_content_stream(
                         state.last_rect = None;
                     }
                     "re" => {
-                        if operands.len() >= 4 {
-                            let rx = parse_float(&operands[0]);
-                            let ry = parse_float(&operands[1]);
-                            let rw = parse_float(&operands[2]);
-                            let rh = parse_float(&operands[3]);
+                        let len = operands.len();
+                        if len >= 4 {
+                            let rx = parse_float(&operands[len - 4]);
+                            let ry = parse_float(&operands[len - 3]);
+                            let rw = parse_float(&operands[len - 2]);
+                            let rh = parse_float(&operands[len - 1]);
                             state.last_rect = Some((rx, ry, rw, rh));
                         }
                     }
@@ -1714,7 +1956,13 @@ pub fn parse_page_content_stream(
                         if state.in_bt {
                             if let Some(operand) = operands.last() {
                                 let active_encoding = state.font_name.as_ref().and_then(|name| encodings.get(name));
-                                if let Some(text) = decode_pdf_string(operand, active_encoding) {
+                                let is_cid = state.font_name.as_ref()
+                                    .and_then(|name| font_map.get(name))
+                                    .map(|info| info.is_cid_font)
+                                    .unwrap_or(false);
+                                let custom_cmap = state.font_name.as_ref()
+                                    .and_then(|name| custom_to_unicode.get(name));
+                                if let Some(text) = decode_pdf_string(operand, active_encoding, custom_cmap, is_cid) {
                                     if !text.is_empty() {
                                         add_or_merge_text_block(
                                             &mut text_blocks,
@@ -1735,7 +1983,13 @@ pub fn parse_page_content_stream(
                         if state.in_bt {
                             if let Some(operand) = operands.last() {
                                 let active_encoding = state.font_name.as_ref().and_then(|name| encodings.get(name));
-                                if let Some(text) = decode_pdf_array_text(operand, active_encoding) {
+                                let is_cid = state.font_name.as_ref()
+                                    .and_then(|name| font_map.get(name))
+                                    .map(|info| info.is_cid_font)
+                                    .unwrap_or(false);
+                                let custom_cmap = state.font_name.as_ref()
+                                    .and_then(|name| custom_to_unicode.get(name));
+                                if let Some(text) = decode_pdf_array_text(operand, active_encoding, custom_cmap, is_cid) {
                                     if !text.is_empty() {
                                         add_or_merge_text_block(
                                             &mut text_blocks,
@@ -1823,11 +2077,11 @@ mod tests {
     use super::*;
 
     fn extract_pdf_string(s: &str) -> Option<String> {
-        decode_pdf_string(s, None)
+        decode_pdf_string(s, None, None, false)
     }
 
     fn extract_pdf_array_text(s: &str) -> Option<String> {
-        decode_pdf_array_text(s, None)
+        decode_pdf_array_text(s, None, None, false)
     }
 
     #[test]
@@ -2067,6 +2321,27 @@ mod tests {
             }
         } else {
             println!("Could not load demo.pdf at {}", pdf_path);
+        }
+    }
+
+    #[test]
+    fn test_debug_pkulaw() {
+        let pdf_path = "../../examples/pdf/pkulaw_v6_test.pdf";
+        if let Ok(mut doc) = lopdf::Document::load(pdf_path) {
+            let _ = doc.decompress();
+            println!("Successfully loaded and decompressed pkulaw_v6_test.pdf");
+            let pages = doc.get_pages();
+            if let Some(&page_id) = pages.get(&2) {
+                let content = doc.get_page_content(page_id).unwrap();
+                let parsed = parse_page_content_stream(&content, page_id, &doc).unwrap();
+                println!("Page 2 text blocks:");
+                for block in parsed.text_blocks.iter().take(10) {
+                    println!("Text: '{}'", block.text);
+                    println!("  Style: {:?}", block.style);
+                }
+            }
+        } else {
+            println!("Could not load pkulaw_v6_test.pdf at {}", pdf_path);
         }
     }
 }

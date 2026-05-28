@@ -430,3 +430,240 @@ pub fn delete_page(doc: &mut LopdfDocument, page_num: usize) -> Result<(), Handl
     doc.delete_pages(&[page_num as u32]);
     Ok(())
 }
+
+/// Parse a text block path like /page[N]/text[M] into (page_num, text_index).
+fn parse_text_block_path(path: &str) -> Option<(usize, usize)> {
+    let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if parts.len() != 2 { return None; }
+
+    let page_part = parts[0];
+    if !page_part.starts_with("page") { return None; }
+    let page_num = page_part.strip_prefix("page[")
+        .and_then(|s| s.strip_suffix("]"))
+        .and_then(|s| s.parse::<usize>().ok())?;
+
+    let text_part = parts[1];
+    if !text_part.starts_with("text") { return None; }
+    let text_index = text_part.strip_prefix("text[")
+        .and_then(|s| s.strip_suffix("]"))
+        .and_then(|s| s.parse::<usize>().ok())?;
+
+    Some((page_num, text_index))
+}
+
+/// Apply native Highlight annotation for a cross-node text block range.
+pub fn apply_range_highlights(
+    doc: &mut LopdfDocument,
+    color: &PdfColor,
+    segments: &[handler_common::PathRangeSegment],
+) -> Result<(), HandlerError> {
+    use std::collections::HashMap;
+
+    // Group segments by page
+    let mut page_groups: HashMap<usize, Vec<handler_common::PathRangeSegment>> = HashMap::new();
+    for seg in segments {
+        if let Some((page_num, _)) = parse_text_block_path(&seg.path) {
+            page_groups.entry(page_num).or_default().push(seg.clone());
+        }
+    }
+
+    for (page_num, page_segs) in page_groups {
+        let pages = doc.get_pages();
+        let page_id = *pages.get(&(page_num as u32))
+            .ok_or_else(|| HandlerError::PathNotFound(format!("page {}", page_num)))?;
+
+        let content = doc.get_page_content(page_id)
+            .map_err(|e| HandlerError::OperationFailed(format!("failed to get page content: {}", e)))?;
+
+        let parsed = parse_page_content_stream(&content, page_id, doc)
+            .map_err(|e| HandlerError::OperationFailed(format!("failed to parse content stream: {}", e)))?;
+
+        let mut rects = Vec::new();
+
+        for seg in page_segs {
+            if let Some((_, text_index)) = parse_text_block_path(&seg.path) {
+                let block_idx = text_index - 1;
+                if block_idx >= parsed.text_blocks.len() {
+                    return Err(HandlerError::PathNotFound(format!(
+                        "text block {} not found on page {}",
+                        text_index, page_num
+                    )));
+                }
+                let block = &parsed.text_blocks[block_idx];
+
+                // Calculate sub-bounding boxes
+                let start = seg.start.unwrap_or(0);
+                let end = seg.end.unwrap_or(block.text.chars().count());
+
+                // Safety checks for indices
+                let char_count = block.text.chars().count();
+                let start = start.min(char_count);
+                let end = end.min(char_count).max(start);
+
+                let font_name = block.style.font_name.as_deref().unwrap_or("F1");
+                let font_info = parsed.font_map.get(font_name);
+
+                let (sub_bbox_x, sub_bbox_width) = if start == 0 && end == char_count {
+                    // Full highlight
+                    (block.bbox.x, block.bbox.width)
+                } else if let Some(fi) = font_info {
+                    let font_size = block.style.font_size.unwrap_or(12.0);
+                    let char_spacing = block.style.char_spacing;
+                    let word_spacing = block.style.word_spacing;
+
+                    // Prefix width
+                    let prefix_chars: String = block.text.chars().take(start).collect();
+                    let prefix_width = crate::content_stream::estimate_text_width(
+                        &prefix_chars,
+                        fi,
+                        font_size,
+                        char_spacing,
+                        word_spacing,
+                    );
+
+                    // Selected width
+                    let selected_chars: String = block.text.chars().skip(start).take(end - start).collect();
+                    let selected_width = crate::content_stream::estimate_text_width(
+                        &selected_chars,
+                        fi,
+                        font_size,
+                        char_spacing,
+                        word_spacing,
+                    );
+
+                    (
+                        block.bbox.x + prefix_width,
+                        selected_width,
+                    )
+                } else {
+                    // Fallback to proportional split
+                    let ratio_start = start as f32 / char_count as f32;
+                    let ratio_end = end as f32 / char_count as f32;
+                    let prefix_width = block.bbox.width * ratio_start;
+                    let selected_width = block.bbox.width * (ratio_end - ratio_start);
+                    (
+                        block.bbox.x + prefix_width,
+                        selected_width,
+                    )
+                };
+
+                rects.push(crate::content_stream::BBox {
+                    x: sub_bbox_x,
+                    y: block.bbox.y,
+                    width: sub_bbox_width,
+                    height: block.bbox.height,
+                });
+            }
+        }
+
+        if rects.is_empty() {
+            continue;
+        }
+
+        // Add Native Highlight Annotation to PDF page dictionary
+        let mut annot_dict = lopdf::Dictionary::new();
+        annot_dict.set("Type", lopdf::Object::Name(b"Annot".to_vec()));
+        annot_dict.set("Subtype", lopdf::Object::Name(b"Highlight".to_vec()));
+
+        let mut x_min = f32::MAX;
+        let mut y_min = f32::MAX;
+        let mut x_max = f32::MIN;
+        let mut y_max = f32::MIN;
+        
+        let mut quad_points = Vec::new();
+        for rect in &rects {
+            x_min = x_min.min(rect.x);
+            y_min = y_min.min(rect.y);
+            x_max = x_max.max(rect.x + rect.width);
+            y_max = y_max.max(rect.y + rect.height);
+
+            // QuadPoints: top-left, top-right, bottom-left, bottom-right
+            let x_tl = rect.x;
+            let y_tl = rect.y + rect.height;
+            let x_tr = rect.x + rect.width;
+            let y_tr = rect.y + rect.height;
+            let x_bl = rect.x;
+            let y_bl = rect.y;
+            let x_br = rect.x + rect.width;
+            let y_br = rect.y;
+
+            quad_points.push(lopdf::Object::Real(x_tl as f32));
+            quad_points.push(lopdf::Object::Real(y_tl as f32));
+            quad_points.push(lopdf::Object::Real(x_tr as f32));
+            quad_points.push(lopdf::Object::Real(y_tr as f32));
+            quad_points.push(lopdf::Object::Real(x_bl as f32));
+            quad_points.push(lopdf::Object::Real(y_bl as f32));
+            quad_points.push(lopdf::Object::Real(x_br as f32));
+            quad_points.push(lopdf::Object::Real(y_br as f32));
+        }
+
+        annot_dict.set("Rect", lopdf::Object::Array(vec![
+            lopdf::Object::Real(x_min as f32),
+            lopdf::Object::Real(y_min as f32),
+            lopdf::Object::Real(x_max as f32),
+            lopdf::Object::Real(y_max as f32),
+        ]));
+        annot_dict.set("QuadPoints", lopdf::Object::Array(quad_points));
+
+        let (r, g, b) = match color {
+            PdfColor::Gray(gray) => (*gray, *gray, *gray),
+            PdfColor::Rgb(r, g, b) => (*r, *g, *b),
+            PdfColor::Cmyk(c, m, y, k) => {
+                let r = (1.0 - c) * (1.0 - k);
+                let g = (1.0 - m) * (1.0 - k);
+                let b = (1.0 - y) * (1.0 - k);
+                (r, g, b)
+            }
+        };
+        annot_dict.set("C", lopdf::Object::Array(vec![
+            lopdf::Object::Real(r as f32),
+            lopdf::Object::Real(g as f32),
+            lopdf::Object::Real(b as f32),
+        ]));
+
+        // 1. Check if "Annots" exists on the page (immutable borrow of doc)
+        let mut has_annots = false;
+        let mut is_reference = None;
+        let mut inline_array = None;
+
+        if let Ok(page_dict) = doc.get_dictionary(page_id) {
+            if let Ok(obj) = page_dict.get(b"Annots") {
+                has_annots = true;
+                match obj {
+                    lopdf::Object::Reference(ref_id) => {
+                        is_reference = Some(*ref_id);
+                    }
+                    lopdf::Object::Array(arr) => {
+                        inline_array = Some(arr.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // 2. Add the annotation object (mutable borrow of doc)
+        let annot_id = doc.add_object(lopdf::Object::Dictionary(annot_dict));
+
+        // 3. Insert annotation ID into Annots array
+        if has_annots {
+            if let Some(ref_id) = is_reference {
+                if let Ok(lopdf::Object::Array(ref mut arr)) = doc.get_object_mut(ref_id) {
+                    arr.push(lopdf::Object::Reference(annot_id));
+                }
+            } else if let Some(mut arr) = inline_array {
+                arr.push(lopdf::Object::Reference(annot_id));
+                if let Ok(page_dict) = doc.get_object_mut(page_id).and_then(|o| o.as_dict_mut()) {
+                    page_dict.set("Annots", lopdf::Object::Array(arr));
+                }
+            }
+        } else {
+            let arr = vec![lopdf::Object::Reference(annot_id)];
+            let arr_id = doc.add_object(lopdf::Object::Array(arr));
+            if let Ok(page_dict) = doc.get_object_mut(page_id).and_then(|o| o.as_dict_mut()) {
+                page_dict.set("Annots", lopdf::Object::Reference(arr_id));
+            }
+        }
+    }
+
+    Ok(())
+}

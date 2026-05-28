@@ -36,19 +36,22 @@ pub struct SetCommand {
     /// Document file path
     pub file: String,
 
-    /// Path to the element
-    pub path: String,
+    /// Path to the element (optional if using --range-paths)
+    pub path: Option<String>,
+
+    /// Path range list with optional partial offsets (e.g. "/page[1]/text[2][2..],/page[1]/text[3]")
+    #[arg(long)]
+    pub range_paths: Option<String>,
 
     /// Properties to set (key=value pairs, e.g. "text=hello" "style=Heading1")
-    #[arg(num_args = 1..)]
+    #[arg(num_args = 0..)]
     pub properties: Vec<String>,
 }
 
 pub fn handle_set(cmd: SetCommand, format: OutputFormat) -> Result<String, HandlerError> {
     let handler = crate::open_handler(&cmd.file, true)?;
 
-    let properties: HashMap<String, String> = cmd
-        .properties
+    let mut properties: HashMap<String, String> = cmd.properties
         .iter()
         .filter_map(|p| {
             let parts: Vec<&str> = p.splitn(2, '=').collect();
@@ -60,7 +63,17 @@ pub fn handle_set(cmd: SetCommand, format: OutputFormat) -> Result<String, Handl
         })
         .collect();
 
-    let unsupported = handler.set(&cmd.path, &properties)?;
+    if let Some(ref rp) = cmd.range_paths {
+        // Validate DSL syntax
+        handler_common::parse_range_paths(rp)
+            .map_err(|e| HandlerError::InvalidArgument(format!("invalid --range-paths: {}", e)))?;
+        properties.insert("range_paths".to_string(), rp.clone());
+    } else if cmd.path.is_none() {
+        return Err(HandlerError::InvalidArgument("either element path or --range-paths is required".to_string()));
+    }
+
+    let path_str = cmd.path.unwrap_or_default();
+    let unsupported = handler.set(&path_str, &properties)?;
     handler.save()?;
 
     match format {
