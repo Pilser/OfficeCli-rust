@@ -8,7 +8,7 @@ Cargo.lock
 .vscode/
 *.swp
 *.swo
-*
+.antigravitycli/
 
 # OS artifacts
 .DS_Store
@@ -19,6 +19,7 @@ Thumbs.db
 /officecli
 dist/
 
-# Bundled font assets that need to ship with the binary (override any earlier *)
-!crates/pdf-handler/assets/
-!crates/pdf-handler/assets/**
+# Local custom folders / reference code / build output
+source/
+examples/pdf/
+
