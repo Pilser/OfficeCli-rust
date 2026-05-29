@@ -354,23 +354,23 @@ fn write_content_to_page(
     // Write modified content to the first stream
     let first_id = content_ids[0];
     if let Ok(lopdf::Object::Stream(stream)) = doc.get_object_mut(first_id) {
-            // Remove any existing compression filter first — the content bytes
-            // we receive are already decompressed (lopdf transparently inflates
-            // FlateDecode streams in get_page_content()). Setting raw bytes
-            // while /Filter /FlateDecode remains in the dict causes blank pages
-            // on the next load because lopdf tries to deflate raw data.
-            stream.dict.remove(b"Filter");
-            stream.content = content.to_vec();
-            // Re-compress with FlateDecode so the saved PDF stays compact
-            // and the /Filter + /Length are consistent.
-            if stream.compress().is_err() {
-                // Fallback: if compression fails, keep uncompressed but
-                // update Length to match the raw content.
-                stream
-                    .dict
-                    .set("Length", lopdf::Object::Integer(content.len() as i64));
-            }
+        // Remove any existing compression filter first — the content bytes
+        // we receive are already decompressed (lopdf transparently inflates
+        // FlateDecode streams in get_page_content()). Setting raw bytes
+        // while /Filter /FlateDecode remains in the dict causes blank pages
+        // on the next load because lopdf tries to deflate raw data.
+        stream.dict.remove(b"Filter");
+        stream.content = content.to_vec();
+        // Re-compress with FlateDecode so the saved PDF stays compact
+        // and the /Filter + /Length are consistent.
+        if stream.compress().is_err() {
+            // Fallback: if compression fails, keep uncompressed but
+            // update Length to match the raw content.
+            stream
+                .dict
+                .set("Length", lopdf::Object::Integer(content.len() as i64));
         }
+    }
 
     // Clear subsequent streams to prevent duplicate content rendering and viewer corruption
     for &other_id in &content_ids[1..] {

@@ -44,8 +44,7 @@ fn remove_cell(
     sheet_name: &str,
     cell_ref: &CellRef,
 ) -> Result<(), HandlerError> {
-    let model =
-        helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
+    let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
 
     let ws = model
         .sheets
@@ -78,8 +77,7 @@ fn remove_cell(
 
 /// Remove a sheet from the workbook.
 fn remove_sheet(package: &mut OxmlPackage, sheet_name: &str) -> Result<(), HandlerError> {
-    let model =
-        helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
+    let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
 
     let ws = model
         .sheets
@@ -142,8 +140,7 @@ pub fn move_cell(
     })?;
 
     // 1. Copy cell content to target
-    let model =
-        helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
+    let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
 
     let src_ws = model
         .sheets
@@ -202,8 +199,7 @@ pub fn copy_cell(
         HandlerError::InvalidPath("copy target requires a cell reference".to_string())
     })?;
 
-    let model =
-        helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
+    let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
 
     let src_ws = model
         .sheets
@@ -273,8 +269,7 @@ pub fn set_cell_properties(
     })?;
 
     // Parse the model to find the sheet part path
-    let model =
-        helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
+    let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
 
     let ws = model
         .sheets

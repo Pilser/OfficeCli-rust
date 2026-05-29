@@ -16,8 +16,7 @@ pub fn query_cells(
     package: &OxmlPackage,
     selector: &str,
 ) -> Result<Vec<DocumentNode>, HandlerError> {
-    let model =
-        helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
+    let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
 
     let mut results = Vec::new();
 

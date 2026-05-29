@@ -47,8 +47,7 @@ fn add_cell(
     })?;
 
     // Find the sheet part path
-    let model =
-        helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
+    let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
 
     let ws = model
         .sheets
@@ -159,8 +158,7 @@ fn add_sheet(
         HandlerError::InvalidArgument("sheet requires 'name' property".to_string())
     })?;
 
-    let model =
-        helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
+    let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
 
     // Check for duplicate name
     if model.sheets.iter().any(|s| s.name == *name) {
@@ -177,7 +175,8 @@ fn add_sheet(
     let sheet_xml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
          <worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" \
          xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
-         <sheetData/></worksheet>".to_string();
+         <sheetData/></worksheet>"
+        .to_string();
 
     // Add the new sheet part to the package
     package

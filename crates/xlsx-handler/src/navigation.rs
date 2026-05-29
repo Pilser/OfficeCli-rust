@@ -127,8 +127,7 @@ pub fn get_node_at_path(
     path: &str,
     depth: usize,
 ) -> Result<DocumentNode, HandlerError> {
-    let model =
-        helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
+    let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
 
     let pc = parse_path(path)?;
 

@@ -1,7 +1,4 @@
-#![allow(
-    clippy::redundant_closure,
-    clippy::for_kv_map
-)]
+#![allow(clippy::redundant_closure, clippy::for_kv_map)]
 
 use crate::content_stream::PdfColor;
 use crate::navigation::PdfNavigator;
@@ -404,12 +401,8 @@ impl DocumentHandler for PdfHandler {
             None
         } else {
             let nav = PdfNavigator::new(self.reader.borrow().page_count());
-            nav.validate_path(path)
-                .map_err(HandlerError::InvalidPath)?;
-            Some(
-                PdfNavigator::page_number_from_path(path)
-                    .map_err(HandlerError::InvalidPath)?,
-            )
+            nav.validate_path(path).map_err(HandlerError::InvalidPath)?;
+            Some(PdfNavigator::page_number_from_path(path).map_err(HandlerError::InvalidPath)?)
         };
 
         for (key, value) in properties {
@@ -458,8 +451,7 @@ impl DocumentHandler for PdfHandler {
         }
 
         let nav = PdfNavigator::new(self.reader.borrow().page_count());
-        nav.validate_path(path)
-            .map_err(HandlerError::InvalidPath)?;
+        nav.validate_path(path).map_err(HandlerError::InvalidPath)?;
 
         let page_num =
             PdfNavigator::page_number_from_path(path).map_err(HandlerError::InvalidPath)?;
@@ -583,8 +575,7 @@ impl DocumentHandler for PdfHandler {
         // PDF binary extraction: extract embedded images from a page
         let page_num = if path.starts_with("/page[") {
             let nav = PdfNavigator::new(self.reader.borrow().page_count());
-            nav.validate_path(path)
-                .map_err(HandlerError::InvalidPath)?;
+            nav.validate_path(path).map_err(HandlerError::InvalidPath)?;
             PdfNavigator::page_number_from_path(path).map_err(HandlerError::InvalidPath)?
         } else {
             return Err(HandlerError::InvalidPath(path.to_string()));

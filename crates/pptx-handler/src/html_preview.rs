@@ -3833,12 +3833,8 @@ fn render_table(
             let ln_bl_tr = tc_pr
                 .as_ref()
                 .and_then(|pr| pr.children().find(|n| n.has_tag_name("lnBlToTr")));
-            let tl_br_css = ln_tl_br
-                .as_ref()
-                .map(|ln| outline_to_css(ln, theme_colors));
-            let bl_tr_css = ln_bl_tr
-                .as_ref()
-                .map(|ln| outline_to_css(ln, theme_colors));
+            let tl_br_css = ln_tl_br.as_ref().map(|ln| outline_to_css(ln, theme_colors));
+            let bl_tr_css = ln_bl_tr.as_ref().map(|ln| outline_to_css(ln, theme_colors));
 
             let has_diag = tl_br_css.is_some() || bl_tr_css.is_some();
             if has_diag {

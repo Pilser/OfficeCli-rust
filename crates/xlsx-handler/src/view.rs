@@ -7,8 +7,7 @@ use oxml::OxmlPackage;
 
 /// ViewAsText: show cells as a formatted text grid.
 pub fn view_as_text(package: &OxmlPackage, opts: &ViewOptions) -> Result<String, HandlerError> {
-    let model =
-        helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
+    let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
 
     let mut output = String::new();
 
@@ -126,8 +125,7 @@ fn col_num_to_letters(num: usize) -> String {
 
 /// ViewAsOutline: list sheets with summary info.
 pub fn view_as_outline(package: &OxmlPackage) -> Result<String, HandlerError> {
-    let model =
-        helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
+    let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
 
     let mut output = String::new();
     output.push_str(&format!("Workbook: {} sheets\n", model.sheets.len()));
@@ -147,8 +145,7 @@ pub fn view_as_outline(package: &OxmlPackage) -> Result<String, HandlerError> {
 
 /// ViewAsOutline JSON representation.
 pub fn view_as_outline_json(package: &OxmlPackage) -> Result<serde_json::Value, HandlerError> {
-    let model =
-        helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
+    let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
 
     let sheets_json: Vec<serde_json::Value> = model
         .sheets
@@ -178,8 +175,7 @@ pub fn view_as_text_json(
     package: &OxmlPackage,
     _opts: &ViewOptions,
 ) -> Result<serde_json::Value, HandlerError> {
-    let model =
-        helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
+    let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
 
     let sheets_json: Vec<serde_json::Value> = model
         .sheets
@@ -222,8 +218,7 @@ pub fn view_as_text_json(
 
 /// ViewAsStats: summary statistics.
 pub fn view_as_stats(package: &OxmlPackage) -> Result<String, HandlerError> {
-    let model =
-        helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
+    let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
 
     let total_cells: usize = model.sheets.iter().map(|ws| ws.cells.len()).sum();
     let total_formulas: usize = model
@@ -255,8 +250,7 @@ pub fn view_as_stats(package: &OxmlPackage) -> Result<String, HandlerError> {
 
 /// ViewAsStats JSON.
 pub fn view_as_stats_json(package: &OxmlPackage) -> Result<serde_json::Value, HandlerError> {
-    let model =
-        helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
+    let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
 
     let total_cells: usize = model.sheets.iter().map(|ws| ws.cells.len()).sum();
     let total_formulas: usize = model
@@ -291,8 +285,7 @@ pub fn view_as_issues(
     issue_type: Option<&str>,
     limit: Option<usize>,
 ) -> Result<Vec<DocumentIssue>, HandlerError> {
-    let model =
-        helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
+    let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
     let mut issues = Vec::new();
 
     // Check for missing sheet parts
@@ -378,8 +371,7 @@ pub fn validate(package: &OxmlPackage) -> Result<Vec<ValidationError>, HandlerEr
     }
 
     // Build model to check sheets
-    let model =
-        helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
+    let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
 
     for ws in &model.sheets {
         if !package.has_part(&ws.part_path) {

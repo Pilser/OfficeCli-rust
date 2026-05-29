@@ -114,8 +114,8 @@ fn resolve_xml_color(
 
 /// Render the Excel workbook as HTML for browser preview.
 pub fn view_as_html(package: &OxmlPackage) -> Result<String, HandlerError> {
-    let model = crate::helpers::build_workbook_model(package)
-        .map_err(HandlerError::OperationFailed)?;
+    let model =
+        crate::helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
 
     // 1. Resolve Theme Colors
     let mut theme_colors = HashMap::new();

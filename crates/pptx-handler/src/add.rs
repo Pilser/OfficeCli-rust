@@ -37,7 +37,8 @@ fn add_slide(package: &mut OxmlPackage, _parent: &str) -> Result<String, Handler
       <p:grpSpPr/>
     </p:spTree>
   </p:cSld>
-</p:sld>"#.to_string();
+</p:sld>"#
+        .to_string();
 
     package
         .write_part_xml(&slide_path, &slide_xml)
