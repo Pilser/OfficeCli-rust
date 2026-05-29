@@ -2137,6 +2137,7 @@ mod tests {
             is_cid_font: false,
             char_widths: HashMap::new(),
             default_width: 580.0,
+            unicode_to_cid: HashMap::new(),
         };
         let width = estimate_text_width("Hello", &font_info, 12.0, 0.0, 0.0);
         assert!(width > 30.0 && width < 40.0);
