@@ -10,11 +10,7 @@ pub fn parse_path(path: &str) -> Vec<PathSegment> {
     if path.is_empty() || path == "/" {
         return Vec::new();
     }
-    let path = if path.starts_with('/') {
-        &path[1..]
-    } else {
-        path
-    };
+    let path = path.strip_prefix('/').unwrap_or(path);
     path.split('/')
         .filter(|s| !s.is_empty())
         .map(|seg| {

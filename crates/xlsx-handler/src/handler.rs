@@ -41,7 +41,7 @@ impl DocumentHandler for ExcelHandler {
     fn view_as_annotated(&self, opts: ViewOptions) -> Result<String, HandlerError> {
         let pkg = self.package.borrow();
         let model = crate::helpers::build_workbook_model(&pkg)
-            .map_err(|e| HandlerError::OperationFailed(e))?;
+            .map_err(HandlerError::OperationFailed)?;
 
         let mut output = String::new();
         for ws in &model.sheets {

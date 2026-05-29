@@ -140,6 +140,7 @@ pub fn replace_text_at_path(
 /// After changing the target block's style, restores the original style for subsequent blocks
 /// in the same BT section so they don't inherit the changed style.
 /// Also supports cross-font fallback via `preferred_font`.
+#[allow(clippy::too_many_arguments)]
 pub fn replace_text_with_style(
     doc: &mut LopdfDocument,
     page_num: usize,
@@ -352,8 +353,7 @@ fn write_content_to_page(
 
     // Write modified content to the first stream
     let first_id = content_ids[0];
-    if let Ok(obj) = doc.get_object_mut(first_id) {
-        if let lopdf::Object::Stream(stream) = obj {
+    if let Ok(lopdf::Object::Stream(stream)) = doc.get_object_mut(first_id) {
             // Remove any existing compression filter first — the content bytes
             // we receive are already decompressed (lopdf transparently inflates
             // FlateDecode streams in get_page_content()). Setting raw bytes
@@ -371,16 +371,13 @@ fn write_content_to_page(
                     .set("Length", lopdf::Object::Integer(content.len() as i64));
             }
         }
-    }
 
     // Clear subsequent streams to prevent duplicate content rendering and viewer corruption
     for &other_id in &content_ids[1..] {
-        if let Ok(obj) = doc.get_object_mut(other_id) {
-            if let lopdf::Object::Stream(stream) = obj {
-                stream.dict.remove(b"Filter");
-                stream.content = Vec::new();
-                stream.dict.set("Length", lopdf::Object::Integer(0));
-            }
+        if let Ok(lopdf::Object::Stream(stream)) = doc.get_object_mut(other_id) {
+            stream.dict.remove(b"Filter");
+            stream.content = Vec::new();
+            stream.dict.set("Length", lopdf::Object::Integer(0));
         }
     }
 
@@ -815,23 +812,23 @@ pub fn apply_range_highlights(
             let y_br = rect.y;
 
             // Standard PDF Spec QuadPoints order: top-left, top-right, bottom-left, bottom-right
-            quad_points.push(lopdf::Object::Real(x_tl as f32));
-            quad_points.push(lopdf::Object::Real(y_tl as f32));
-            quad_points.push(lopdf::Object::Real(x_tr as f32));
-            quad_points.push(lopdf::Object::Real(y_tr as f32));
-            quad_points.push(lopdf::Object::Real(x_bl as f32));
-            quad_points.push(lopdf::Object::Real(y_bl as f32));
-            quad_points.push(lopdf::Object::Real(x_br as f32));
-            quad_points.push(lopdf::Object::Real(y_br as f32));
+            quad_points.push(lopdf::Object::Real(x_tl));
+            quad_points.push(lopdf::Object::Real(y_tl));
+            quad_points.push(lopdf::Object::Real(x_tr));
+            quad_points.push(lopdf::Object::Real(y_tr));
+            quad_points.push(lopdf::Object::Real(x_bl));
+            quad_points.push(lopdf::Object::Real(y_bl));
+            quad_points.push(lopdf::Object::Real(x_br));
+            quad_points.push(lopdf::Object::Real(y_br));
         }
 
         annot_dict.set(
             "Rect",
             lopdf::Object::Array(vec![
-                lopdf::Object::Real(x_min as f32),
-                lopdf::Object::Real(y_min as f32),
-                lopdf::Object::Real(x_max as f32),
-                lopdf::Object::Real(y_max as f32),
+                lopdf::Object::Real(x_min),
+                lopdf::Object::Real(y_min),
+                lopdf::Object::Real(x_max),
+                lopdf::Object::Real(y_max),
             ]),
         );
         annot_dict.set("QuadPoints", lopdf::Object::Array(quad_points));
@@ -849,9 +846,9 @@ pub fn apply_range_highlights(
         annot_dict.set(
             "C",
             lopdf::Object::Array(vec![
-                lopdf::Object::Real(r as f32),
-                lopdf::Object::Real(g as f32),
-                lopdf::Object::Real(b as f32),
+                lopdf::Object::Real(r),
+                lopdf::Object::Real(g),
+                lopdf::Object::Real(b),
             ]),
         );
 

@@ -54,9 +54,8 @@ impl Selector {
             if let Some(end) = remaining.find(']') {
                 let content = &remaining[1..end];
                 remaining = &remaining[end + 1..];
-                if content.starts_with('@') {
+                if let Some(attr_content) = content.strip_prefix('@') {
                     // Attribute selector: [@key=value]
-                    let attr_content = &content[1..];
                     if let Some(eq_pos) = attr_content.find('=') {
                         attributes.push((
                             attr_content[..eq_pos].to_string(),

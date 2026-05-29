@@ -58,6 +58,7 @@ fn walk_and_match(
 }
 
 /// Check if a WordNode matches the selector criteria.
+#[allow(clippy::collapsible_if)]
 fn matches_selector(node: &crate::dom_types::WordNode, selector: &Selector) -> bool {
     // Check element type
     if let Some(ref et) = selector.element_type {

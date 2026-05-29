@@ -115,7 +115,7 @@ fn resolve_xml_color(
 /// Render the Excel workbook as HTML for browser preview.
 pub fn view_as_html(package: &OxmlPackage) -> Result<String, HandlerError> {
     let model = crate::helpers::build_workbook_model(package)
-        .map_err(|e| HandlerError::OperationFailed(e))?;
+        .map_err(HandlerError::OperationFailed)?;
 
     // 1. Resolve Theme Colors
     let mut theme_colors = HashMap::new();
@@ -579,9 +579,8 @@ pub fn view_as_html(package: &OxmlPackage) -> Result<String, HandlerError> {
                                                 _ => "1px",
                                             };
                                             Some(format!(
-                                                "border-{}:{};",
-                                                css_edge,
-                                                format!("{} solid {}", width, color)
+                                                "border-{}:{} solid {};",
+                                                css_edge, width, color
                                             ))
                                         };
                                     if let Some(left) = map_border(&border.left, "left") {

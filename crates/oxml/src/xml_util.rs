@@ -90,8 +90,7 @@ fn parse_xpath_segments(xpath: &str) -> Result<Vec<XPathSegment>, XmlUtilError> 
 
             if let Some(bracket_end) = bracket_content.find(']') {
                 let content = &bracket_content[..bracket_end];
-                if content.starts_with('@') {
-                    let attr_content = &content[1..];
+                if let Some(attr_content) = content.strip_prefix('@') {
                     if let Some(eq) = attr_content.find('=') {
                         attr_filter = Some((
                             attr_content[..eq].to_string(),

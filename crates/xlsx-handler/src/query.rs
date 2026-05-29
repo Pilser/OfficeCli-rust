@@ -17,14 +17,13 @@ pub fn query_cells(
     selector: &str,
 ) -> Result<Vec<DocumentNode>, HandlerError> {
     let model =
-        helpers::build_workbook_model(package).map_err(|e| HandlerError::OperationFailed(e))?;
+        helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
 
     let mut results = Vec::new();
 
     // Parse the selector
-    if selector.starts_with("sheet=") {
+    if let Some(sheet_name) = selector.strip_prefix("sheet=") {
         // Sheet selector
-        let sheet_name = &selector[6..];
         let ws = model
             .sheets
             .iter()
@@ -43,9 +42,8 @@ pub fn query_cells(
                 }
             }
         }
-    } else if selector.starts_with("type=") {
+    } else if let Some(type_name) = selector.strip_prefix("type=") {
         // Type selector
-        let type_name = &selector[5..];
         let target_type = match type_name {
             "number" => CellValueType::Number,
             "sharedString" => CellValueType::SharedString,

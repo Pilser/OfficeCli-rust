@@ -27,8 +27,7 @@ fn add_slide(package: &mut OxmlPackage, _parent: &str) -> Result<String, Handler
     let slide_num = pres.slides.len() + 1;
     let slide_path = format!("ppt/slides/slide{}.xml", slide_num);
 
-    let slide_xml = format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    let slide_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
        xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
        xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
@@ -38,8 +37,7 @@ fn add_slide(package: &mut OxmlPackage, _parent: &str) -> Result<String, Handler
       <p:grpSpPr/>
     </p:spTree>
   </p:cSld>
-</p:sld>"#
-    );
+</p:sld>"#.to_string();
 
     package
         .write_part_xml(&slide_path, &slide_xml)

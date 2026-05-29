@@ -1,3 +1,9 @@
+#![allow(
+    clippy::match_result_ok,
+    clippy::redundant_closure,
+    clippy::let_and_return
+)]
+
 mod commands;
 mod mcp;
 mod resident;

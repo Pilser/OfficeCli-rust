@@ -1,3 +1,8 @@
+#![allow(
+    clippy::redundant_closure,
+    clippy::for_kv_map
+)]
+
 use crate::content_stream::PdfColor;
 use crate::navigation::PdfNavigator;
 use crate::reader::PdfReader;
@@ -400,10 +405,10 @@ impl DocumentHandler for PdfHandler {
         } else {
             let nav = PdfNavigator::new(self.reader.borrow().page_count());
             nav.validate_path(path)
-                .map_err(|e| HandlerError::InvalidPath(e))?;
+                .map_err(HandlerError::InvalidPath)?;
             Some(
                 PdfNavigator::page_number_from_path(path)
-                    .map_err(|e| HandlerError::InvalidPath(e))?,
+                    .map_err(HandlerError::InvalidPath)?,
             )
         };
 
@@ -454,10 +459,10 @@ impl DocumentHandler for PdfHandler {
 
         let nav = PdfNavigator::new(self.reader.borrow().page_count());
         nav.validate_path(path)
-            .map_err(|e| HandlerError::InvalidPath(e))?;
+            .map_err(HandlerError::InvalidPath)?;
 
         let page_num =
-            PdfNavigator::page_number_from_path(path).map_err(|e| HandlerError::InvalidPath(e))?;
+            PdfNavigator::page_number_from_path(path).map_err(HandlerError::InvalidPath)?;
 
         let mut reader = self.reader.borrow_mut();
         crate::modifier::delete_page(reader.document_mut(), page_num)?;
@@ -579,8 +584,8 @@ impl DocumentHandler for PdfHandler {
         let page_num = if path.starts_with("/page[") {
             let nav = PdfNavigator::new(self.reader.borrow().page_count());
             nav.validate_path(path)
-                .map_err(|e| HandlerError::InvalidPath(e))?;
-            PdfNavigator::page_number_from_path(path).map_err(|e| HandlerError::InvalidPath(e))?
+                .map_err(HandlerError::InvalidPath)?;
+            PdfNavigator::page_number_from_path(path).map_err(HandlerError::InvalidPath)?
         } else {
             return Err(HandlerError::InvalidPath(path.to_string()));
         };
@@ -699,7 +704,7 @@ fn parse_color(s: &str) -> Option<PdfColor> {
     let s = s.trim();
 
     // Hex format: FF0000 or #FF0000
-    let hex = if s.starts_with('#') { &s[1..] } else { s };
+    let hex = s.strip_prefix('#').unwrap_or(s);
     if hex.len() == 6 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
         let r = u8::from_str_radix(&hex[0..2], 16).ok()? as f32 / 255.0;
         let g = u8::from_str_radix(&hex[2..4], 16).ok()? as f32 / 255.0;

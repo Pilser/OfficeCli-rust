@@ -93,10 +93,10 @@ pub fn add_part(
 
             // Add relationship to parent slide
             let rel_id = format!("rId{}", package.list_parts().len() + 10);
-            if parent.starts_with("/slide[") {
-                let slide_num = parent[7..]
+            if let Some(stripped) = parent.strip_prefix("/slide[") {
+                let slide_num = stripped
                     .find(']')
-                    .and_then(|pos| parent[7..7 + pos].parse::<usize>().ok())
+                    .and_then(|pos| stripped[..pos].parse::<usize>().ok())
                     .ok_or_else(|| HandlerError::InvalidPath(parent.to_string()))?;
                 let _slide_path = format!("ppt/slides/slide{}.xml", slide_num);
                 let rels_path = format!("ppt/slides/_rels/slide{}.xml.rels", slide_num);
@@ -105,7 +105,7 @@ pub fn add_part(
                     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
                 let target = format!(
                     "../media/{}",
-                    part_path.split('/').last().unwrap_or("image.png")
+                    part_path.split('/').next_back().unwrap_or("image.png")
                 );
 
                 add_relationship(package, &rels_path, &rel_id, rel_type, &target);

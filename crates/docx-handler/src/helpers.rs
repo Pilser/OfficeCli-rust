@@ -34,12 +34,7 @@ pub fn split_run_at_offset(run: &WordNode, offset: usize) -> (Option<WordNode>, 
     // Left run: text[0..offset]
     let left_text = text[..offset].to_string();
     let left_preserve =
-        if text_node.has_preserve_space() || left_text.ends_with(' ') || left_text.starts_with(' ')
-        {
-            true
-        } else {
-            false
-        };
+        text_node.has_preserve_space() || left_text.ends_with(' ') || left_text.starts_with(' ');
     let left_t = WordNode::new(WordElementType::Text).with_text(&left_text);
     let mut left_t = left_t;
     if left_preserve {
@@ -209,22 +204,13 @@ pub fn build_run_properties(props: &std::collections::HashMap<String, String>) -
                 children.push(sz_cs);
             }
             "color" | "fontColor" => {
-                let color_val = if value.starts_with('#') {
-                    // Convert #RRGGBB to RRGGBB
-                    &value[1..]
-                } else {
-                    value.as_str()
-                };
+                let color_val = value.strip_prefix('#').unwrap_or(value);
                 let color_node = WordNode::new(WordElementType::Unknown("color".to_string()))
                     .with_attribute("val", color_val);
                 children.push(color_node);
             }
             "bgColor" | "highlight" | "bg" => {
-                let color_val = if value.starts_with('#') {
-                    &value[1..]
-                } else {
-                    value.as_str()
-                };
+                let color_val = value.strip_prefix('#').unwrap_or(value);
                 if matches!(
                     color_val.to_lowercase().as_str(),
                     "yellow"
@@ -246,7 +232,7 @@ pub fn build_run_properties(props: &std::collections::HashMap<String, String>) -
                         | "none"
                 ) {
                     let hl_node = WordNode::new(WordElementType::Unknown("highlight".to_string()))
-                        .with_attribute("val", &color_val.to_lowercase());
+                        .with_attribute("val", color_val.to_lowercase());
                     children.push(hl_node);
                 } else {
                     let shd_node = WordNode::new(WordElementType::Unknown("shd".to_string()))

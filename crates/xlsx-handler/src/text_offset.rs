@@ -13,7 +13,7 @@ pub fn build_text_offset_map_internal(
     package: &OxmlPackage,
 ) -> Result<TextOffsetMap, HandlerError> {
     let model =
-        helpers::build_workbook_model(package).map_err(|e| HandlerError::OperationFailed(e))?;
+        helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
 
     let mut map = TextOffsetMap::empty("xlsx");
 

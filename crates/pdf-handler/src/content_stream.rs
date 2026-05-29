@@ -1,3 +1,15 @@
+#![allow(
+    clippy::collapsible_match,
+    clippy::assign_op_pattern,
+    clippy::manual_strip,
+    clippy::needless_borrow,
+    clippy::match_result_ok,
+    clippy::collapsible_else_if,
+    clippy::too_many_arguments,
+    clippy::manual_div_ceil,
+    clippy::manual_is_multiple_of
+)]
+
 use handler_common::HandlerError;
 use lopdf::{Dictionary, Document as LopdfDocument, Object, ObjectId};
 use std::collections::{HashMap, HashSet};
@@ -2434,6 +2446,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::collapsible_match)]
     fn test_print_pdf_images() {
         let pdf_path = "../../examples/pdf/demo.pdf";
         if let Ok(doc) = lopdf::Document::load(pdf_path) {
@@ -2641,7 +2654,7 @@ mod tests {
     fn test_debug_pkulaw() {
         let pdf_path = "../../examples/pdf/pkulaw_v6_test.pdf";
         if let Ok(mut doc) = lopdf::Document::load(pdf_path) {
-            let _ = doc.decompress();
+            doc.decompress();
             println!("Successfully loaded and decompressed pkulaw_v6_test.pdf");
             let pages = doc.get_pages();
             if let Some(&page_id) = pages.get(&2) {

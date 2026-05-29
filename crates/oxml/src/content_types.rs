@@ -66,11 +66,7 @@ impl ContentTypes {
                                 .and_then(|a| String::from_utf8(a.value.to_vec()).ok());
                             if let (Some(pn), Some(ct)) = (pn, ct) {
                                 // Strip leading "/" from PartName
-                                let pn = if pn.starts_with('/') {
-                                    pn[1..].to_string()
-                                } else {
-                                    pn
-                                };
+                                let pn = pn.strip_prefix('/').map(|s| s.to_string()).unwrap_or(pn);
                                 overrides.insert(pn, ct);
                             }
                         }
@@ -107,11 +103,7 @@ impl ContentTypes {
                                 .find(|a| a.key.local_name().as_ref() == b"ContentType")
                                 .and_then(|a| String::from_utf8(a.value.to_vec()).ok());
                             if let (Some(pn), Some(ct)) = (pn, ct) {
-                                let pn = if pn.starts_with('/') {
-                                    pn[1..].to_string()
-                                } else {
-                                    pn
-                                };
+                                let pn = pn.strip_prefix('/').map(|s| s.to_string()).unwrap_or(pn);
                                 overrides.insert(pn, ct);
                             }
                         }

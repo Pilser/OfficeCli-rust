@@ -14,7 +14,7 @@ impl PdfReader {
     pub fn open(path: &str) -> Result<Self, HandlerError> {
         let mut doc = LopdfDocument::load(path)
             .map_err(|e| HandlerError::OpenError(format!("failed to open PDF: {}", e)))?;
-        let _ = doc.decompress();
+        doc.decompress();
         let page_count = Self::count_pages(&doc);
         Ok(Self {
             doc,

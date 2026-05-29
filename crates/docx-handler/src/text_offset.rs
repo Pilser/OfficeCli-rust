@@ -138,16 +138,7 @@ fn extract_run_text(run: &crate::dom_types::WordNode) -> String {
                 result.push('\t');
             }
             WordElementType::Break => {
-                let break_type = child
-                    .attributes
-                    .get("type")
-                    .map(|s| s.as_str())
-                    .unwrap_or("");
-                if break_type == "page" {
-                    result.push('\n');
-                } else {
-                    result.push('\n');
-                }
+                result.push('\n');
             }
             _ => {}
         }

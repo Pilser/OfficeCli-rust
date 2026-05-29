@@ -256,7 +256,7 @@ impl DocumentHandler for WordHandler {
 
         // Build children if depth > 0
         if depth > 0 {
-            let children = build_children_nodes(&node, path, depth - 1);
+            let children = build_children_nodes(node, path, depth - 1);
             doc_node = doc_node.with_children(children);
         }
 
@@ -367,7 +367,7 @@ impl DocumentHandler for WordHandler {
 
     fn raw(&self, part_path: &str, opts: RawOptions) -> Result<String, HandlerError> {
         let package = self.package.borrow();
-        read_raw(&*package, part_path, opts)
+        read_raw(&package, part_path, opts)
     }
 
     fn raw_set(
@@ -383,7 +383,7 @@ impl DocumentHandler for WordHandler {
             ));
         }
         let mut package = self.package.borrow_mut();
-        crate::raw::apply_raw_set(&mut *package, part_path, xpath, action, xml)
+        crate::raw::apply_raw_set(&mut package, part_path, xpath, action, xml)
     }
 
     fn add_part(
@@ -398,7 +398,7 @@ impl DocumentHandler for WordHandler {
             ));
         }
         let mut package = self.package.borrow_mut();
-        crate::raw::add_part(&mut *package, parent, part_type, properties)
+        crate::raw::add_part(&mut package, parent, part_type, properties)
     }
 
     fn validate(&self) -> Result<Vec<ValidationError>, HandlerError> {
@@ -633,7 +633,7 @@ fn apply_docx_range_highlights(
         // Removed modified path push
     }
 
-    for (key, _) in properties {
+    for key in properties.keys() {
         if !matches!(key.as_str(), "range_paths" | "bgColor" | "highlight" | "bg") {
             unsupported.push(key.clone());
         }

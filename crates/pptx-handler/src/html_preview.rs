@@ -1,3 +1,12 @@
+#![allow(
+    clippy::too_many_arguments,
+    clippy::collapsible_else_if,
+    clippy::needless_borrow,
+    clippy::search_is_some,
+    clippy::useless_format,
+    clippy::manual_strip
+)]
+
 use handler_common::HandlerError;
 use oxml::OxmlPackage;
 use std::collections::HashMap;
@@ -3683,7 +3692,7 @@ fn render_table(
         output.push_str(&format!("        <tr{}>\n", row_style));
 
         let mut col_index = 0;
-        let mut skip_cols = 0;
+        let mut skip_cols: usize = 0;
 
         for tc in tr.children().filter(|n| n.has_tag_name("tc")) {
             while rowspan_tracker
@@ -3704,9 +3713,7 @@ fn render_table(
                 .map(|s| s == "1" || s == "true")
                 .unwrap_or(false)
             {
-                if skip_cols > 0 {
-                    skip_cols -= 1;
-                }
+                skip_cols = skip_cols.saturating_sub(1);
                 col_index += 1;
                 continue;
             }
@@ -3797,22 +3804,22 @@ fn render_table(
             let bl = tc_pr
                 .as_ref()
                 .and_then(|pr| pr.children().find(|n| n.has_tag_name("lnL")))
-                .and_then(|ln| Some(outline_to_css(&ln, theme_colors)))
+                .map(|ln| outline_to_css(&ln, theme_colors))
                 .unwrap_or_else(|| "1px solid #ccc".to_string());
             let br = tc_pr
                 .as_ref()
                 .and_then(|pr| pr.children().find(|n| n.has_tag_name("lnR")))
-                .and_then(|ln| Some(outline_to_css(&ln, theme_colors)))
+                .map(|ln| outline_to_css(&ln, theme_colors))
                 .unwrap_or_else(|| "1px solid #ccc".to_string());
             let bt = tc_pr
                 .as_ref()
                 .and_then(|pr| pr.children().find(|n| n.has_tag_name("lnT")))
-                .and_then(|ln| Some(outline_to_css(&ln, theme_colors)))
+                .map(|ln| outline_to_css(&ln, theme_colors))
                 .unwrap_or_else(|| "1px solid #ccc".to_string());
             let bb = tc_pr
                 .as_ref()
                 .and_then(|pr| pr.children().find(|n| n.has_tag_name("lnB")))
-                .and_then(|ln| Some(outline_to_css(&ln, theme_colors)))
+                .map(|ln| outline_to_css(&ln, theme_colors))
                 .unwrap_or_else(|| "1px solid #ccc".to_string());
 
             cell_styles.push(format!("border-left:{}", bl));
@@ -3828,10 +3835,10 @@ fn render_table(
                 .and_then(|pr| pr.children().find(|n| n.has_tag_name("lnBlToTr")));
             let tl_br_css = ln_tl_br
                 .as_ref()
-                .and_then(|ln| Some(outline_to_css(ln, theme_colors)));
+                .map(|ln| outline_to_css(ln, theme_colors));
             let bl_tr_css = ln_bl_tr
                 .as_ref()
-                .and_then(|ln| Some(outline_to_css(ln, theme_colors)));
+                .map(|ln| outline_to_css(ln, theme_colors));
 
             let has_diag = tl_br_css.is_some() || bl_tr_css.is_some();
             if has_diag {
@@ -3889,12 +3896,12 @@ fn render_table(
             if has_diag {
                 let mut svg_lines = String::new();
                 if let Some(ref border_css) = tl_br_css {
-                    let stroke = border_css.split(' ').last().unwrap_or("#000");
+                    let stroke = border_css.split(' ').next_back().unwrap_or("#000");
                     let width = border_css.split(' ').next().unwrap_or("1.0pt");
                     svg_lines.push_str(&format!("<line x1=\"0\" y1=\"0\" x2=\"100%\" y2=\"100%\" stroke=\"{}\" stroke-width=\"{}\"/>", stroke, width));
                 }
                 if let Some(ref border_css) = bl_tr_css {
-                    let stroke = border_css.split(' ').last().unwrap_or("#000");
+                    let stroke = border_css.split(' ').next_back().unwrap_or("#000");
                     let width = border_css.split(' ').next().unwrap_or("1.0pt");
                     svg_lines.push_str(&format!("<line x1=\"0\" y1=\"100%\" x2=\"100%\" y2=\"0\" stroke=\"{}\" stroke-width=\"{}\"/>", stroke, width));
                 }
@@ -4157,6 +4164,7 @@ fn render_connector(
     output.push_str("    </div>\n");
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_group_shape(
     node: &roxmltree::Node,
     slide_path: &str,
@@ -4341,7 +4349,7 @@ fn html_escape(s: &str) -> String {
 
 fn base64_encode(data: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
     let mut i = 0;
     while i < data.len() {
         let b0 = data[i] as usize;

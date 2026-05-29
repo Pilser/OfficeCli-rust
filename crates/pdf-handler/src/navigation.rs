@@ -24,7 +24,7 @@ impl PdfNavigator {
         let segments = path
             .split('/')
             .filter(|s| !s.is_empty())
-            .map(|s| parse_pdf_path_segment(s))
+            .map(parse_pdf_path_segment)
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(segments)

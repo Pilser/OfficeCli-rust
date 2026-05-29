@@ -1,7 +1,7 @@
-/// Formula evaluator for xlsx cells.
-/// This is a stub implementation — full formula evaluation is complex
-/// and typically requires a spreadsheet engine. For now, we just
-/// return formula strings as-is.
+//! Formula evaluator for xlsx cells.
+//! This is a stub implementation — full formula evaluation is complex
+//! and typically requires a spreadsheet engine. For now, we just
+//! return formula strings as-is.
 
 /// Evaluate a formula string and return the result.
 /// Currently a no-op stub that returns the formula itself.

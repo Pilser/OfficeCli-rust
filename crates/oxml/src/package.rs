@@ -166,9 +166,9 @@ impl OxmlPackage {
 
     /// Resolve a relationship target to a part path.
     pub fn resolve_rel_target(&self, source_part: &str, target: &str) -> String {
-        if target.starts_with('/') {
+        if let Some(stripped) = target.strip_prefix('/') {
             // Absolute target - strip leading slash
-            target[1..].to_string()
+            stripped.to_string()
         } else {
             // Relative target - resolve against source part
             if source_part.contains('/') {

@@ -29,8 +29,7 @@ pub fn parse_path(path: &str) -> Result<Vec<PathSegment>, HandlerError> {
             while pos < remaining.len() && remaining[pos..].starts_with('[') {
                 if let Some(end) = remaining[pos..].find(']') {
                     let content = &remaining[pos + 1..pos + end];
-                    if content.starts_with('@') {
-                        let attr_content = &content[1..];
+                    if let Some(attr_content) = content.strip_prefix('@') {
                         if let Some(eq) = attr_content.find('=') {
                             attribute = Some((
                                 attr_content[..eq].to_string(),
@@ -326,8 +325,7 @@ pub fn find_child_index(dom: &WordDom, path: &str) -> usize {
     let mut current = body.unwrap();
 
     // Walk all but last segment to get to the parent
-    for i in 1..segments.len() - 1 {
-        let seg = &segments[i];
+    for seg in segments.iter().take(segments.len() - 1).skip(1) {
         let target_type = resolve_element_type_from_name(&seg.name);
         let matching_indices: Vec<usize> = current
             .children

@@ -244,8 +244,7 @@ fn parse_slide_num(path: &str) -> Result<usize, HandlerError> {
 
 fn parse_slide_num_from_full_path(path: &str) -> Result<usize, HandlerError> {
     path.split('/')
-        .filter(|s| !s.is_empty())
-        .next()
+        .find(|s| !s.is_empty())
         .and_then(|s| s.strip_prefix("slide["))
         .and_then(|s| s.strip_suffix(']'))
         .and_then(|s| s.parse::<usize>().ok())
