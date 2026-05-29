@@ -77,7 +77,7 @@ impl DocumentHandler for WordHandler {
         Ok(view_as_issues(&dom, issue_type, limit))
     }
 
-    fn view_as_html(&self) -> Result<String, HandlerError> {
+    fn view_as_html(&self, _opts: ViewOptions) -> Result<String, HandlerError> {
         let package = self.package.borrow();
         crate::html_preview::view_as_html(&package)
     }

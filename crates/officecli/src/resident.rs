@@ -127,7 +127,8 @@ fn execute_request(
             }
         }
         "view_html" => {
-            match handler.view_as_html() {
+            let opts = view_opts_from_params(&req.params);
+            match handler.view_as_html(opts) {
                 Ok(text) => IpcResponse::ok(serde_json::Value::String(text)),
                 Err(e) => IpcResponse::err(e.to_string()),
             }
@@ -426,6 +427,7 @@ fn view_opts_from_params(params: &HashMap<String, serde_json::Value>) -> ViewOpt
         cols: params.get("cols")
             .and_then(|v| v.as_str())
             .map(|c| c.split(',').map(|s| s.to_string()).collect()),
+        page: params.get("page").and_then(|v| v.as_u64()).map(|v| v as usize),
     }
 }
 

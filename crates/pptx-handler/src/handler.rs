@@ -40,7 +40,7 @@ impl DocumentHandler for PptxHandler {
         crate::view::view_as_issues(&self.package.borrow(), issue_type, limit)
     }
 
-    fn view_as_html(&self) -> Result<String, HandlerError> {
+    fn view_as_html(&self, _opts: ViewOptions) -> Result<String, HandlerError> {
         crate::html_preview::view_as_html(&self.package.borrow())
     }
 

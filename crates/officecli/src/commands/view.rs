@@ -26,6 +26,10 @@ pub struct ViewCommand {
     /// Column filter (for Excel)
     #[arg(long)]
     pub cols: Option<String>,
+
+    /// Page number (for PDF / slide number for PowerPoint)
+    #[arg(long)]
+    pub page: Option<usize>,
 }
 
 pub fn handle_view(cmd: ViewCommand, format: OutputFormat) -> Result<String, HandlerError> {
@@ -35,6 +39,7 @@ pub fn handle_view(cmd: ViewCommand, format: OutputFormat) -> Result<String, Han
         end_line: cmd.end_line,
         max_lines: cmd.max_lines,
         cols: cmd.cols.map(|c| c.split(',').map(|s| s.to_string()).collect()),
+        page: cmd.page,
     };
 
     match cmd.mode.as_str() {
@@ -47,7 +52,7 @@ pub fn handle_view(cmd: ViewCommand, format: OutputFormat) -> Result<String, Han
             let lines: Vec<String> = issues.iter().map(|i| format!("[{:?}] {}: {}", i.severity, i.issue_type, i.description)).collect();
             Ok(lines.join("\n"))
         }
-        "html" => handler.view_as_html(),
+        "html" => handler.view_as_html(opts),
         "svg" => handler.view_as_svg(),
         other => Err(HandlerError::UnsupportedMode(format!("view mode '{}' not supported by this format", other))),
     }

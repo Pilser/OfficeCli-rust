@@ -247,6 +247,7 @@ fn execute_tool(name: &str, params: &HashMap<String, Value>) -> Result<Value, St
                 cols: params.get("cols")
                     .and_then(|v| v.as_str())
                     .map(|c| c.split(',').map(|s| s.to_string()).collect()),
+                page: None,
             };
 
             let result = match mode {
@@ -254,7 +255,7 @@ fn execute_tool(name: &str, params: &HashMap<String, Value>) -> Result<Value, St
                 "annotated" => handler.view_as_annotated(opts),
                 "outline" => handler.view_as_outline(),
                 "stats" => handler.view_as_stats(),
-                "html" => handler.view_as_html(),
+                "html" => handler.view_as_html(opts),
                 other => Err(HandlerError::UnsupportedMode(format!("view mode '{}' not supported", other))),
             };
 

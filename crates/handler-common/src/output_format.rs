@@ -20,6 +20,7 @@ pub struct ViewOptions {
     pub end_line: Option<usize>,
     pub max_lines: Option<usize>,
     pub cols: Option<Vec<String>>,
+    pub page: Option<usize>,
 }
 
 impl Default for ViewOptions {
@@ -29,6 +30,7 @@ impl Default for ViewOptions {
             end_line: None,
             max_lines: None,
             cols: None,
+            page: None,
         }
     }
 }

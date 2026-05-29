@@ -97,7 +97,7 @@ impl DocumentHandler for ExcelHandler {
         crate::view::view_as_issues(&pkg, issue_type, limit)
     }
 
-    fn view_as_html(&self) -> Result<String, HandlerError> {
+    fn view_as_html(&self, _opts: ViewOptions) -> Result<String, HandlerError> {
         let pkg = self.package.borrow();
         crate::html_preview::view_as_html(&pkg)
     }

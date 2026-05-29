@@ -28,7 +28,7 @@ pub trait DocumentHandler: Send {
     fn view_as_stats_json(&self) -> Result<serde_json::Value, HandlerError>;
 
     // === View modes (optional) ===
-    fn view_as_html(&self) -> Result<String, HandlerError> {
+    fn view_as_html(&self, opts: ViewOptions) -> Result<String, HandlerError> {
         Err(HandlerError::UnsupportedMode("html".to_string()))
     }
     fn view_as_svg(&self) -> Result<String, HandlerError> {

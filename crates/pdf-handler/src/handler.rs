@@ -50,8 +50,8 @@ impl DocumentHandler for PdfHandler {
         PdfViewer::new(PdfReader::open(reader.file_path())?).view_as_issues(issue_type, limit)
     }
 
-    fn view_as_html(&self) -> Result<String, HandlerError> {
-        crate::html_preview::view_as_html(&self.reader.borrow())
+    fn view_as_html(&self, opts: ViewOptions) -> Result<String, HandlerError> {
+        crate::html_preview::view_as_html(&self.reader.borrow(), opts)
     }
 
     fn view_as_svg(&self) -> Result<String, HandlerError> {

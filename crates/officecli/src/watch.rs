@@ -38,7 +38,9 @@ enum HandlerOp {
     },
     ViewOutline,
     ViewStats,
-    ViewHtml,
+    ViewHtml {
+        opts: ViewOptions,
+    },
     Reload,
     Get {
         path: String,
@@ -245,6 +247,7 @@ async fn run_host_server(
         .route("/{id}/view", get(handle_view))
         .route("/{id}/get", get(handle_get))
         .route("/{id}/set", post(handle_set))
+        .route("/{id}/page/{page_num}/html", get(handle_page_html))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
@@ -397,7 +400,7 @@ fn execute_handler_op(
                 data: serde_json::json!({"error": e.to_string()}),
             },
         },
-        HandlerOp::ViewHtml => match handler.view_as_html() {
+        HandlerOp::ViewHtml { opts } => match handler.view_as_html(opts) {
             Ok(t) => HandlerResult {
                 data: serde_json::Value::String(t),
             },
@@ -677,7 +680,7 @@ async fn handle_index(
         Err(r) => return r.into_response(),
     };
 
-    let result = send_op_for_doc(&doc, HandlerOp::ViewHtml).await;
+    let result = send_op_for_doc(&doc, HandlerOp::ViewHtml { opts: ViewOptions::default() }).await;
 
     if let Some(err) = result.data.get("error").and_then(|e| e.as_str()) {
         let text_res = send_op_for_doc(
@@ -842,6 +845,7 @@ async fn handle_view(
         cols: params
             .get("cols")
             .map(|c| c.split(',').map(|s| s.to_string()).collect()),
+        page: params.get("page").and_then(|v| v.parse::<usize>().ok()),
     };
 
     let op = match mode.as_str() {
@@ -849,7 +853,7 @@ async fn handle_view(
         "annotated" => HandlerOp::ViewAnnotated { opts },
         "outline" => HandlerOp::ViewOutline,
         "stats" => HandlerOp::ViewStats,
-        "html" => HandlerOp::ViewHtml,
+        "html" => HandlerOp::ViewHtml { opts },
         _ => return Json(ApiResponse::err(format!("unsupported view mode: {}", mode))).into_response(),
     };
 
@@ -922,6 +926,30 @@ async fn handle_set(
     } else {
         let _ = doc.update_tx.send("set".to_string());
         Json(ApiResponse::ok(result.data)).into_response()
+    }
+}
+
+// ─── GET /:id/page/:page_num/html — Render single page html ──────────────
+
+async fn handle_page_html(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path((id, page_num)): axum::extract::Path<(String, usize)>,
+) -> impl IntoResponse {
+    let doc = match get_doc(&state, &id).await {
+        Ok(d) => d,
+        Err(e) => return e.into_response(),
+    };
+    let opts = ViewOptions {
+        page: Some(page_num),
+        ..Default::default()
+    };
+    let result = send_op_for_doc(&doc, HandlerOp::ViewHtml { opts }).await;
+
+    if let Some(err) = result.data.get("error").and_then(|e| e.as_str()) {
+        (axum::http::StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
+    } else {
+        let html = result.data.as_str().unwrap_or("").to_string();
+        Html(html).into_response()
     }
 }
 
