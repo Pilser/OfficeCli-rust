@@ -121,7 +121,7 @@ fn get_page_dimensions(reader: &PdfReader, page_num: usize) -> (f32, f32, f32, f
 }
 
 pub fn view_page_as_html(reader: &PdfReader, page_num: usize) -> Result<String, HandlerError> {
-    let (width, height, llx, lly) = get_page_dimensions(reader, page_num);
+    let (_width, height, llx, lly) = get_page_dimensions(reader, page_num);
     let mut page_html = String::new();
 
     page_html.push_str(&format!(

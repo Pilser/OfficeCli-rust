@@ -29,6 +29,7 @@ const DEFAULT_PORT: u16 = 26315;
 // ─── Handler operation requests (sent to the blocking thread) ──────────
 
 #[derive(Debug)]
+#[allow(dead_code)]
 enum HandlerOp {
     ViewText {
         opts: ViewOptions,
@@ -93,7 +94,7 @@ impl Drop for ActiveDocument {
 }
 
 struct AppState {
-    port: u16,
+    _port: u16,
     registry: Arc<Mutex<HashMap<String, Arc<ActiveDocument>>>>,
 }
 
@@ -230,7 +231,7 @@ async fn run_host_server(
 ) -> Result<(), anyhow::Error> {
     let registry = Arc::new(Mutex::new(HashMap::<String, Arc<ActiveDocument>>::new()));
     let state = Arc::new(AppState {
-        port,
+        _port: port,
         registry: registry.clone(),
     });
 

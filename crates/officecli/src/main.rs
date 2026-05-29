@@ -1,6 +1,5 @@
 mod commands;
 mod mcp;
-mod output;
 mod resident;
 mod watch;
 

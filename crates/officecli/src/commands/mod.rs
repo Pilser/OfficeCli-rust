@@ -16,7 +16,6 @@ mod validate;
 mod view;
 
 use clap::Args;
-use handler_common::HandlerError;
 
 pub use add::AddCommand;
 pub use batch::BatchCommand;
@@ -140,11 +139,3 @@ pub use save::handle_save;
 pub use set::handle_set;
 pub use validate::handle_validate;
 pub use view::handle_view;
-
-/// Helper: open a handler from file path
-fn open_handler(
-    file: &str,
-    editable: bool,
-) -> Result<Box<dyn handler_common::DocumentHandler>, HandlerError> {
-    crate::open_handler(file, editable)
-}

@@ -1493,7 +1493,7 @@ fn render_alternate_content(
     ac: &roxmltree::Node,
     slide_path: &str,
     rels: &oxml::rels::Relationships,
-    theme_colors: &HashMap<String, String>,
+    _theme_colors: &HashMap<String, String>,
     output: &mut String,
     package: &OxmlPackage,
 ) {
@@ -2400,7 +2400,6 @@ fn render_shape(
     ];
 
     let sp_pr = node.descendants().find(|n| n.has_tag_name("spPr"));
-    let mut fill_style = String::new();
     let mut border_radius = String::new();
     let mut clip_path = String::new();
     let mut parsed_outline = None;
@@ -2411,14 +2410,14 @@ fn render_shape(
             .find(|n| n.has_tag_name("solidFill"))
         {
             if let Some(color) = resolve_fill_color(&solid_fill, theme_colors) {
-                fill_style = format!("background:{}", color);
+                let fill_style = format!("background:{}", color);
                 styles.push(fill_style.clone());
             }
         } else if let Some(grad_fill) = sp_pr_node
             .descendants()
             .find(|n| n.has_tag_name("gradFill"))
         {
-            fill_style = format!("background:{}", gradient_to_css(&grad_fill, theme_colors));
+            let fill_style = format!("background:{}", gradient_to_css(&grad_fill, theme_colors));
             styles.push(fill_style.clone());
         } else if let Some(blip_fill) = sp_pr_node
             .descendants()
@@ -2433,7 +2432,7 @@ fn render_shape(
                         let target_path = package.resolve_rel_target(slide_path, &rel.target);
                         if let Ok(bytes) = package.read_part_bytes(&target_path) {
                             let b64 = base64_encode(&bytes);
-                            fill_style = format!(
+                            let fill_style = format!(
                                 "background:url('data:image/png;base64,{}') center/cover no-repeat",
                                 b64
                             );
@@ -3591,7 +3590,7 @@ fn render_table(
     output: &mut String,
     x_pt: f64,
     y_pt: f64,
-    mut cx_pt: f64,
+    cx_pt: f64,
     mut cy_pt: f64,
 ) {
     let tbl = match gf.descendants().find(|n| n.has_tag_name("tbl")) {
@@ -3600,9 +3599,7 @@ fn render_table(
     };
 
     let mut row_height_sum_emu = 0.0;
-    let mut rows_count = 0;
     for tr in tbl.children().filter(|n| n.has_tag_name("tr")) {
-        rows_count += 1;
         let h = tr
             .attribute("h")
             .and_then(|s| s.parse::<f64>().ok())
@@ -3671,8 +3668,6 @@ fn render_table(
         .unwrap_or(false);
 
     let mut row_index = 0;
-    let total_rows = rows_count;
-    let total_cols = grid_cols.len();
     let mut rowspan_tracker: HashMap<(usize, usize), usize> = HashMap::new();
 
     for tr in tbl.children().filter(|n| n.has_tag_name("tr")) {

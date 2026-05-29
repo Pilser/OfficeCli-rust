@@ -14,7 +14,7 @@ pub struct CreateCommand {
 
 pub fn handle_create(
     cmd: CreateCommand,
-    format: handler_common::OutputFormat,
+    _format: handler_common::OutputFormat,
 ) -> Result<String, HandlerError> {
     let ext = cmd.format.unwrap_or_else(|| {
         std::path::Path::new(&cmd.file)

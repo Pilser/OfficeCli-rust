@@ -17,7 +17,7 @@ pub fn parse_path(path: &str) -> Result<Vec<PathSegment>, HandlerError> {
     let mut segments = Vec::new();
 
     for seg in segments_str {
-        let mut name = String::new();
+        let mut name;
         let mut index: Option<usize> = None;
         let mut attribute: Option<(String, String)> = None;
 

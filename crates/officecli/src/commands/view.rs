@@ -32,7 +32,7 @@ pub struct ViewCommand {
     pub page: Option<usize>,
 }
 
-pub fn handle_view(cmd: ViewCommand, format: OutputFormat) -> Result<String, HandlerError> {
+pub fn handle_view(cmd: ViewCommand, _format: OutputFormat) -> Result<String, HandlerError> {
     let handler = crate::open_handler(&cmd.file, false)?;
     let opts = ViewOptions {
         start_line: cmd.start_line,

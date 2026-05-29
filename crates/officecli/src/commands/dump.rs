@@ -11,7 +11,7 @@ pub struct DumpCommand {
 
 pub fn handle_dump(
     cmd: DumpCommand,
-    format: handler_common::OutputFormat,
+    _format: handler_common::OutputFormat,
 ) -> Result<String, HandlerError> {
     let handler = crate::open_handler(&cmd.file, false)?;
 

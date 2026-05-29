@@ -148,7 +148,7 @@ pub fn view_as_html(package: &OxmlPackage) -> Result<String, HandlerError> {
     }
 
     // 2. Resolve Palette and Styles
-    let mut indexed_colors = DEFAULT_INDEXED_COLORS.to_vec();
+    let indexed_colors = DEFAULT_INDEXED_COLORS.to_vec();
     let mut fonts = Vec::new();
     let mut fills = Vec::new();
     let mut borders = Vec::new();
@@ -169,7 +169,7 @@ pub fn view_as_html(package: &OxmlPackage) -> Result<String, HandlerError> {
                         .enumerate()
                     {
                         if let Some(rgb) = rgb_node.attribute("rgb") {
-                            let clean = rgb.trim_start_matches("FF").to_string();
+                            let _clean = rgb.trim_start_matches("FF").to_string();
                             if idx < indexed_colors.len() {
                                 // Keep static lifetime placeholder or parse dynamically
                                 // We store them in a local string vector and point references if needed
@@ -238,7 +238,7 @@ pub fn view_as_html(package: &OxmlPackage) -> Result<String, HandlerError> {
             // Parse Borders
             if let Some(borders_node) = doc.descendants().find(|n| n.has_tag_name("borders")) {
                 for b_node in borders_node.children().filter(|n| n.has_tag_name("border")) {
-                    let mut parse_edge = |edge_name: &str| -> Option<(String, String)> {
+                    let parse_edge = |edge_name: &str| -> Option<(String, String)> {
                         let edge = b_node.children().find(|n| n.has_tag_name(edge_name))?;
                         let style = edge.attribute("style")?.to_string();
                         let color = edge
@@ -486,8 +486,7 @@ pub fn view_as_html(package: &OxmlPackage) -> Result<String, HandlerError> {
             } else if is_row_frozen {
                 th_style_attr = " style=\"position:sticky;top:0;z-index:3;\"".to_string();
             } else if frozen_cols > 0 {
-                let top = frozen_top_offsets.get(&row).unwrap_or(&0.0);
-                th_style_attr = format!(" style=\"position:sticky;left:0;z-index:3;\"");
+                th_style_attr = " style=\"position:sticky;left:0;z-index:3;\"".to_string();
             }
             sheets_html.push_str(&format!(
                 "<th class=\"row-header\" data-path=\"/{}/row[{}]\" {}>{}</th>\n",

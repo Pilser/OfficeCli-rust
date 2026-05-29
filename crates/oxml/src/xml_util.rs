@@ -65,7 +65,7 @@ pub fn find_elements_by_xpath(xml: &str, xpath: &str) -> Result<Vec<String>, Xml
 /// XPath segment: name + optional index + optional attribute filter.
 struct XPathSegment {
     name: String,
-    index: Option<usize>,
+    _index: Option<usize>,
     attr_filter: Option<(String, String)>,
 }
 
@@ -79,7 +79,7 @@ fn parse_xpath_segments(xpath: &str) -> Result<Vec<XPathSegment>, XmlUtilError> 
 
     for part in parts {
         let original = part.to_string();
-        let mut name = String::new();
+        let name;
         let mut index = None;
         let mut attr_filter = None;
 
@@ -108,7 +108,7 @@ fn parse_xpath_segments(xpath: &str) -> Result<Vec<XPathSegment>, XmlUtilError> 
 
         segments.push(XPathSegment {
             name,
-            index,
+            _index: index,
             attr_filter,
         });
     }
