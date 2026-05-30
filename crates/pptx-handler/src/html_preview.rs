@@ -2063,6 +2063,7 @@ pub fn view_as_html(package: &OxmlPackage) -> Result<String, HandlerError> {
                             master_tree,
                             master_text_styles,
                             None,
+                            None,
                         );
                         slides_html.push_str(&prompt_shape_html);
                     }
@@ -2105,6 +2106,7 @@ pub fn view_as_html(package: &OxmlPackage) -> Result<String, HandlerError> {
                             master_tree,
                             master_text_styles,
                             None,
+                            None,
                         );
                         slides_html.push_str(&prompt_shape_html);
                     }
@@ -2129,10 +2131,12 @@ pub fn view_as_html(package: &OxmlPackage) -> Result<String, HandlerError> {
         let sp_tree = slide_doc.descendants().find(|n| {
             n.has_tag_name("spTree") || n.has_tag_name((crate::dom_types::NS_P, "spTree"))
         });
+        let mut shape_counter = 0;
         if let Some(tree) = sp_tree {
             for child in tree.children() {
                 let tag = child.tag_name().name();
                 if tag == "sp" {
+                    shape_counter += 1;
                     render_shape(
                         &child,
                         slide_num,
@@ -2145,6 +2149,7 @@ pub fn view_as_html(package: &OxmlPackage) -> Result<String, HandlerError> {
                         master_tree,
                         master_text_styles,
                         None,
+                        Some(shape_counter),
                     );
                 } else if tag == "pic" {
                     render_picture(
@@ -2367,17 +2372,16 @@ fn render_shape(
     master_tree: Option<roxmltree::Node<'_, '_>>,
     master_text_styles: Option<roxmltree::Node<'_, '_>>,
     override_pos: Option<(f64, f64, f64, f64)>,
+    shape_idx: Option<usize>,
 ) {
     let nv_sp_pr = node.descendants().find(|n| n.has_tag_name("nvSpPr"));
     let mut name = String::new();
-    let mut id = String::new();
     let mut ph_type = None;
     let mut ph_idx = None;
 
     if let Some(nv) = nv_sp_pr {
         if let Some(c_nv_pr) = nv.descendants().find(|n| n.has_tag_name("cNvPr")) {
             name = c_nv_pr.attribute("name").unwrap_or("").to_string();
-            id = c_nv_pr.attribute("id").unwrap_or("").to_string();
         }
         if let Some(ph) = nv.descendants().find(|n| n.has_tag_name("ph")) {
             ph_type = ph.attribute("type");
@@ -2727,12 +2731,17 @@ fn render_shape(
         }
     }
 
-    let path_attr = format!(
-        " data-path=\"/slide[{}]/shape[{}]\" title=\"{}\"",
-        slide_num,
-        id,
-        html_escape(&name)
-    );
+    let shape_path = shape_idx.map(|idx| format!("/slide[{}]/shape[{}]", slide_num, idx));
+
+    let path_attr = if let Some(ref sh_path) = shape_path {
+        format!(
+            " data-path=\"{}\" title=\"{}\"",
+            sh_path,
+            html_escape(&name)
+        )
+    } else {
+        format!(" title=\"{}\"", html_escape(&name))
+    };
 
     if let Some(ref url) = shape_href_url {
         output.push_str(&format!("    <a class=\"shape-link\" href=\"{}\" rel=\"noopener\" target=\"_blank\" style=\"display:contents;cursor:pointer;\">\n", html_escape(url)));
@@ -2806,6 +2815,7 @@ fn render_shape(
             master_tree,
             master_text_styles,
             rels,
+            shape_path,
         );
         output.push_str(&text_output);
 
@@ -3194,6 +3204,7 @@ fn render_text_body(
         None,
         None,
         &dummy_rels,
+        None,
     );
 }
 
@@ -3207,6 +3218,7 @@ fn render_text_body_with_context(
     master_tree: Option<roxmltree::Node<'_, '_>>,
     master_text_styles: Option<roxmltree::Node<'_, '_>>,
     slide_rels: &oxml::rels::Relationships,
+    shape_path: Option<String>,
 ) {
     let mut auto_num_counters = HashMap::new();
     let mut last_auto_key = String::new();
@@ -3232,7 +3244,9 @@ fn render_text_body_with_context(
         }
     }
 
+    let mut para_counter = 0;
     for para in node.descendants().filter(|n| n.has_tag_name("p")) {
+        para_counter += 1;
         let mut para_styles = Vec::new();
         let p_pr = para.children().find(|n| n.has_tag_name("pPr"));
 
@@ -3360,7 +3374,12 @@ fn render_text_body_with_context(
         } else {
             format!(" style=\"{}\"", para_styles.join(";"))
         };
-        output.push_str(&format!("        <div class=\"para\"{}>\n", style_attr));
+        let path_attr = if let Some(ref sh_path) = shape_path {
+            format!(" data-path=\"{}/paragraph[{}]\"", sh_path, para_counter)
+        } else {
+            String::new()
+        };
+        output.push_str(&format!("        <div class=\"para\"{}{}>\n", style_attr, path_attr));
 
         if has_bullet {
             let bullet_char = p_pr
@@ -4400,6 +4419,7 @@ fn render_group_shape(
                     master_tree,
                     master_text_styles,
                     Some(pos),
+                    None,
                 );
                 output.push_str(&shape_html);
             }
