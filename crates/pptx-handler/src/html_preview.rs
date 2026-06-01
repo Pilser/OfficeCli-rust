@@ -3379,7 +3379,10 @@ fn render_text_body_with_context(
         } else {
             String::new()
         };
-        output.push_str(&format!("        <div class=\"para\"{}{}>\n", style_attr, path_attr));
+        output.push_str(&format!(
+            "        <div class=\"para\"{}{}>\n",
+            style_attr, path_attr
+        ));
 
         if has_bullet {
             let bullet_char = p_pr

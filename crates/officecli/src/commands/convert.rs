@@ -161,7 +161,7 @@ pub fn handle_convert(
 /// Convert via LibreOffice CLI (soffice --convert-to).
 fn convert_via_libreoffice(
     input_file: &str,
-    output_path: &PathBuf,
+    output_path: &std::path::Path,
     target_ext: &str,
 ) -> Result<(), HandlerError> {
     let soffice = find_soffice()?;
@@ -174,8 +174,9 @@ fn convert_via_libreoffice(
 
     // Ensure output directory exists
     if !output_dir.exists() {
-        std::fs::create_dir_all(output_dir)
-            .map_err(|e| HandlerError::OperationFailed(format!("cannot create output dir: {}", e)))?;
+        std::fs::create_dir_all(output_dir).map_err(|e| {
+            HandlerError::OperationFailed(format!("cannot create output dir: {}", e))
+        })?;
     }
 
     let output_dir_str = output_dir.to_string_lossy().to_string();
@@ -210,13 +211,14 @@ fn convert_via_libreoffice(
 
     // If soffice output differs from desired output path, rename it
     if soffice_output != *output_path && soffice_output.exists() {
-        std::fs::rename(&soffice_output, output_path)
-            .map_err(|e| HandlerError::OperationFailed(format!(
+        std::fs::rename(&soffice_output, output_path).map_err(|e| {
+            HandlerError::OperationFailed(format!(
                 "failed to rename '{}' to '{}': {}",
                 soffice_output.display(),
                 output_path.display(),
                 e
-            )))?;
+            ))
+        })?;
     }
 
     // Verify the output file was created
@@ -261,13 +263,13 @@ fn find_soffice() -> Result<String, HandlerError> {
         }
     }
 
-    Err(HandlerError::OperationFailed(format!(
-        "LibreOffice (soffice) not found.\n\nInstall it:\n  macOS:  brew install --cask libreoffice\n  Ubuntu: sudo apt install libreoffice\n  Windows: https://www.libreoffice.org/download/\n\nOr use --engine oxide for pure Rust conversion (lower fidelity)"
-    )))
+    Err(HandlerError::OperationFailed(
+        "LibreOffice (soffice) not found.\n\nInstall it:\n  macOS:  brew install --cask libreoffice\n  Ubuntu: sudo apt install libreoffice\n  Windows: https://www.libreoffice.org/download/\n\nOr use --engine oxide for pure Rust conversion (lower fidelity)".to_string(),
+    ))
 }
 
 /// Convert via office_oxide (pure Rust, lower fidelity).
-fn convert_via_oxide(input_file: &str, output_path: &PathBuf) -> Result<(), HandlerError> {
+fn convert_via_oxide(input_file: &str, output_path: &std::path::Path) -> Result<(), HandlerError> {
     let doc = office_oxide::Document::open(input_file)
         .map_err(|e| HandlerError::OpenError(format!("failed to open '{}': {}", input_file, e)))?;
 
@@ -344,9 +346,18 @@ mod tests {
 
     #[test]
     fn test_engine_from_str() {
-        assert_eq!(ConvertEngine::from_str("libreoffice").unwrap(), ConvertEngine::LibreOffice);
-        assert_eq!(ConvertEngine::from_str("lo").unwrap(), ConvertEngine::LibreOffice);
-        assert_eq!(ConvertEngine::from_str("oxide").unwrap(), ConvertEngine::Oxide);
+        assert_eq!(
+            ConvertEngine::from_str("libreoffice").unwrap(),
+            ConvertEngine::LibreOffice
+        );
+        assert_eq!(
+            ConvertEngine::from_str("lo").unwrap(),
+            ConvertEngine::LibreOffice
+        );
+        assert_eq!(
+            ConvertEngine::from_str("oxide").unwrap(),
+            ConvertEngine::Oxide
+        );
         assert!(ConvertEngine::from_str("foo").is_err());
     }
 }

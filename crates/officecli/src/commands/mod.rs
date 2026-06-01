@@ -20,7 +20,7 @@ use clap::Args;
 
 pub use add::AddCommand;
 pub use batch::BatchCommand;
-pub use convert::{ConvertCommand, parse_engine};
+pub use convert::{parse_engine, ConvertCommand};
 pub use create::CreateCommand;
 pub use dump::DumpCommand;
 pub use extract_text::ExtractTextCommand;

@@ -160,7 +160,10 @@ pub fn view_as_html(package: &OxmlPackage) -> Result<String, HandlerError> {
         if let Ok(doc) = roxmltree::Document::parse(&styles_xml) {
             // Read Custom Numbering Formats
             if let Some(num_fmts_node) = doc.descendants().find(|n| n.has_tag_name("numFmts")) {
-                for num_fmt in num_fmts_node.children().filter(|n| n.has_tag_name("numFmt")) {
+                for num_fmt in num_fmts_node
+                    .children()
+                    .filter(|n| n.has_tag_name("numFmt"))
+                {
                     let id_str = num_fmt.attribute("numFmtId").unwrap_or("");
                     let code_str = num_fmt.attribute("formatCode").unwrap_or("");
                     if let Ok(id) = id_str.parse::<usize>() {
@@ -398,11 +401,7 @@ pub fn view_as_html(package: &OxmlPackage) -> Result<String, HandlerError> {
                         }
                         if let Some(w) = col.attribute("width").and_then(|s| s.parse::<f64>().ok())
                         {
-                            let width_px = if is_hidden || w <= 0.0 {
-                                0.0
-                            } else {
-                                w * 7.5
-                            };
+                            let width_px = if is_hidden || w <= 0.0 { 0.0 } else { w * 7.5 };
                             for c in min..=max {
                                 col_widths.insert(c, width_px);
                                 if width_px <= 0.0 {
@@ -510,7 +509,10 @@ pub fn view_as_html(package: &OxmlPackage) -> Result<String, HandlerError> {
         // Generate Grid Rows
         for row in 1..=max_row {
             if hidden_rows.contains(&row) {
-                sheets_html.push_str(&format!("<tr style=\"display:none\">\n<th class=\"row-header\">{}</th>\n</tr>\n", row));
+                sheets_html.push_str(&format!(
+                    "<tr style=\"display:none\">\n<th class=\"row-header\">{}</th>\n</tr>\n",
+                    row
+                ));
                 continue;
             }
             let is_row_frozen = frozen_rows > 0 && row <= frozen_rows;
@@ -704,7 +706,8 @@ pub fn view_as_html(package: &OxmlPackage) -> Result<String, HandlerError> {
                 };
 
                 if let Some(c) = cell {
-                    let num_fmt_id = c.style_index
+                    let num_fmt_id = c
+                        .style_index
                         .and_then(|s_idx| cell_formats.get(s_idx))
                         .and_then(|fmt| fmt.num_fmt_id)
                         .unwrap_or(0);
@@ -730,8 +733,11 @@ pub fn view_as_html(package: &OxmlPackage) -> Result<String, HandlerError> {
         let mut tab_color_style = String::new();
         if let Ok(sheet_xml) = package.read_part_xml(&ws.part_path) {
             if let Ok(sheet_doc) = roxmltree::Document::parse(&sheet_xml) {
-                if let Some(sheet_pr) = sheet_doc.descendants().find(|n| n.has_tag_name("sheetPr")) {
-                    if let Some(tab_color_el) = sheet_pr.children().find(|n| n.has_tag_name("tabColor")) {
+                if let Some(sheet_pr) = sheet_doc.descendants().find(|n| n.has_tag_name("sheetPr"))
+                {
+                    if let Some(tab_color_el) =
+                        sheet_pr.children().find(|n| n.has_tag_name("tabColor"))
+                    {
                         if let Some(rgb) = tab_color_el.attribute("rgb") {
                             let clean = if rgb.len() == 8 { &rgb[2..] } else { rgb };
                             tab_color_style = format!(" style=\"--tab-color:#{};\"", clean);
@@ -966,7 +972,7 @@ fn html_escape(s: &str) -> String {
 }
 
 fn oa_date_to_date(oa_date: f64) -> Option<(i32, i32, i32, i32, i32, i32)> {
-    if oa_date < 0.0 || oa_date > 2958465.0 {
+    if !(0.0..=2958465.0).contains(&oa_date) {
         return None;
     }
     let days = oa_date.floor() as i32;
@@ -1145,7 +1151,11 @@ fn get_format_code(num_fmt_id: usize, custom_num_fmts: &HashMap<usize, String>) 
     Some(built_in.to_string())
 }
 
-fn format_cell_value(value_str: &str, num_fmt_id: usize, custom_num_fmts: &HashMap<usize, String>) -> String {
+fn format_cell_value(
+    value_str: &str,
+    num_fmt_id: usize,
+    custom_num_fmts: &HashMap<usize, String>,
+) -> String {
     if let Ok(val) = value_str.parse::<f64>() {
         let format_code = get_format_code(num_fmt_id, custom_num_fmts);
         let format_ref = format_code.as_deref();

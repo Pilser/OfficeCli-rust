@@ -232,7 +232,9 @@ fn get_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "convert".to_string(),
-            description: "Convert legacy Office formats (.doc, .xls, .ppt) to modern (.docx, .xlsx, .pptx)".to_string(),
+            description:
+                "Convert legacy Office formats (.doc, .xls, .ppt) to modern (.docx, .xlsx, .pptx)"
+                    .to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -257,10 +259,15 @@ fn execute_tool(name: &str, params: &HashMap<String, Value>) -> Result<Value, St
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing required parameter: file".to_string())?;
         let output = params.get("output").and_then(|v| v.as_str());
-        let force = params.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
-        let engine_str = params.get("engine").and_then(|v| v.as_str()).unwrap_or("libreoffice");
-        let engine = crate::commands::parse_engine(engine_str)
-            .map_err(|e| e.to_string())?;
+        let force = params
+            .get("force")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let engine_str = params
+            .get("engine")
+            .and_then(|v| v.as_str())
+            .unwrap_or("libreoffice");
+        let engine = crate::commands::parse_engine(engine_str).map_err(|e| e.to_string())?;
 
         let cmd = crate::commands::ConvertCommand {
             file: file.to_string(),

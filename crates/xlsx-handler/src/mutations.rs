@@ -687,7 +687,7 @@ pub fn apply_xlsx_range_highlights(
         let fonts_node = doc.descendants().find(|n| n.has_tag_name("fonts"));
         let mut font_copied = false;
         if let Some(fn_node) = fonts_node {
-            if let Some(first_font) = fn_node.children().filter(|n| n.has_tag_name("font")).next() {
+            if let Some(first_font) = fn_node.children().find(|n| n.has_tag_name("font")) {
                 for child in first_font.children().filter(|n| n.is_element()) {
                     if child.tag_name().name() != "color" {
                         let child_slice = &styles_xml[child.range()];
@@ -1031,14 +1031,14 @@ fn append_element_to_tag(
         }
     }
 
-    let last_child = node.children().filter(|n| n.is_element()).last();
+    let last_child = node.children().filter(|n| n.is_element()).next_back();
 
     let new_count = current_count + 1;
 
     let mut result = String::new();
 
     let full_name = xml[node_start + 1..]
-        .split(|c| c == ' ' || c == '>' || c == '/' || c == '\n' || c == '\r' || c == '\t')
+        .split([' ', '>', '/', '\n', '\r', '\t'])
         .next()
         .unwrap_or("");
     let prefix = if let Some(colon_pos) = full_name.find(':') {
@@ -1056,40 +1056,34 @@ fn append_element_to_tag(
             result.push_str(&xml[r.end..lc_end]);
             result.push_str(new_element_xml);
             result.push_str(&xml[lc_end..]);
-        } else {
-            if open_tag_text.trim_end().ends_with("/>") {
-                let tag_open_without_slash = open_tag_text.replace("/>", ">");
-                result.push_str(&xml[r.end..node_start]);
-                result.push_str(&tag_open_without_slash);
-                result.push_str(new_element_xml);
-                result.push_str(&format!("</{}{}>", prefix, node.tag_name().name()));
-                result.push_str(&xml[open_tag_end + 1..]);
-            } else {
-                result.push_str(&xml[r.end..open_tag_end + 1]);
-                result.push_str(new_element_xml);
-                result.push_str(&xml[open_tag_end + 1..]);
-            }
-        }
-    } else {
-        if let Some(lc) = last_child {
-            let lc_end = lc.range().end;
-            result.push_str(&xml[..lc_end]);
+        } else if open_tag_text.trim_end().ends_with("/>") {
+            let tag_open_without_slash = open_tag_text.replace("/>", ">");
+            result.push_str(&xml[r.end..node_start]);
+            result.push_str(&tag_open_without_slash);
             result.push_str(new_element_xml);
-            result.push_str(&xml[lc_end..]);
+            result.push_str(&format!("</{}{}>", prefix, node.tag_name().name()));
+            result.push_str(&xml[open_tag_end + 1..]);
         } else {
-            if open_tag_text.trim_end().ends_with("/>") {
-                let tag_open_without_slash = open_tag_text.replace("/>", ">");
-                result.push_str(&xml[..node_start]);
-                result.push_str(&tag_open_without_slash);
-                result.push_str(new_element_xml);
-                result.push_str(&format!("</{}{}>", prefix, node.tag_name().name()));
-                result.push_str(&xml[open_tag_end + 1..]);
-            } else {
-                result.push_str(&xml[..open_tag_end + 1]);
-                result.push_str(new_element_xml);
-                result.push_str(&xml[open_tag_end + 1..]);
-            }
+            result.push_str(&xml[r.end..open_tag_end + 1]);
+            result.push_str(new_element_xml);
+            result.push_str(&xml[open_tag_end + 1..]);
         }
+    } else if let Some(lc) = last_child {
+        let lc_end = lc.range().end;
+        result.push_str(&xml[..lc_end]);
+        result.push_str(new_element_xml);
+        result.push_str(&xml[lc_end..]);
+    } else if open_tag_text.trim_end().ends_with("/>") {
+        let tag_open_without_slash = open_tag_text.replace("/>", ">");
+        result.push_str(&xml[..node_start]);
+        result.push_str(&tag_open_without_slash);
+        result.push_str(new_element_xml);
+        result.push_str(&format!("</{}{}>", prefix, node.tag_name().name()));
+        result.push_str(&xml[open_tag_end + 1..]);
+    } else {
+        result.push_str(&xml[..open_tag_end + 1]);
+        result.push_str(new_element_xml);
+        result.push_str(&xml[open_tag_end + 1..]);
     }
 
     *xml = result;
