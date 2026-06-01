@@ -1,5 +1,6 @@
 mod add;
 mod batch;
+mod convert;
 mod create;
 mod dump;
 mod extract_text;
@@ -19,6 +20,7 @@ use clap::Args;
 
 pub use add::AddCommand;
 pub use batch::BatchCommand;
+pub use convert::{ConvertCommand, parse_engine};
 pub use create::CreateCommand;
 pub use dump::DumpCommand;
 pub use extract_text::ExtractTextCommand;
@@ -106,6 +108,8 @@ pub enum Command {
     Create(CreateCommand),
     /// Dump document structure to JSON
     Dump(DumpCommand),
+    /// Convert legacy Office formats (.doc, .xls, .ppt) to modern (.docx, .xlsx, .pptx)
+    Convert(ConvertCommand),
     /// Run commands from a batch file
     Batch(BatchCommand),
     /// Show info about the tool or document topics
@@ -125,6 +129,7 @@ pub enum Command {
 // Re-export handler functions
 pub use add::handle_add;
 pub use batch::handle_batch;
+pub use convert::handle_convert;
 pub use create::handle_create;
 pub use dump::handle_dump;
 pub use extract_text::handle_extract_text;

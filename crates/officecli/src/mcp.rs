@@ -226,8 +226,22 @@ fn get_tool_definitions() -> Vec<ToolDefinition> {
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "topic": { "type": "string", "description": "Topic: docx, xlsx, pptx, pdf, offset" },
+                    "topic": { "type": "string", "description": "Topic: docx, xlsx, pptx, pdf, offset, convert" },
                 },
+            }),
+        },
+        ToolDefinition {
+            name: "convert".to_string(),
+            description: "Convert legacy Office formats (.doc, .xls, .ppt) to modern (.docx, .xlsx, .pptx)".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "file": { "type": "string", "description": "Input file path (.doc, .xls, .ppt, .docx, .xlsx, .pptx)" },
+                    "output": { "type": "string", "description": "Output file path (optional, defaults to same path with modern extension)" },
+                    "force": { "type": "boolean", "description": "Overwrite output file if it exists" },
+                    "engine": { "type": "string", "enum": ["libreoffice", "oxide"], "default": "libreoffice", "description": "Conversion engine: libreoffice (high fidelity, needs install) or oxide (pure Rust, fast)" },
+                },
+                "required": ["file"]
             }),
         },
     ]
@@ -236,7 +250,47 @@ fn get_tool_definitions() -> Vec<ToolDefinition> {
 // ─── Tool execution ────────────────────────────────────────────────────
 
 fn execute_tool(name: &str, params: &HashMap<String, Value>) -> Result<Value, String> {
-    // All document tools require "file" parameter (except info)
+    // convert tool does not use open_handler — it operates on legacy formats directly
+    if name == "convert" {
+        let file = params
+            .get("file")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing required parameter: file".to_string())?;
+        let output = params.get("output").and_then(|v| v.as_str());
+        let force = params.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+        let engine_str = params.get("engine").and_then(|v| v.as_str()).unwrap_or("libreoffice");
+        let engine = crate::commands::parse_engine(engine_str)
+            .map_err(|e| e.to_string())?;
+
+        let cmd = crate::commands::ConvertCommand {
+            file: file.to_string(),
+            output: output.map(|s| s.to_string()),
+            force,
+            engine,
+        };
+
+        return crate::commands::handle_convert(cmd, handler_common::OutputFormat::Json)
+            .map(|s| serde_json::Value::String(s))
+            .map_err(|e| e.to_string());
+    }
+
+    // info tool does not require file parameter
+    if name == "info" {
+        let topic = params.get("topic").and_then(|v| v.as_str());
+        let info = match topic {
+            Some("docx") => "Word document (.docx): Elements: p, r, tbl, tr, tc. Paths: /body/p[N], /body/tbl[N]/tr[N]/tc[N]",
+            Some("xlsx") => "Excel spreadsheet (.xlsx): Elements: sheet, cell, chart, table, pivot. Paths: /SheetName/A1",
+            Some("pptx") => "PowerPoint (.pptx): Elements: slide, shape, picture, textbox, table. Paths: /slide[N]/shape[N]",
+            Some("pdf") => "PDF: Elements: page, text, image, annotation. Paths: /page[N]",
+            Some("offset") => "Text Offset Mapping: Use extract_text tool to get text+offset->path mapping",
+            Some("convert") => "Convert: .doc->.docx, .xls->.xlsx, .ppt->.pptx. Also supports re-saving modern formats.",
+            None => "OfficeCLI Tools: view, get, query, set, add, remove, move, validate, extract_text, save, raw, convert, info",
+            Some(other) => return Err(format!("unknown info topic: {}", other)),
+        };
+        return Ok(serde_json::Value::String(info.to_string()));
+    }
+
+    // All other document tools require "file" parameter
     let file = params
         .get("file")
         .and_then(|v| v.as_str())
@@ -412,19 +466,6 @@ fn execute_tool(name: &str, params: &HashMap<String, Value>) -> Result<Value, St
                 .raw(part, opts)
                 .map(|content| serde_json::Value::String(content))
                 .map_err(|e| e.to_string())
-        }
-        "info" => {
-            let topic = params.get("topic").and_then(|v| v.as_str());
-            let info = match topic {
-                Some("docx") => "Word document (.docx): Elements: p, r, tbl, tr, tc. Paths: /body/p[N], /body/tbl[N]/tr[N]/tc[N]",
-                Some("xlsx") => "Excel spreadsheet (.xlsx): Elements: sheet, cell, chart, table, pivot. Paths: /SheetName/A1",
-                Some("pptx") => "PowerPoint (.pptx): Elements: slide, shape, picture, textbox, table. Paths: /slide[N]/shape[N]",
-                Some("pdf") => "PDF: Elements: page, text, image, annotation. Paths: /page[N]",
-                Some("offset") => "Text Offset Mapping: Use extract_text tool to get text+offset->path mapping",
-                None => "OfficeCLI Tools: view, get, query, set, add, remove, move, validate, extract_text, save, raw, info",
-                Some(other) => return Err(format!("unknown info topic: {}", other)),
-            };
-            Ok(serde_json::Value::String(info.to_string()))
         }
         other => Err(format!("unknown tool: {}", other)),
     }

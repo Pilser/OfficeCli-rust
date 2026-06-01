@@ -28,3 +28,4 @@ uuid = { workspace = true }
 thiserror = { workspace = true }
 futures = "0.3"
 async-stream = "0.3"
+office_oxide = { workspace = true }

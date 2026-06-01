@@ -43,6 +43,8 @@ use std::path::PathBuf;
 #[command(after_help = "\
 EXAMPLES:
   officecli create demo.docx                  Create a blank Word document
+  officecli convert old.doc                   Convert legacy .doc to .docx
+  officecli convert old.xls -o new.xlsx       Convert with explicit output path
   officecli view demo.docx                    View document as plain text
   officecli view demo.docx -m outline         View outline with metadata
   officecli view demo.pdf -m annotated        View PDF with bbox coordinates
@@ -129,6 +131,7 @@ fn main() {
         commands::Command::ExtractText(cmd) => commands::handle_extract_text(cmd, format),
         commands::Command::Create(cmd) => commands::handle_create(cmd, format),
         commands::Command::Dump(cmd) => commands::handle_dump(cmd, format),
+        commands::Command::Convert(cmd) => commands::handle_convert(cmd, format),
         commands::Command::Batch(cmd) => commands::handle_batch(cmd, format),
         commands::Command::Info(cmd) => commands::handle_info(cmd, format),
         commands::Command::Open(cmd) => handle_open(cmd),
