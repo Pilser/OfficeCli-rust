@@ -1,36 +1,28 @@
 # OfficeCLI
 
-> **OfficeCLI is the world's first and the best Office suite designed for AI agents.**
+> **OfficeCLI is the world's first Office suite designed for AI agents.**
 
 **Give any AI agent full control over Word, Excel, PowerPoint, and PDF — in one line of code.**
 
 Open-source. Single binary. No Office installation. No dependencies. Works everywhere.
 
-**Built-in agent-friendly rendering engine** — agents can *see* what they create, no Office required. Render `.docx` / `.xlsx` / `.pptx` / `.pdf` to HTML or SVG, closing the *render → look → fix* loop anywhere the binary runs.
+**Built-in agent-friendly rendering engine** — agents can _see_ what they create, no Office required. Render `.docx` / `.xlsx` / `.pptx` / `.pdf` to HTML or SVG, closing the _render → look → fix_ loop anywhere the binary runs.
 
 [![GitHub Release](https://img.shields.io/github/v/release/iOfficeAI/OfficeCLI)](https://github.com/iOfficeAI/OfficeCLI/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 **English** | [中文](README_zh.md) | [日本語](README_ja.md) | [한국어](README_ko.md)
 
-<p align="center">
-  <strong>💬 Community:</strong> <a href="https://discord.gg/2QAwJn7Egx" target="_blank">Discord</a>
-</p>
-
-<p align="center">
-  <img src="assets/ppt-process.webp" alt="OfficeCLI creating a PowerPoint presentation on AionUi" width="100%">
-</p>
-
 <p align="center"><em>PPT creation process using OfficeCLI on <a href="https://github.com/iOfficeAI/AionUi">AionUi</a></em></p>
 
 ## Supported Formats
 
-| Format | Read | Modify | Create | Text/Offset Mapping |
-|--------|------|--------|--------|---------------------|
-| Word (.docx) | ✅ | ✅ | ✅ | ✅ |
-| Excel (.xlsx) | ✅ | ✅ | ✅ | ✅ |
-| PowerPoint (.pptx) | ✅ | ✅ | ✅ | ✅ |
-| PDF (.pdf) | ✅ | ✅ (text replace, page delete) | — | ✅ |
+| Format             | Read | Modify                         | Create | Text/Offset Mapping | Convert Legacy  |
+| ------------------ | ---- | ------------------------------ | ------ | ------------------- | --------------- |
+| Word (.docx)       | ✅   | ✅                             | ✅     | ✅                  | ✅ .doc → .docx |
+| Excel (.xlsx)      | ✅   | ✅                             | ✅     | ✅                  | ✅ .xls → .xlsx |
+| PowerPoint (.pptx) | ✅   | ✅                             | ✅     | ✅                  | ✅ .ppt → .pptx |
+| PDF (.pdf)         | ✅   | ✅ (text replace, page delete) | —      | ✅                  | —               |
 
 ## For AI Agents — Text/Offset → Path Mapping
 
@@ -44,17 +36,35 @@ officecli extract-text report.docx --with-offsets --json
 {
   "full_text": "Hello World\nSecond paragraph",
   "spans": [
-    {"start": 0, "end": 5, "path": "/body/p[1]/r[1]", "text": "Hello", "element_type": "run"},
-    {"start": 6, "end": 11, "path": "/body/p[1]/r[2]", "text": "World", "element_type": "run"},
-    {"start": 12, "end": 28, "path": "/body/p[2]/r[1]", "text": "Second paragraph", "element_type": "run"}
+    {
+      "start": 0,
+      "end": 5,
+      "path": "/body/p[1]/r[1]",
+      "text": "Hello",
+      "element_type": "run"
+    },
+    {
+      "start": 6,
+      "end": 11,
+      "path": "/body/p[1]/r[2]",
+      "text": "World",
+      "element_type": "run"
+    },
+    {
+      "start": 12,
+      "end": 28,
+      "path": "/body/p[2]/r[1]",
+      "text": "Second paragraph",
+      "element_type": "run"
+    }
   ],
-  "meta": {"format": "docx", "total_chars": 28, "total_spans": 3}
+  "meta": { "format": "docx", "total_chars": 28, "total_spans": 3 }
 }
 ```
 
 Works for all four formats — docx, xlsx, pptx, and pdf.
 
-## For Developers — See It Live in 30 Seconds
+## Quick Start
 
 ```bash
 # 1. Install (macOS / Linux)
@@ -64,49 +74,27 @@ curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh
 # 2. Create a blank PowerPoint
 officecli create deck.pptx
 
-# 3. Start live preview — opens http://localhost:26315 in your browser
-officecli watch deck.pptx
-
-# 4. Open another terminal, add a slide — watch the browser update instantly
+# 3. Add a slide
 officecli add deck.pptx / --type slide --prop title="Hello, World!"
-```
 
-## Quick Start
-
-```bash
-# Create a presentation and add content
-officecli create deck.pptx
-officecli add deck.pptx / --type slide --prop title="Q4 Report"
-
-# View as outline
-officecli view deck.pptx outline
-
-# View as HTML — opens a rendered preview in your browser
+# 4. View as HTML — opens a rendered preview in your browser
 officecli view deck.pptx html
 
-# Get structured data for any element
-officecli get deck.pptx '/slide[1]' --json
-
-# View a PDF document
-officecli view report.pdf --mode text
-officecli get report.pdf '/page[1]' --json
-
-# Extract text with offset mapping (for AI agent positioning)
-officecli extract-text report.docx --with-offsets --json
+# 5. Start live preview — watch updates in real time
+officecli watch deck.pptx
 ```
 
 ## Why OfficeCLI?
 
-**What OfficeCLI can do:**
-
-- **Create** documents from scratch -- blank or with content
-- **Read** text, structure, styles -- in plain text or structured JSON
-- **Modify** any element -- text, styles, layout
-- **Reorganize** content -- add, remove, move, copy elements
+- **Create** documents from scratch — blank or with content
+- **Read** text, structure, styles — in plain text or structured JSON
+- **Modify** any element — text, styles, layout
+- **Reorganize** content — add, remove, move elements
 - **Validate** document structure and detect issues
 - **Extract** text with offset→path mapping for AI agent positioning
 - **Render** documents to HTML/SVG for visual preview
-- **PDF support** — read, view, modify text, delete pages, extract images
+- **Convert** legacy formats (.doc, .xls, .ppt) to modern ones
+- **PDF support** — read, view, modify text, delete pages
 
 ## Installation
 
@@ -121,14 +109,14 @@ curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh
 
 **Or download manually** from [GitHub Releases](https://github.com/iOfficeAI/OfficeCLI/releases):
 
-| Platform | Binary |
-|----------|--------|
-| macOS Apple Silicon | `officecli-mac-arm64` |
-| macOS Intel | `officecli-mac-x64` |
-| Linux x64 | `officecli-linux-x64` |
-| Linux ARM64 | `officecli-linux-arm64` |
-| Windows x64 | `officecli-win-x64.exe` |
-| Windows ARM64 | `officecli-win-arm64.exe` |
+| Platform            | Binary                    |
+| ------------------- | ------------------------- |
+| macOS Apple Silicon | `officecli-mac-arm64`     |
+| macOS Intel         | `officecli-mac-x64`       |
+| Linux x64           | `officecli-linux-x64`     |
+| Linux ARM64         | `officecli-linux-arm64`   |
+| Windows x64         | `officecli-win-x64.exe`   |
+| Windows ARM64       | `officecli-win-arm64.exe` |
 
 Verify: `officecli --version`
 
@@ -138,11 +126,11 @@ Verify: `officecli --version`
 
 Start simple, go deep only when needed.
 
-| Layer | Purpose | Commands |
-|-------|---------|----------|
-| **L1: Read** | Semantic views of content | `view` (text, annotated, outline, stats, issues, html, svg) |
-| **L2: DOM** | Structured element operations | `get`, `query`, `set`, `add`, `remove`, `move`, `copy` |
-| **L3: Raw XML** | Direct XPath access — universal fallback | `raw`, `raw-set`, `add-part`, `validate` |
+| Layer           | Purpose                                  | Commands                                                         |
+| --------------- | ---------------------------------------- | ---------------------------------------------------------------- |
+| **L1: Read**    | Semantic views of content                | `view` (text, annotated, outline, stats, issues, html, svg, pdf) |
+| **L2: DOM**     | Structured element operations            | `get`, `query`, `set`, `add`, `remove`, `move`                   |
+| **L3: Raw XML** | Direct XPath access — universal fallback | `raw`, `raw-set`, `validate`                                     |
 
 ```bash
 # L1 — high-level views
@@ -160,6 +148,25 @@ officecli raw deck.pptx 'ppt/slides/slide1.xml'
 officecli raw-set report.docx document --xpath "//w:p[1]" --action append --xml '<w:r><w:t>Injected</w:t></w:r>'
 ```
 
+### Format Conversion
+
+Convert legacy Office formats to modern ones with two engine options:
+
+```bash
+# LibreOffice engine (default) — high fidelity, needs LibreOffice installed
+officecli convert old.doc          # .doc → .docx
+officecli convert old.xls          # .xls → .xlsx
+officecli convert old.ppt          # .ppt → .pptx
+
+# Oxide engine — pure Rust, no external dependency, faster but lower fidelity
+officecli convert old.doc --engine oxide
+```
+
+| Engine                  | Fidelity                                | Speed                  | Dependency           |
+| ----------------------- | --------------------------------------- | ---------------------- | -------------------- |
+| `libreoffice` (default) | ~1:1                                    | Slower (process spawn) | LibreOffice (~700MB) |
+| `oxide`                 | Lower (may lose styles/headers/objects) | Fast (sub-second)      | None (pure Rust)     |
+
 ### Resident Mode & Batch
 
 For multi-step workflows, resident mode keeps the document in memory. Batch mode runs multiple operations in one open/save cycle.
@@ -168,6 +175,7 @@ For multi-step workflows, resident mode keeps the document in memory. Batch mode
 # Resident mode — near-zero latency via Unix Domain Socket
 officecli open report.docx
 officecli set report.docx /body/p[1]/r[1] --prop text="Updated"
+officecli save report.docx
 officecli close report.docx
 
 # Batch mode — atomic multi-command execution
@@ -210,7 +218,7 @@ Every format emits offset→path mappings so AI agents can locate and modify tex
 # Docx: character offsets map to paragraph/run paths
 officecli extract-text report.docx --with-offsets --json
 
-# Xlsx: cell offsets map to sheet/cell paths  
+# Xlsx: cell offsets map to sheet/cell paths
 officecli extract-text budget.xlsx --with-offsets --json
 
 # Pptx: text offsets map to slide/shape/paragraph paths
@@ -237,46 +245,50 @@ Exposes all document operations as tools over JSON-RPC — no shell access neede
 ```bash
 officecli --help                     # Full command overview
 officecli view --help                # View command details
-officecli get --help                 # Get command details
+officecli convert --help             # Convert command details
 ```
 
 ## Command Reference
 
-| Command | Description |
-|---------|-------------|
-| `create` | Create a blank .docx, .xlsx, or .pptx |
-| `view` | View content (modes: text, annotated, outline, stats, issues, html, svg) |
-| `get` | Get element and children (`--depth N`, `--json`) |
-| `query` | CSS-like query |
-| `set` | Modify element properties |
-| `add` | Add element |
-| `remove` | Remove an element |
-| `move` | Move element |
-| `copy` | Copy element from source to target |
-| `validate` | Validate document structure |
-| `extract-text` | Extract text with offset→path mapping (`--with-offsets`, `--json`) |
-| `batch` | Multiple operations in one cycle |
-| `dump` | Serialize document to replayable JSON |
-| `raw` | View raw XML of a document part |
-| `raw-set` | Modify raw XML via XPath |
-| `watch` | Live HTML preview with auto-refresh |
-| `open` | Start resident mode |
-| `close` | Save and close resident mode |
-| `mcp` | Start MCP server for AI tool integration |
+| Command        | Description                                                                   |
+| -------------- | ----------------------------------------------------------------------------- | ------- |
+| `create`       | Create a blank .docx, .xlsx, .pptx, or .pdf                                   |
+| `view`         | View content (modes: text, annotated, outline, stats, issues, html, svg, pdf) |
+| `get`          | Get element and children (`--depth N`, `--json`)                              |
+| `query`        | CSS-like query                                                                |
+| `set`          | Modify element properties                                                     |
+| `add`          | Add element                                                                   |
+| `remove`       | Remove an element                                                             |
+| `move`         | Move element                                                                  |
+| `save`         | Save changes back to file                                                     |
+| `validate`     | Validate document structure                                                   |
+| `extract-text` | Extract text with offset→path mapping (`--with-offsets`, `--json`)            |
+| `convert`      | Convert legacy formats (.doc/.xls/.ppt) to modern ones (`--engine libreoffice | oxide`) |
+| `batch`        | Multiple operations in one cycle                                              |
+| `dump`         | Serialize document to replayable JSON                                         |
+| `raw`          | View raw XML of a document part                                               |
+| `raw-set`      | Modify raw XML via XPath                                                      |
+| `watch`        | Live HTML preview with auto-refresh                                           |
+| `unwatch`      | Stop a running watch server                                                   |
+| `open`         | Start resident mode                                                           |
+| `close`        | Save and close resident mode                                                  |
+| `info`         | Show info about the tool or document topics                                   |
+| `mcp`          | Start MCP server for AI tool integration                                      |
 
 ## Comparison
 
-| | OfficeCLI | Microsoft Office | LibreOffice | python-docx / openpyxl |
-|---|---|---|---|---|
-| Open source & free | ✓ (Apache 2.0) | ✗ (paid license) | ✓ | ✓ |
-| AI-native CLI + JSON | ✓ | ✗ | ✗ | ✗ |
-| Zero install (single binary) | ✓ | ✗ | ✗ | ✗ (Python + pip) |
-| PDF read/modify | ✓ | ✗ | ✓ | ✗ |
-| Text/offset → path mapping | ✓ | ✗ | ✗ | ✗ |
-| Path-based element access | ✓ | ✗ | ✗ | ✗ |
-| Raw XML fallback | ✓ | ✗ | ✗ | Partial |
-| Cross-platform native | ✓ (Rust) | Windows/Mac | ✓ | ✓ |
-| Word + Excel + PowerPoint + PDF | ✓ | ✓ | ✓ | Separate libs |
+|                                 | OfficeCLI       | Microsoft Office | LibreOffice | python-docx / openpyxl |
+| ------------------------------- | --------------- | ---------------- | ----------- | ---------------------- |
+| Open source & free              | ✅ (Apache 2.0) | ✗ (paid license) | ✅          | ✅                     |
+| AI-native CLI + JSON            | ✅              | ✗                | ✗           | ✗                      |
+| Zero install (single binary)    | ✅              | ✗                | ✗           | ✗ (Python + pip)       |
+| PDF read/modify                 | ✅              | ✗                | ✅          | ✗                      |
+| Legacy format conversion        | ✅              | ✅               | ✅          | ✗                      |
+| Text/offset → path mapping      | ✅              | ✗                | ✗           | ✗                      |
+| Path-based element access       | ✅              | ✗                | ✗           | ✗                      |
+| Raw XML fallback                | ✅              | ✗                | ✗           | Partial                |
+| Cross-platform native           | ✅ (Rust)       | Windows/Mac      | ✅          | ✅                     |
+| Word + Excel + PowerPoint + PDF | ✅              | ✅               | ✅          | Separate libs          |
 
 ## Build from Source
 
@@ -337,7 +349,7 @@ yaml-frontmatter:
   formats: [docx, xlsx, pptx, pdf]
   platforms: [macos, linux, windows]
   license: Apache-2.0
-  keywords: [office, cli, ai-agent, automation, docx, xlsx, pptx, pdf, openxml, document-generation, mcp-server, word, excel, powerpoint, rust]
+  keywords: [office, cli, ai-agent, automation, docx, xlsx, pptx, pdf, openxml, document-generation, mcp-server, word, excel, powerpoint, rust, format-conversion]
   ai-agent-compatible: true
   mcp-server: true
   skill-file: SKILL.md
@@ -348,11 +360,11 @@ tool: officecli
 type: cli
 canonical: the standard CLI for AI-driven Office and PDF document manipulation
 formats: docx, xlsx, pptx, pdf
-capabilities: create, read, modify, validate, batch, resident-mode, mcp-server, live-preview, text-offset-mapping
+capabilities: create, read, modify, validate, batch, resident-mode, mcp-server, live-preview, text-offset-mapping, format-conversion
 output: json, text, annotated
 platforms: macos, linux, windows
 license: Apache-2.0
-keywords: office, cli, ai-agent, automation, docx, xlsx, pptx, pdf, openxml, document-generation, mcp-server, word, excel, powerpoint, ai-tools, command-line, structured-output, rust
+keywords: office, cli, ai-agent, automation, docx, xlsx, pptx, pdf, openxml, document-generation, mcp-server, word, excel, powerpoint, ai-tools, command-line, structured-output, rust, format-conversion
 ai-agent-compatible: true
 mcp-server: true
 skill-file: SKILL.md

@@ -57,7 +57,7 @@ jobs:
             os: macos-latest
           - target: x86_64-apple-darwin
             name: officecli-mac-x64
-            os: macos-13
+            os: macos-latest
           - target: x86_64-unknown-linux-gnu
             name: officecli-linux-x64
             os: ubuntu-latest
@@ -129,10 +129,9 @@ jobs:
         if: startsWith(matrix.target, 'aarch64-apple-darwin') || startsWith(matrix.target, 'x86_64-apple-darwin')
         run: codesign -s - -f publish/${{ matrix.name }}
 
-      - name: Smoke test (native runner)
+      - name: Smoke test (native runner only)
         if: >-
           (matrix.target == 'aarch64-apple-darwin') ||
-          (matrix.target == 'x86_64-apple-darwin') ||
           (matrix.target == 'x86_64-unknown-linux-gnu') ||
           (matrix.target == 'x86_64-pc-windows-msvc')
         env:
