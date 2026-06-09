@@ -297,6 +297,7 @@ impl DocumentHandler for WordHandler {
         element_type: &str,
         position: InsertPosition,
         properties: &HashMap<String, String>,
+        wrap: Option<&str>,
     ) -> Result<String, HandlerError> {
         if !self.editable {
             return Err(HandlerError::OperationFailed(
@@ -304,7 +305,7 @@ impl DocumentHandler for WordHandler {
             ));
         }
         let mut dom = self.parse_dom()?;
-        let new_path = add_element(&mut dom, parent, element_type, position, properties)?;
+        let new_path = add_element(&mut dom, parent, element_type, position, properties, wrap)?;
         self.write_dom(&dom)?;
         Ok(new_path)
     }
@@ -358,6 +359,7 @@ impl DocumentHandler for WordHandler {
             elem_type,
             position,
             &HashMap::new(),
+            None,
         )?;
         let target_node = navigate_to_element_mut(&mut dom, &new_path)?;
         *target_node = source_node;

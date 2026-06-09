@@ -6,11 +6,16 @@ use std::collections::HashMap;
 
 /// Set properties on an element at a given path.
 /// Supported property changes:
-/// - On paragraphs: style, alignment, indent, spacing
-/// - On runs: text, bold, italic, underline, font, size, color
+/// - On paragraphs: text, style, alignment, indent, spacing
+/// - On runs: text, bold, italic, underline, font, size, color, bgColor
 /// - On text (w:t): text content
+/// - On tables: style, width
+/// - On rows: height
+/// - On cells: text, width
+/// - On bookmarkStart: name, text, id
+/// - On bookmarkEnd: id
 ///
-/// Returns list of paths that were modified.
+/// Returns list of unrecognized property keys (empty = all applied).
 pub fn set_properties(
     dom: &mut WordDom,
     path: &str,
@@ -32,6 +37,8 @@ pub fn set_properties(
         "tbl" => set_table_properties(dom, path, properties),
         "tr" => set_row_properties(dom, path, properties),
         "tc" => set_cell_properties(dom, path, properties),
+        "bookmarkStart" => set_bookmark_properties(dom, path, properties),
+        "bookmarkEnd" => set_bookmark_end_properties(dom, path, properties),
         other => Err(HandlerError::UnsupportedProperty(format!(
             "cannot set properties on element type: {}",
             other
@@ -78,7 +85,15 @@ fn set_paragraph_properties(
         }
     }
 
-    Ok(vec![path.to_string()])
+    // Collect unrecognized property keys
+    let recognized = ["text", "style", "pStyle", "alignment", "jc",
+        "indentLeft", "indentRight", "spacingBefore", "spacingAfter"];
+    let unsupported: Vec<String> = properties.keys()
+        .filter(|k| !recognized.contains(&k.as_str()))
+        .cloned()
+        .collect();
+
+    Ok(unsupported)
 }
 
 /// Set paragraph text by replacing all runs with a single run containing the new text.
@@ -171,7 +186,15 @@ fn set_run_properties(
         }
     }
 
-    Ok(vec![path.to_string()])
+    let recognized = ["text", "bold", "b", "italic", "i", "underline", "u",
+        "strike", "strikeout", "font", "fontFamily", "size", "fontSize",
+        "color", "fontColor", "bgColor", "highlight", "bg"];
+    let unsupported: Vec<String> = properties.keys()
+        .filter(|k| !recognized.contains(&k.as_str()))
+        .cloned()
+        .collect();
+
+    Ok(unsupported)
 }
 
 /// Set text content directly on a w:t element.
@@ -189,7 +212,11 @@ fn set_text_content(
                 .insert("xml:space".to_string(), "preserve".to_string());
             text_node.preserve_space = true;
         }
-        Ok(vec![path.to_string()])
+        let unsupported: Vec<String> = properties.keys()
+            .filter(|k| k.as_str() != "text")
+            .cloned()
+            .collect();
+        Ok(unsupported)
     } else {
         Err(HandlerError::UnsupportedProperty(
             "text node only supports 'text' property".to_string(),
@@ -234,7 +261,13 @@ fn set_table_properties(
         table.children.insert(0, tbl_pr);
     }
 
-    Ok(vec![path.to_string()])
+    let recognized = ["style", "tblStyle", "width"];
+    let unsupported: Vec<String> = properties.keys()
+        .filter(|k| !recognized.contains(&k.as_str()))
+        .cloned()
+        .collect();
+
+    Ok(unsupported)
 }
 
 /// Set row properties (minimal).
@@ -258,7 +291,13 @@ fn set_row_properties(
         row.children.insert(0, tr_pr);
     }
 
-    Ok(vec![path.to_string()])
+    let recognized = ["height"];
+    let unsupported: Vec<String> = properties.keys()
+        .filter(|k| !recognized.contains(&k.as_str()))
+        .cloned()
+        .collect();
+
+    Ok(unsupported)
 }
 
 /// Set cell properties.
@@ -307,7 +346,13 @@ fn set_cell_properties(
         }
     }
 
-    Ok(vec![path.to_string()])
+    let recognized = ["text", "width"];
+    let unsupported: Vec<String> = properties.keys()
+        .filter(|k| !recognized.contains(&k.as_str()))
+        .cloned()
+        .collect();
+
+    Ok(unsupported)
 }
 
 /// Remove an element at the given path.
@@ -399,6 +444,7 @@ pub fn move_element(
         elem_type,
         position,
         &std::collections::HashMap::new(),
+        None,
     )?;
 
     // Now replace the added empty element with the cloned source content
@@ -406,4 +452,172 @@ pub fn move_element(
     *target_node = source_node;
 
     Ok(new_path)
+}
+
+// ─── Bookmark Set Properties ──────────────────────────────────
+
+/// Set properties on a BookmarkStart element.
+/// Supported properties:
+/// - name: rename the bookmark (rejects duplicates)
+/// - text: replace content between BookmarkStart and BookmarkEnd
+/// - id: update the bookmark ID (updates both start and paired end)
+fn set_bookmark_properties(
+    dom: &mut WordDom,
+    path: &str,
+    properties: &HashMap<String, String>,
+) -> Result<Vec<String>, HandlerError> {
+    // First pass: read-only to gather info
+    let node = navigate_to_element(dom, path)?;
+    if node.element_type != WordElementType::BookmarkStart {
+        return Err(HandlerError::InvalidArgument(format!(
+            "path does not point to a bookmarkStart: {:?}",
+            node.element_type
+        )));
+    }
+    let current_id = node.attributes.get("id").cloned().unwrap_or_default();
+
+    // Validate name if present
+    if let Some(new_name) = properties.get("name") {
+        crate::helpers::validate_bookmark_name(new_name)?;
+        let body = dom.root.children.iter().find(|c| c.element_type == WordElementType::Body);
+        if let Some(body) = body {
+            if find_other_bookmark_by_name(body, new_name) {
+                return Err(HandlerError::InvalidArgument(format!(
+                    "bookmark name '{}' already exists; pick a unique name.", new_name
+                )));
+            }
+        }
+    }
+
+    // Validate id if present
+    if let Some(new_id) = properties.get("id") {
+        let id_val: i32 = new_id.parse().map_err(|_| HandlerError::InvalidArgument(format!(
+            "bookmark id must be a non-negative integer, got: {}", new_id
+        )))?;
+        if id_val < 0 {
+            return Err(HandlerError::InvalidArgument("bookmark id must be non-negative".to_string()));
+        }
+    }
+
+    // Second pass: mutations
+    // Handle 'name' property
+    if let Some(new_name) = properties.get("name") {
+        let node = navigate_to_element_mut(dom, path)?;
+        node.attributes.insert("name".to_string(), new_name.clone());
+    }
+
+    // Handle 'text' property: replace content between BookmarkStart and BookmarkEnd
+    if let Some(new_text) = properties.get("text") {
+        let parent_path = crate::navigation::parent_path(path)
+            .ok_or_else(|| HandlerError::InvalidPath("bookmark has no parent".to_string()))?;
+        let parent = navigate_to_element_mut(dom, &parent_path)?;
+
+        let start_idx = parent.children.iter().position(|c| c.element_type == WordElementType::BookmarkStart
+            && c.attributes.get("id").map(|s| s.as_str()) == Some(&current_id))
+            .ok_or_else(|| HandlerError::PathNotFound("bookmarkStart not found in parent".to_string()))?;
+
+        let end_idx = parent.children.iter().position(|c| c.element_type == WordElementType::BookmarkEnd
+            && c.attributes.get("id").map(|s| s.as_str()) == Some(&current_id))
+            .ok_or_else(|| HandlerError::PathNotFound("bookmarkEnd not found in parent".to_string()))?;
+
+        // Collect indices of content to remove (between start and end)
+        let remove_indices: Vec<usize> = (start_idx + 1..end_idx)
+            .filter(|i| {
+                let child = &parent.children[*i];
+                matches!(child.element_type, WordElementType::Run | WordElementType::Text | WordElementType::Hyperlink)
+            })
+            .collect();
+
+        // Remove in reverse to keep indices stable
+        for idx in remove_indices.iter().rev() {
+            parent.children.remove(*idx);
+        }
+
+        // Insert new run after BookmarkStart
+        let run = crate::add::make_run_with_text(new_text, &HashMap::new());
+        let new_start_idx = parent.children.iter().position(|c| c.element_type == WordElementType::BookmarkStart
+            && c.attributes.get("id").map(|s| s.as_str()) == Some(&current_id))
+            .unwrap_or(start_idx);
+        parent.children.insert(new_start_idx + 1, run);
+    }
+
+    // Handle 'id' property: update both BookmarkStart and paired BookmarkEnd
+    if let Some(new_id) = properties.get("id") {
+        let node = navigate_to_element_mut(dom, path)?;
+        node.attributes.insert("id".to_string(), new_id.clone());
+        update_paired_bookmark_end(dom, &current_id, new_id)?;
+    }
+
+    let recognized = ["name", "text", "id"];
+    let unsupported: Vec<String> = properties.keys()
+        .filter(|k| !recognized.contains(&k.as_str()))
+        .cloned()
+        .collect();
+
+    Ok(unsupported)
+}
+
+/// Set properties on a BookmarkEnd element (minimal: only id update).
+fn set_bookmark_end_properties(
+    dom: &mut WordDom,
+    path: &str,
+    properties: &HashMap<String, String>,
+) -> Result<Vec<String>, HandlerError> {
+    let node = navigate_to_element_mut(dom, path)?;
+
+    if node.element_type != WordElementType::BookmarkEnd {
+        return Err(HandlerError::InvalidArgument(format!(
+            "path does not point to a bookmarkEnd: {:?}",
+            node.element_type
+        )));
+    }
+
+    // Handle 'id' property
+    if let Some(new_id) = properties.get("id") {
+        node.attributes.insert("id".to_string(), new_id.clone());
+    }
+
+    let recognized = ["id"];
+    let unsupported: Vec<String> = properties.keys()
+        .filter(|k| !recognized.contains(&k.as_str()))
+        .cloned()
+        .collect();
+
+    Ok(unsupported)
+}
+
+/// Check if any BookmarkStart in the document has the given name.
+fn find_other_bookmark_by_name(node: &WordNode, name: &str) -> bool {
+    if node.element_type == WordElementType::BookmarkStart
+        && node.attributes.get("name").map(|s| s.as_str()) == Some(name) {
+            return true;
+        }
+    node.children.iter().any(|c| find_other_bookmark_by_name(c, name))
+}
+
+/// Update all BookmarkEnd nodes matching the old ID to the new ID.
+fn update_paired_bookmark_end(
+    dom: &mut WordDom,
+    old_id: &str,
+    new_id: &str,
+) -> Result<(), HandlerError> {
+    let body_idx = dom
+        .root
+        .children
+        .iter()
+        .position(|c| c.element_type == WordElementType::Body)
+        .ok_or_else(|| HandlerError::OperationFailed("body element not found".to_string()))?;
+
+    update_bookmark_end_in_node(&mut dom.root.children[body_idx], old_id, new_id);
+    Ok(())
+}
+
+fn update_bookmark_end_in_node(node: &mut WordNode, old_id: &str, new_id: &str) {
+    if node.element_type == WordElementType::BookmarkEnd
+        && node.attributes.get("id").map(|s| s.as_str()) == Some(old_id) {
+            node.attributes.insert("id".to_string(), new_id.to_string());
+        }
+    for child in &mut node.children {
+        update_bookmark_end_in_node(child, old_id, new_id);
+    }
 }

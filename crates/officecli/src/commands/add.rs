@@ -2,7 +2,7 @@ use clap::Args;
 use handler_common::{HandlerError, InsertPosition, OutputFormat};
 use std::collections::HashMap;
 
-/// Insert a new element (paragraph, table, slide, image) into the document
+/// Insert a new element (paragraph, table, slide, image, bookmark) into the document
 #[derive(Args)]
 pub struct AddCommand {
     /// Document file path
@@ -23,15 +23,35 @@ pub struct AddCommand {
     /// Properties (key=value pairs)
     #[arg(long, num_args = 1..)]
     pub properties: Vec<String>,
+
+    /// Wrap an existing element: bookmarkStart goes before, bookmarkEnd goes after the target
+    #[arg(long)]
+    pub wrap: Option<String>,
+
+    /// Range-paths for bookmark: insert bookmarkStart/End around text at char offsets
+    /// Syntax: /path[start..end],/path[start..end] (same as set --range-paths)
+    #[arg(long)]
+    pub range_paths: Option<String>,
 }
 
 pub fn handle_add(cmd: AddCommand, format: OutputFormat) -> Result<String, HandlerError> {
     let handler = crate::open_handler(&cmd.file, true)?;
 
     let position = parse_position(cmd.position.as_deref());
-    let properties = parse_properties(&cmd.properties);
+    let mut properties = parse_properties(&cmd.properties);
 
-    let new_path = handler.add(&cmd.parent, &cmd.type_name, position, &properties)?;
+    // Merge range_paths into properties (same pattern as set command)
+    if let Some(rp) = &cmd.range_paths {
+        properties.insert("range_paths".to_string(), rp.clone());
+    }
+
+    let new_path = handler.add(
+        &cmd.parent,
+        &cmd.type_name,
+        position,
+        &properties,
+        cmd.wrap.as_deref(),
+    )?;
     handler.save()?;
 
     match format {

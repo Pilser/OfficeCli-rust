@@ -107,6 +107,7 @@ impl DocumentHandler for PptxHandler {
         element_type: &str,
         position: InsertPosition,
         properties: &HashMap<String, String>,
+        _wrap: Option<&str>,
     ) -> Result<String, HandlerError> {
         if !self.editable {
             return Err(HandlerError::OperationFailed(

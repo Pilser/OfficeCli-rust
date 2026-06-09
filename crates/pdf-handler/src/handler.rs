@@ -437,6 +437,7 @@ impl DocumentHandler for PdfHandler {
         element_type: &str,
         _position: InsertPosition,
         _properties: &HashMap<String, String>,
+        _wrap: Option<&str>,
     ) -> Result<String, HandlerError> {
         Err(HandlerError::UnsupportedType(format!(
             "PDF does not support adding {}",

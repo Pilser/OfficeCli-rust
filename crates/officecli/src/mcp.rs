@@ -412,7 +412,7 @@ fn execute_tool(name: &str, params: &HashMap<String, Value>) -> Result<Value, St
                 .unwrap_or_default();
 
             handler
-                .add(parent, element_type, position, &properties)
+                .add(parent, element_type, position, &properties, None)
                 .map(|new_path| serde_json::json!({"path": new_path}))
                 .map_err(|e| e.to_string())
         }

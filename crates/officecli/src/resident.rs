@@ -186,7 +186,7 @@ fn execute_request(handler: &dyn DocumentHandler, req: &IpcRequest) -> IpcRespon
                 .unwrap_or("");
             let position = parse_insert_position(&req.params);
             let properties = string_map_from_params(&req.params, "properties");
-            match handler.add(parent, element_type, position, &properties) {
+            match handler.add(parent, element_type, position, &properties, None) {
                 Ok(new_path) => IpcResponse::ok(serde_json::json!({"path": new_path})),
                 Err(e) => IpcResponse::err(e.to_string()),
             }

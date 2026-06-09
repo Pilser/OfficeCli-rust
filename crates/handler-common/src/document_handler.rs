@@ -49,6 +49,7 @@ pub trait DocumentHandler: Send {
         element_type: &str,
         position: InsertPosition,
         properties: &HashMap<String, String>,
+        wrap: Option<&str>,
     ) -> Result<String, HandlerError>;
     fn remove(&self, path: &str) -> Result<Option<String>, HandlerError>;
     fn move_element(

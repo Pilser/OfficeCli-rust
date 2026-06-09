@@ -136,6 +136,91 @@ pub fn find_paragraph_by_para_id(dom: &crate::dom_types::WordDom, para_id: &str)
     None
 }
 
+/// Generate a bookmark ID by finding the max existing w:id across all BookmarkStart
+/// nodes in the document body and incrementing by 1. Returns "1" if no bookmarks exist.
+pub fn generate_bookmark_id(dom: &crate::dom_types::WordDom) -> String {
+    let body = dom
+        .root
+        .children
+        .iter()
+        .find(|c| c.element_type == crate::dom_types::WordElementType::Body);
+    let max_id = body
+        .map(max_bookmark_id_in_node)
+        .unwrap_or(0);
+    (max_id + 1).to_string()
+}
+
+fn max_bookmark_id_in_node(node: &crate::dom_types::WordNode) -> i32 {
+    let self_id = if node.element_type == crate::dom_types::WordElementType::BookmarkStart {
+        node.attributes
+            .get("id")
+            .and_then(|v| v.parse::<i32>().ok())
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    let child_max = node
+        .children
+        .iter()
+        .map(max_bookmark_id_in_node)
+        .max()
+        .unwrap_or(0);
+    self_id.max(child_max)
+}
+
+/// Validate a bookmark name. Rejects characters that break path selectors or
+/// bare attribute selectors. Allowed: letters, digits, '.', '_', '-'.
+pub fn validate_bookmark_name(name: &str) -> Result<(), HandlerError> {
+    if name.is_empty() {
+        return Err(HandlerError::InvalidArgument(
+            "'name' property is required for bookmark".to_string(),
+        ));
+    }
+    // Path-special characters break selectors
+    if name.contains('/') || name.contains('[') || name.contains(']') {
+        return Err(HandlerError::InvalidArgument(format!(
+            "Bookmark name '{}' contains path-special characters ('/', '[', ']'). \
+             Use only letters, digits, '.', '_', '-' in bookmark names.",
+            name
+        )));
+    }
+    // Whitespace, leading @, quotes break bare attribute selectors
+    if name.chars().any(char::is_whitespace)
+        || name.starts_with('@')
+        || name.contains('\'')
+        || name.contains('"')
+    {
+        return Err(HandlerError::InvalidArgument(format!(
+            "Bookmark name '{}' contains whitespace or quote/@ chars that prevent \
+             addressing via bare attribute selectors. Use only letters, digits, '.', '_', '-'.",
+            name
+        )));
+    }
+    Ok(())
+}
+
+/// Quote an attribute predicate value if the bare form would be rejected by
+/// ValidateAndNormalizePredicate. Bare values must have no whitespace, no
+/// leading '@' or quote chars. Embedded double quotes are rejected outright.
+pub fn quote_attr_value_if_needed(value: &str) -> Result<String, HandlerError> {
+    if value.contains('"') {
+        return Err(HandlerError::InvalidArgument(format!(
+            "Name '{}' contains embedded double-quote, which cannot be represented \
+             in an attribute selector.",
+            value
+        )));
+    }
+    let needs_quote = value.is_empty()
+        || value.starts_with('@')
+        || value.starts_with('\'')
+        || value.chars().any(char::is_whitespace);
+    if needs_quote {
+        Ok(format!("\"{}\"", value))
+    } else {
+        Ok(value.to_string())
+    }
+}
+
 /// Generate a unique paragraph ID (hex string, 8 chars).
 pub fn generate_para_id() -> String {
     use uuid::Uuid;

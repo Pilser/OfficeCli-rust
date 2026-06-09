@@ -445,7 +445,7 @@ fn execute_handler_op(
             element_type,
             position,
             properties,
-        } => match handler.add(&parent, &element_type, position, &properties) {
+        } => match handler.add(&parent, &element_type, position, &properties, None) {
             Ok(new_path) => HandlerResult {
                 data: serde_json::json!({"path": new_path}),
             },

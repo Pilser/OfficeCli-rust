@@ -1,4 +1,6 @@
-.PHONY: build release dev check test clippy fmt clean run install dist smoke
+.PHONY: build release dev check test clippy fmt fmt-fix lint clean run install dist smoke help
+
+.DEFAULT_GOAL := help
 
 # ── Configuration ──────────────────────────────────────────────────────
 BINARY   := officecli

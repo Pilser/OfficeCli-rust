@@ -295,8 +295,35 @@ officecli add <file> <parent> --from <path>                               # clon
 | Format | Types |
 |--------|-------|
 | **pptx** | slide (incl. hidden), shape (font.latin/ea/cs, direction=rtl, underline.color, effective.X+effective.X.src; arrow alias for rightArrow; slideMaster/slideLayout typed add/set/remove), picture (SVG, brightness/contrast/glow/shadow, rotation, link, tooltip), chart (direction=rtl, pieOfPie, barOfPie, axisLine/gridline per-attr setters, animation+chartBuild=byCategory|bySeries, line dropLines/hiLowLines/upDownBars, anchor=x,y,w,h shorthand), table (cell direction=rtl, fill/background, built-in PowerPoint style catalogue, /col[C] get + swap/copyFrom, row/col Move/CopyFrom), row (tr), connector (from/to accept @name=, startshape/endshape SetByPath), group (link, tooltip, deep walk by get/query/add/remove), video/audio (loop, autoStart alias), equation, notes (direction=rtl, lang), comment (legacy + modern p188 threaded round-trip), animation (15 emphasis + 16 exit presets, multi-effect chains, motion-path presets, repeat/restart/autoReverse, chart animations), transition (12 p15 presets + morph/p14), paragraph (para), run, zoom, ole (preview=, full dump round-trip via add-part+raw-set), placeholder (phType=...), model3d (rotation=ax,ay,az; full dump round-trip), smartart (dump round-trip via add-part). |
-| **docx** | paragraph (direction/font.latin/ea/cs, bold.cs/italic.cs/size.cs, lang.latin/ea/cs, wordWrap, framePr.\*, tabs shorthand), run (lang slots, direction, underline.color, position half-pts, trackChange=ins\|del\|format with .author/.date), table (direction=rtl, hMerge, **virtual column ops**: add/remove/move/copyfrom on /body/tbl[N]/col), row (tr), cell (td), image, header/footer (direction), section (pageNumFmt full enum, direction=rtl, rtlGutter, pgBorders=box), bookmark, comment, footnote, endnote, formfield, sdt, chart, equation, field (28 types), hyperlink, style (direction, indents, pbdr, lineSpacing on Add/Set), toc, watermark, break, ole, **num/abstractNum/lvl**, **tab**, **textbox/shape** (full Add+Get; geometry, fill, line, wrap, alt, anchor). docDefaults.rtl, autoHyphenation, `get /` exposes locale + /comments /footnotes /endnotes. `create --minimal` for raw OOXML scaffolding. |
+| **docx** | paragraph (direction/font.latin/ea/cs, bold.cs/italic.cs/size.cs, lang.latin/ea/cs, wordWrap, framePr.\*, tabs shorthand), run (lang slots, direction, underline.color, position half-pts, trackChange=ins\|del\|format with .author/.date), table (direction=rtl, hMerge, **virtual column ops**: add/remove/move/copyfrom on /body/tbl[N]/col), row (tr), cell (td), image, header/footer (direction), section (pageNumFmt full enum, direction=rtl, rtlGutter, pgBorders=box), **bookmark** (name required, id auto or custom, text optional, endPara for cross-para, --wrap for element wrap, --range-paths for atomic offset bookmarking with optional color/bgColor), comment, footnote, endnote, formfield, sdt, chart, equation, field (28 types), hyperlink, style (direction, indents, pbdr, lineSpacing on Add/Set), toc, watermark, break, ole, **num/abstractNum/lvl**, **tab**, **textbox/shape** (full Add+Get; geometry, fill, line, wrap, alt, anchor). docDefaults.rtl, autoHyphenation, `get /` exposes locale + /comments /footnotes /endnotes. `create --minimal` for raw OOXML scaffolding. |
 | **xlsx** | sheet (visible/hidden/veryHidden, print margins, printTitleRows/Cols, rightToLeft sheetView, cascade-aware rename), row (c{N}= cell-content shorthand; add accepts --from /Sheet/col[L]; formula-ref rewrite on insert), col (formula-ref rewrite, named-range follow on move), cell (type=richtext+runs, merge=range/sweep, direction=rtl, phonetic; **--shift left\|up on remove, shift=right\|down on add** — Excel UI dialog parity; formula auto-detect; OFFSET/INDIRECT in calc), chart (per-axis RTL/title, anchor=x,y,w,h, pareto), image (SVG), comment (direction=rtl), table (listobject), namedrange (definedname, volatile, `[@name=X]`; formula-body inlined at parse), pivottable (cache CoW + cross-pivot sharing, labelFilter, topN, fillDownLabels, calculatedField), sparkline, validation, autofilter, shape, textbox, CF (databar/colorscale/iconset/formulacf/cellIs/topN/aboveAverage), ole, csv. Query supports `merge`/`mergedrange`. Workbook: password. Shape selector enumerates leaves inside grpSp. |
+
+### Bookmarks (docx)
+
+Bookmarks are BookmarkStart/BookmarkEnd pairs. Three add modes available:
+
+**Positional add** — insert bookmark pair at parent path:
+```bash
+officecli add doc.docx '/body/p[1]' --type bookmark --properties name=mark1
+officecli add doc.docx '/body/p[1]' --type bookmark --properties name=mark2 --properties text=world
+officecli add doc.docx /body --type bookmark --properties name=paraMark --properties text="New paragraph"
+officecli add doc.docx '/body/p[1]' --type bookmark --properties name=idMark --properties id=42
+```
+
+**Wrap mode** — `--wrap <path>` inserts bookmarkStart before target, bookmarkEnd after it:
+```bash
+officecli add doc.docx '/body/p[1]' --type bookmark --properties name=wrap1 --wrap '/body/p[1]/r[2]'
+officecli add doc.docx /body --type bookmark --properties name=wrapPara --wrap '/body/p[3]'
+officecli add doc.docx /body --type bookmark --properties name=crossMark --wrap '/body/p[2]' --properties endPara=3
+```
+
+**Range-paths mode** — atomic split+bookmark at char offsets (one DOM mutation pass):
+```bash
+officecli add doc.docx '/body/p[1]' --type bookmark --properties name=rangeMark --range-paths '/body/p[1][2..8]'
+officecli add doc.docx '/body/p[1]' --type bookmark --properties name=highlightBk --range-paths '/body/p[1][2..8]' --properties color=FF0000 --properties bgColor=FFFF00
+```
+
+Key props: `name` (required, letters/digits/`.`/`_`/`-` only), `id` (auto or custom integer), `text` (wrapped run content), `endPara` (cross-paragraph offset, N paragraphs downstream). `set` supports `name` (rename), `text` (replace content), `id` (update paired IDs). Paths use `[@name=NAME]` stable addressing.
 
 ### Pivot tables (xlsx)
 

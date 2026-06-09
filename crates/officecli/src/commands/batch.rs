@@ -91,7 +91,7 @@ fn execute_batch_op(
             let element_type = op.params.get("type").and_then(|v| v.as_str()).unwrap_or("");
             let position = parse_position(&op.params);
             let properties = string_map(&op.params, "properties");
-            match handler.add(parent, element_type, position, &properties) {
+            match handler.add(parent, element_type, position, &properties, None) {
                 Ok(path) => Ok(format!("created: {}", path)),
                 Err(e) => Err(e.to_string()),
             }
