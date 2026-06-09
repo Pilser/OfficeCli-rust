@@ -12,11 +12,11 @@ echo "Output file: $OUT"
 # ==================== Create base document ====================
 rm -f "$OUT"
 officecli create "$OUT"
-officecli add "$OUT" /body --type paragraph --prop text="Complex Textbox Examples" --prop style=Heading1 --prop align=center
-officecli add "$OUT" /body --type paragraph --prop text="The following contains multiple complex textbox scenarios for testing textbox behavior under various conditions."
+officecli add "$OUT" --parent '/body' --type-name paragraph text="Complex Textbox Examples" style=Heading1 align=center
+officecli add "$OUT" --parent '/body' --type-name paragraph text="The following contains multiple complex textbox scenarios for testing textbox behavior under various conditions."
 
 # ==================== Scenario 1: Basic Textbox (with border and background + VML Fallback) ====================
-officecli add "$OUT" /body --type paragraph --prop text="Scenario 1: Basic Textbox (with border and background)" --prop style=Heading2
+officecli add "$OUT" --parent '/body' --type-name paragraph text="Scenario 1: Basic Textbox (with border and background)" style=Heading2
 
 officecli raw-set "$OUT" /document --xpath "//w:body/w:sectPr" --action insertbefore --xml '
 <w:p>
@@ -77,7 +77,7 @@ officecli raw-set "$OUT" /document --xpath "//w:body/w:sectPr" --action insertbe
 echo "Done: Scenario 1: Basic Textbox"
 
 # ==================== Scenario 2: Multi-paragraph Rich Text Textbox ====================
-officecli add "$OUT" /body --type paragraph --prop text="Scenario 2: Multi-paragraph Rich Text Textbox" --prop style=Heading2
+officecli add "$OUT" --parent '/body' --type-name paragraph text="Scenario 2: Multi-paragraph Rich Text Textbox" style=Heading2
 
 officecli raw-set "$OUT" /document --xpath "//w:body/w:sectPr" --action insertbefore --xml '
 <w:p>
@@ -127,7 +127,7 @@ officecli raw-set "$OUT" /document --xpath "//w:body/w:sectPr" --action insertbe
 echo "Done: Scenario 2: Rich Text Textbox"
 
 # ==================== Scenario 3: Textbox with Nested Table ====================
-officecli add "$OUT" /body --type paragraph --prop text="Scenario 3: Textbox with Nested Table" --prop style=Heading2
+officecli add "$OUT" --parent '/body' --type-name paragraph text="Scenario 3: Textbox with Nested Table" style=Heading2
 
 officecli raw-set "$OUT" /document --xpath "//w:body/w:sectPr" --action insertbefore --xml '
 <w:p>
@@ -204,7 +204,7 @@ officecli raw-set "$OUT" /document --xpath "//w:body/w:sectPr" --action insertbe
 echo "Done: Scenario 3: Nested Table"
 
 # ==================== Scenario 4: Rotated Textbox (45 degrees + gradient background) ====================
-officecli add "$OUT" /body --type paragraph --prop text="Scenario 4: Rotated Textbox (45 degrees)" --prop style=Heading2
+officecli add "$OUT" --parent '/body' --type-name paragraph text="Scenario 4: Rotated Textbox (45 degrees)" style=Heading2
 
 officecli raw-set "$OUT" /document --xpath "//w:body/w:sectPr" --action insertbefore --xml '
 <w:p>
@@ -256,7 +256,7 @@ officecli raw-set "$OUT" /document --xpath "//w:body/w:sectPr" --action insertbe
 echo "Done: Scenario 4: Rotated Textbox"
 
 # ==================== Scenario 5: Vertical Text Textbox ====================
-officecli add "$OUT" /body --type paragraph --prop text="Scenario 5: Vertical Text Textbox" --prop style=Heading2
+officecli add "$OUT" --parent '/body' --type-name paragraph text="Scenario 5: Vertical Text Textbox" style=Heading2
 
 officecli raw-set "$OUT" /document --xpath "//w:body/w:sectPr" --action insertbefore --xml '
 <w:p>
@@ -302,7 +302,7 @@ officecli raw-set "$OUT" /document --xpath "//w:body/w:sectPr" --action insertbe
 echo "Done: Scenario 5: Vertical Textbox"
 
 # ==================== Scenario 6: Rounded Rectangle + Shadow ====================
-officecli add "$OUT" /body --type paragraph --prop text="Scenario 6: Rounded Rectangle Textbox" --prop style=Heading2
+officecli add "$OUT" --parent '/body' --type-name paragraph text="Scenario 6: Rounded Rectangle Textbox" style=Heading2
 
 officecli raw-set "$OUT" /document --xpath "//w:body/w:sectPr" --action insertbefore --xml '
 <w:p>
@@ -355,7 +355,7 @@ officecli raw-set "$OUT" /document --xpath "//w:body/w:sectPr" --action insertbe
 echo "Done: Scenario 6: Rounded Rectangle"
 
 # ==================== Scenario 7: Side-by-side Textboxes (Card Layout) ====================
-officecli add "$OUT" /body --type paragraph --prop text="Scenario 7: Side-by-side Textboxes (Card Layout)" --prop style=Heading2
+officecli add "$OUT" --parent '/body' --type-name paragraph text="Scenario 7: Side-by-side Textboxes (Card Layout)" style=Heading2
 
 officecli raw-set "$OUT" /document --xpath "//w:body/w:sectPr" --action insertbefore --xml '
 <w:p>
@@ -481,7 +481,7 @@ officecli raw-set "$OUT" /document --xpath "//w:body/w:sectPr" --action insertbe
 echo "Done: Scenario 7: Side-by-side Cards"
 
 # ==================== Scenario 8: Borderless Transparent Textbox ====================
-officecli add "$OUT" /body --type paragraph --prop text="Scenario 8: Borderless Transparent Textbox" --prop style=Heading2
+officecli add "$OUT" --parent '/body' --type-name paragraph text="Scenario 8: Borderless Transparent Textbox" style=Heading2
 
 officecli raw-set "$OUT" /document --xpath "//w:body/w:sectPr" --action insertbefore --xml '
 <w:p>
@@ -527,7 +527,7 @@ officecli raw-set "$OUT" /document --xpath "//w:body/w:sectPr" --action insertbe
 echo "Done: Scenario 8: Transparent Textbox"
 
 # ==================== Scenario 9: Text Overflow Textbox ====================
-officecli add "$OUT" /body --type paragraph --prop text="Scenario 9: Text Overflow Textbox" --prop style=Heading2
+officecli add "$OUT" --parent '/body' --type-name paragraph text="Scenario 9: Text Overflow Textbox" style=Heading2
 
 officecli raw-set "$OUT" /document --xpath "//w:body/w:sectPr" --action insertbefore --xml '
 <w:p>
@@ -578,7 +578,7 @@ officecli raw-set "$OUT" /document --xpath "//w:body/w:sectPr" --action insertbe
 echo "Done: Scenario 9: Overflow Textbox"
 
 # ==================== Scenario 10: Textbox Stacking (Z-order) ====================
-officecli add "$OUT" /body --type paragraph --prop text="Scenario 10: Textbox Stacking (Z-order)" --prop style=Heading2
+officecli add "$OUT" --parent '/body' --type-name paragraph text="Scenario 10: Textbox Stacking (Z-order)" style=Heading2
 
 officecli raw-set "$OUT" /document --xpath "//w:body/w:sectPr" --action insertbefore --xml '
 <w:p>
