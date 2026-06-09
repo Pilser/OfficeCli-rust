@@ -53,7 +53,7 @@ pub fn handle_batch(cmd: BatchCommand, format: OutputFormat) -> Result<String, H
 #[derive(Debug, serde::Deserialize)]
 struct BatchOp {
     command: String,
-    #[serde(default)]
+    #[serde(default, flatten)]
     params: HashMap<String, serde_json::Value>,
 }
 
@@ -70,7 +70,9 @@ fn execute_batch_op(
     match op.command.as_str() {
         "set" => {
             let path = op.params.get("path").and_then(|v| v.as_str()).unwrap_or("");
-            let properties = string_map(&op.params, "properties");
+            let properties = string_map(&op.params, "properties")
+                .or_else(|| string_map(&op.params, "props"))
+                .unwrap_or_default();
             match handler.set(path, &properties) {
                 Ok(unsupported) => {
                     if unsupported.is_empty() {
@@ -88,10 +90,19 @@ fn execute_batch_op(
                 .get("parent")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            let element_type = op.params.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            let element_type = op.params.get("type")
+                .or_else(|| op.params.get("typeName"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let position = parse_position(&op.params);
-            let properties = string_map(&op.params, "properties");
-            match handler.add(parent, element_type, position, &properties, None) {
+            let mut properties = string_map(&op.params, "properties")
+                .or_else(|| string_map(&op.params, "props"))
+                .unwrap_or_default();
+            if let Some(rp) = op.params.get("range_paths").and_then(|v| v.as_str()) {
+                properties.insert("range_paths".to_string(), rp.to_string());
+            }
+            let wrap = op.params.get("wrap").and_then(|v| v.as_str());
+            match handler.add(parent, element_type, position, &properties, wrap) {
                 Ok(path) => Ok(format!("created: {}", path)),
                 Err(e) => Err(e.to_string()),
             }
@@ -169,7 +180,7 @@ fn parse_position(params: &HashMap<String, serde_json::Value>) -> InsertPosition
     }
 }
 
-fn string_map(params: &HashMap<String, serde_json::Value>, key: &str) -> HashMap<String, String> {
+fn string_map(params: &HashMap<String, serde_json::Value>, key: &str) -> Option<HashMap<String, String>> {
     params
         .get(key)
         .and_then(|v| v.as_object())
@@ -178,5 +189,4 @@ fn string_map(params: &HashMap<String, serde_json::Value>, key: &str) -> HashMap
                 .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
                 .collect()
         })
-        .unwrap_or_default()
 }

@@ -327,6 +327,21 @@ pub fn build_run_properties(props: &std::collections::HashMap<String, String>) -
                     children.push(shd_node);
                 }
             }
+            "shading" | "shd" => {
+                let value = value.strip_prefix('#').unwrap_or(value);
+                // Triplet format: pattern;fill;color  e.g. "clear;FFFF00;auto"
+                let parts: Vec<&str> = value.split(';').collect();
+                let (pat, fill, clr) = match parts.len() {
+                    3 => (parts[0], parts[1], parts[2]),
+                    2 => ("clear", parts[0], parts[1]),
+                    _ => ("clear", value, "auto"),
+                };
+                let shd_node = WordNode::new(WordElementType::Unknown("shd".to_string()))
+                    .with_attribute("val", pat)
+                    .with_attribute("color", clr)
+                    .with_attribute("fill", fill);
+                children.push(shd_node);
+            }
             _ => {} // Ignore unknown properties
         }
     }

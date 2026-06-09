@@ -1,12 +1,14 @@
-.PHONY: build release dev check test clippy fmt fmt-fix lint clean run install dist smoke help
+.PHONY: build release dev check test clippy fmt fmt-fix lint clean run install install-local install-check dist smoke help
 
 .DEFAULT_GOAL := help
 
 # ── Configuration ──────────────────────────────────────────────────────
-BINARY   := officecli
-RELEASE  := target/release/$(BINARY)
-DEBUG    := target/debug/$(BINARY)
-DIST_DIR := dist
+BINARY     := officecli
+RELEASE    := target/release/$(BINARY)
+DEBUG      := target/debug/$(BINARY)
+DIST_DIR   := dist
+CARGO_BIN  := $(HOME)/.cargo/bin/$(BINARY)
+LOCAL_BIN  := $(HOME)/.local/bin/$(BINARY)
 
 # ── Build ──────────────────────────────────────────────────────────────
 dev:            ## Build debug binary
@@ -40,7 +42,29 @@ run: dev        ## Run debug binary (pass ARGS=... for CLI args)
 	cargo run -- $(ARGS)
 
 install: build  ## Install release binary to ~/.cargo/bin
-	cargo install --path crates/officecli
+	cargo install --path crates/officecli --force
+	@$(MAKE) --no-print-directory install-check
+
+install-local: build  ## Install to ~/.local/bin (overrides curl-installed binary on PATH)
+	@mkdir -p $(HOME)/.local/bin
+	cp $(RELEASE) $(LOCAL_BIN)
+	chmod +x $(LOCAL_BIN)
+	@echo "Installed: $(LOCAL_BIN)"
+	@$(LOCAL_BIN) --version
+
+install-check:  ## Show which officecli binary is active in PATH
+	@echo "Cargo install: $(CARGO_BIN)"
+	@ACTIVE=$$(command -v officecli 2>/dev/null || true); \
+	if [ -z "$$ACTIVE" ]; then \
+	  echo "PATH:          (officecli not found)"; \
+	elif [ "$$ACTIVE" = "$(CARGO_BIN)" ]; then \
+	  echo "PATH:          $$ACTIVE  (ok)"; \
+	else \
+	  echo "PATH:          $$ACTIVE  (NOT the cargo install — likely an older copy)"; \
+	  echo ""; \
+	  echo "Fix: make install-local   # overwrite ~/.local/bin"; \
+	  echo " Or: export PATH=\"$$HOME/.cargo/bin:$$PATH\""; \
+	fi
 
 # ── Distribution ───────────────────────────────────────────────────────
 dist: build     ## Build + copy binary to dist/ with SHA256

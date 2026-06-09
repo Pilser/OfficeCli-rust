@@ -38,7 +38,7 @@ use std::path::PathBuf;
 /// OfficeCLI — CLI tool for Office documents (docx/xlsx/pptx) and PDF
 #[derive(Parser)]
 #[command(name = "officecli")]
-#[command(version = "0.1.0")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "Create, view, query, and modify Office documents and PDFs")]
 #[command(after_help = "\
 EXAMPLES:

@@ -188,7 +188,7 @@ fn set_run_properties(
 
     let recognized = ["text", "bold", "b", "italic", "i", "underline", "u",
         "strike", "strikeout", "font", "fontFamily", "size", "fontSize",
-        "color", "fontColor", "bgColor", "highlight", "bg"];
+        "color", "fontColor", "bgColor", "highlight", "bg", "shading", "shd"];
     let unsupported: Vec<String> = properties.keys()
         .filter(|k| !recognized.contains(&k.as_str()))
         .cloned()
