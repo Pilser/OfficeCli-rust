@@ -54,10 +54,10 @@ $CLI get "$OUT" '/body/p[5]' --json
 
 # ==================== Scenario 7: --range-paths (split + bookmark) ====================
 echo "=== Scenario 7: --range-paths ==="
-$CLI add "$OUT" --parent '/body' --type-name paragraph --properties text="Paragraph for range-paths bookmark testing with enough characters."
-$CLI add "$OUT" --parent '/body/p[6]' --type-name bookmark --range-paths '/body/p[6][5..20]' --properties name=range1 color=FF0000
-echo "  Added range-paths bookmark 'range1' at chars 5..20 in p[6]"
-$CLI get "$OUT" '/body/p[6]' --json
+RANGE_PARA=$($CLI add "$OUT" --parent '/body' --type-name paragraph --properties text="Paragraph for range-paths bookmark testing with enough characters." | sed 's/Created: //')
+$CLI add "$OUT" --parent "$RANGE_PARA" --type-name bookmark --range-paths "${RANGE_PARA}[5..20]" --properties name=range1 color=FF0000
+echo "  Added range-paths bookmark 'range1' at chars 5..20 in ${RANGE_PARA}"
+$CLI get "$OUT" "$RANGE_PARA" --json
 
 # ==================== Scenario 8: Validate ====================
 echo "=== Scenario 8: Validate ==="
