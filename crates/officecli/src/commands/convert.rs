@@ -34,9 +34,10 @@ SUPPORTED CONVERSIONS:
   .doc  -> .docx   Word legacy binary to modern OOXML
   .xls  -> .xlsx   Excel legacy binary to modern OOXML
   .ppt  -> .pptx   PowerPoint legacy binary to modern OOXML
+  .pdf  -> .docx   PDF to Word (LibreOffice only)
   .docx -> .docx   Re-save / normalize modern Word (same for .xlsx, .pptx)
 
-Cross-family conversions (e.g. .doc -> .xlsx) are NOT supported.
+Cross-family conversions other than PDF->DOCX are NOT supported.
 
 CONVERSION ENGINES:
   libreoffice (default)                    oxide
@@ -45,6 +46,7 @@ CONVERSION ENGINES:
   Needs LibreOffice installed (~700MB)     Pure Rust, no external dependency
   Slower (process spawn overhead)          Fast (sub-second)
   Preserves formatting, images, tables     Preserves basic content and structure
+  Supports PDF -> DOCX                     Same-family only (no PDF support)
 
   Install LibreOffice:
     macOS:  brew install --cask libreoffice
@@ -55,9 +57,10 @@ EXAMPLES:
   officecli convert old.doc                       Convert .doc -> .docx via LibreOffice (default)
   officecli convert old.xls -o report.xlsx        Convert with custom output name
   officecli convert old.ppt --force               Convert, overwrite existing output
+  officecli convert input.pdf -o output.docx      Convert PDF to Word (requires LibreOffice)
   officecli convert old.doc --engine oxide        Convert via oxide (no LibreOffice needed)")]
 pub struct ConvertCommand {
-    /// Input file path (.doc, .xls, .ppt, .docx, .xlsx, .pptx)
+    /// Input file path (.doc, .xls, .ppt, .docx, .xlsx, .pptx, .pdf)
     pub file: String,
 
     /// Output file path (defaults to input path with updated extension)
@@ -89,9 +92,10 @@ pub fn handle_convert(
         "doc" | "docx" => "docx",
         "xls" | "xlsx" => "xlsx",
         "ppt" | "pptx" => "pptx",
+        "pdf" => "docx",
         other => {
             return Err(HandlerError::UnsupportedMode(format!(
-                "convert from '.{}' not supported (supported: .doc, .xls, .ppt, .docx, .xlsx, .pptx)",
+                "convert from '.{}' not supported (supported: .doc, .xls, .ppt, .docx, .xlsx, .pptx, .pdf)",
                 other
             )));
         }
@@ -118,7 +122,7 @@ pub fn handle_convert(
         .map(|e| e.to_lowercase())
         .unwrap_or_default();
 
-    validate_conversion(&input_ext, &output_ext)?;
+    validate_conversion(&input_ext, &output_ext, cmd.engine)?;
 
     // Prevent accidental overwrite
     if output_path.exists() && !cmd.force {
@@ -279,8 +283,25 @@ fn convert_via_oxide(input_file: &str, output_path: &std::path::Path) -> Result<
     Ok(())
 }
 
-/// Validate that the conversion is within the same document family.
-fn validate_conversion(input_ext: &str, output_ext: &str) -> Result<(), HandlerError> {
+/// Validate that the conversion is supported.
+fn validate_conversion(input_ext: &str, output_ext: &str, engine: ConvertEngine) -> Result<(), HandlerError> {
+    // Cross-family: PDF -> DOCX (LibreOffice only)
+    if input_ext == "pdf" && output_ext == "docx" {
+        if engine != ConvertEngine::LibreOffice {
+            return Err(HandlerError::UnsupportedMode(
+                "PDF to DOCX conversion requires LibreOffice engine (--engine libreoffice)".to_string(),
+            ));
+        }
+        return Ok(());
+    }
+    if input_ext == "pdf" && output_ext != "docx" {
+        return Err(HandlerError::UnsupportedMode(format!(
+            "cannot convert .pdf to .{}; .pdf files can only convert to .docx",
+            output_ext
+        )));
+    }
+
+    // Same-family conversions
     let families = [
         (&["doc", "docx"][..], "docx"),
         (&["xls", "xlsx"][..], "xlsx"),
@@ -312,27 +333,38 @@ mod tests {
 
     #[test]
     fn test_valid_doc_to_docx() {
-        assert!(validate_conversion("doc", "docx").is_ok());
+        assert!(validate_conversion("doc", "docx", ConvertEngine::LibreOffice).is_ok());
     }
 
     #[test]
     fn test_valid_xls_to_xlsx() {
-        assert!(validate_conversion("xls", "xlsx").is_ok());
+        assert!(validate_conversion("xls", "xlsx", ConvertEngine::LibreOffice).is_ok());
     }
 
     #[test]
     fn test_valid_ppt_to_pptx() {
-        assert!(validate_conversion("ppt", "pptx").is_ok());
+        assert!(validate_conversion("ppt", "pptx", ConvertEngine::LibreOffice).is_ok());
     }
 
     #[test]
     fn test_valid_docx_resave() {
-        assert!(validate_conversion("docx", "docx").is_ok());
+        assert!(validate_conversion("docx", "docx", ConvertEngine::Oxide).is_ok());
+    }
+
+    #[test]
+    fn test_valid_pdf_to_docx() {
+        assert!(validate_conversion("pdf", "docx", ConvertEngine::LibreOffice).is_ok());
+    }
+
+    #[test]
+    fn test_pdf_to_docx_requires_libreoffice() {
+        let result = validate_conversion("pdf", "docx", ConvertEngine::Oxide);
+        assert!(result.is_err());
     }
 
     #[test]
     fn test_invalid_cross_family() {
-        let result = validate_conversion("doc", "xlsx");
+        let result = validate_conversion("doc", "xlsx", ConvertEngine::LibreOffice);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, HandlerError::UnsupportedMode(_)));
@@ -340,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_unsupported_input_format() {
-        let result = validate_conversion("odt", "docx");
+        let result = validate_conversion("odt", "docx", ConvertEngine::LibreOffice);
         assert!(result.is_err());
     }
 
