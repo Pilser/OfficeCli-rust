@@ -77,7 +77,7 @@ impl PdfTextExtractor {
             }
         }
 
-        map.meta.total_chars = map.full_text.len();
+        map.meta.total_chars = map.full_text.chars().count();
         map.meta.total_spans = map.spans.len();
         map
     }

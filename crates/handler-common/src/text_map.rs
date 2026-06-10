@@ -23,9 +23,9 @@ pub struct StyleSpan {
 /// Single offset mapping entry: a text range maps to a document path.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OffsetSpan {
-    /// Start offset in full text (UTF-8 byte offset)
+    /// Start offset in full text (Unicode character offset, not byte offset)
     pub start: usize,
-    /// End offset in full text (exclusive)
+    /// End offset in full text (exclusive, character offset)
     pub end: usize,
     /// Document path ID (e.g., "/body/p[3]/r[1]", "/page[1]/text[2]")
     pub path: String,
@@ -82,7 +82,7 @@ impl TextOffsetMap {
     /// Find the path ID for a given character offset.
     /// Returns the OffsetSpan that contains the character at `offset`.
     pub fn find_span_at_offset(&self, offset: usize) -> Option<&OffsetSpan> {
-        if offset >= self.full_text.len() {
+        if offset >= self.full_text.chars().count() {
             return None;
         }
         self.spans
@@ -120,9 +120,9 @@ impl TextOffsetMap {
         bbox: Option<BBoxSpan>,
         style: Option<StyleSpan>,
     ) {
-        let start = self.full_text.len();
+        let start = self.full_text.chars().count();
         self.full_text.push_str(text);
-        let end = self.full_text.len();
+        let end = self.full_text.chars().count();
         self.spans.push(OffsetSpan {
             start,
             end,
@@ -132,7 +132,7 @@ impl TextOffsetMap {
             bbox,
             style,
         });
-        self.meta.total_chars = self.full_text.len();
+        self.meta.total_chars = self.full_text.chars().count();
         self.meta.total_spans = self.spans.len();
     }
 }
