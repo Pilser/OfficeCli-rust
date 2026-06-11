@@ -1,4 +1,4 @@
-.PHONY: build release dev check test clippy fmt fmt-fix lint clean run install install-local install-check dist smoke help
+.PHONY: build release dev check test clippy fmt fmt-fix lint clean run install install-local install-check dist download smoke help
 
 .DEFAULT_GOAL := help
 
@@ -67,6 +67,10 @@ install-check:  ## Show which officecli binary is active in PATH
 	fi
 
 # ── Distribution ───────────────────────────────────────────────────────
+download:       ## Download release binary from GitHub (VERSION=v0.1.1 PLATFORM=all)
+	@chmod +x scripts/download.sh
+	@./scripts/download.sh $(or $(VERSION),latest) $(or $(PLATFORM),auto)
+
 dist: build     ## Build + copy binary to dist/ with SHA256
 	@mkdir -p $(DIST_DIR)
 	@OS=$$(uname -s | tr '[:upper:]' '[:lower:]') && \

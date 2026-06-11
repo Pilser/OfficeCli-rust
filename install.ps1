@@ -1,41 +1,34 @@
-$repo = "iOfficeAI/OfficeCLI"
-$asset = "officecli-win-x64.exe"
+$repo = "RainLib/OfficeCli-rust"
 $binary = "officecli.exe"
-
-# Mirror primary, github fallback. The mirror is exercised first so issues
-# surface there fast; github is the safety net when CF or the mirror is
-# unreachable.
-$mirrorBase = "https://d.officecli.ai"
-$githubReleaseBase = "https://github.com/$repo/releases/latest/download"
 $githubRawBase = "https://raw.githubusercontent.com/$repo/main"
 
-function Fetch-WithFallback {
-    param([string]$Primary, [string]$Fallback, [string]$OutFile)
-    try {
-        Invoke-WebRequest -Uri $Primary -OutFile $OutFile -TimeoutSec 30 -ErrorAction Stop
-        Write-Host "  (via mirror)"
-        return $true
-    } catch {
-        Write-Host "  mirror unreachable, falling back to github..."
-        try {
-            Invoke-WebRequest -Uri $Fallback -OutFile $OutFile -TimeoutSec 300 -ErrorAction Stop
-            return $true
-        } catch {
-            return $false
-        }
-    }
+# Optional: pin a release tag, e.g. $env:OFFICECLI_VERSION = "v0.1.1"
+$version = if ($env:OFFICECLI_VERSION) { $env:OFFICECLI_VERSION } else { "latest" }
+if ($version -eq "latest") {
+    $releaseBase = "https://github.com/$repo/releases/latest/download"
+} else {
+    $releaseBase = "https://github.com/$repo/releases/download/$version"
+}
+
+# Detect Windows architecture
+if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
+    $asset = "officecli-win-arm64.exe"
+} else {
+    $asset = "officecli-win-x64.exe"
 }
 
 $source = $null
 
-# Step 1: Try downloading (mirror first, github fallback)
+# Step 1: Download from GitHub Release
 $tempFile = "$env:TEMP\$binary"
-Write-Host "Downloading OfficeCLI..."
-if (Fetch-WithFallback "$mirrorBase/releases/latest/download/$asset" "$githubReleaseBase/$asset" $tempFile) {
-    # Verify checksum if available
+Write-Host "Downloading OfficeCLI ($asset) from $repo..."
+try {
+    Invoke-WebRequest -Uri "$releaseBase/$asset" -OutFile $tempFile -TimeoutSec 300 -ErrorAction Stop
+
     $checksumOk = $false
     $checksumFile = "$env:TEMP\officecli-SHA256SUMS"
-    if (Fetch-WithFallback "$mirrorBase/releases/latest/download/SHA256SUMS" "$githubReleaseBase/SHA256SUMS" $checksumFile) {
+    try {
+        Invoke-WebRequest -Uri "$releaseBase/SHA256SUMS" -OutFile $checksumFile -TimeoutSec 300 -ErrorAction Stop
         $checksumContent = Get-Content $checksumFile
         $expectedLine = $checksumContent | Where-Object { $_ -match $asset }
         if ($expectedLine) {
@@ -51,9 +44,10 @@ if (Fetch-WithFallback "$mirrorBase/releases/latest/download/$asset" "$githubRel
             }
         }
         Remove-Item -Force $checksumFile -ErrorAction SilentlyContinue
-    } else {
+    } catch {
         Write-Host "Checksum file not available, skipping verification."
     }
+
     $output = & $tempFile --version 2>&1
     if ($LASTEXITCODE -eq 0) {
         $source = $tempFile
@@ -62,14 +56,16 @@ if (Fetch-WithFallback "$mirrorBase/releases/latest/download/$asset" "$githubRel
         Write-Host "Downloaded file is not a valid OfficeCLI binary."
         Remove-Item -Force $tempFile -ErrorAction SilentlyContinue
     }
-} else {
+} catch {
     Write-Host "Download failed."
+    Write-Host "Tip: releases/latest/download only works for published (non-draft) releases."
+    Write-Host "Try: `$env:OFFICECLI_VERSION='v0.1.1'; irm https://raw.githubusercontent.com/$repo/main/install.ps1 | iex"
 }
 
 # Step 2: Fallback to local files
 if (-not $source) {
     Write-Host "Looking for local binary..."
-    $candidates = @(".\$asset", ".\$binary", ".\bin\$asset", ".\bin\$binary", ".\bin\release\$asset", ".\bin\release\$binary")
+    $candidates = @(".\$asset", ".\$binary", ".\bin\$asset", ".\bin\$binary", ".\dist\$asset", ".\target\release\$binary")
     foreach ($candidate in $candidates) {
         if (Test-Path $candidate) {
             $output = & $candidate --version 2>&1
@@ -99,10 +95,8 @@ if ($existing) {
 
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 Copy-Item -Force $source "$installDir\$binary"
-
 Remove-Item -Force $tempFile -ErrorAction SilentlyContinue
 
-# Add to PATH if not already there
 $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($currentPath -notlike "*$installDir*") {
     [Environment]::SetEnvironmentVariable("Path", "$currentPath;$installDir", "User")
@@ -135,13 +129,16 @@ if (-not (Test-Path $skillMarker)) {
     if ($skillTargets.Count -gt 0) {
         Write-Host "Downloading officecli skill..."
         $tempSkill = "$env:TEMP\officecli-skill.md"
-        if (Fetch-WithFallback "$mirrorBase/SKILL.md" "$githubRawBase/SKILL.md" $tempSkill) {
+        try {
+            Invoke-WebRequest -Uri "$githubRawBase/SKILL.md" -OutFile $tempSkill -TimeoutSec 300 -ErrorAction Stop
             foreach ($target in $skillTargets) {
                 New-Item -ItemType Directory -Force -Path $target | Out-Null
                 Copy-Item -Force $tempSkill "$target\SKILL.md"
                 Write-Host "  Installed: $target\SKILL.md"
             }
             Remove-Item -Force $tempSkill -ErrorAction SilentlyContinue
+        } catch {
+            Write-Host "Skill download skipped."
         }
     }
     New-Item -ItemType File -Force -Path $skillMarker | Out-Null

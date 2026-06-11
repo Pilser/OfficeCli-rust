@@ -1,40 +1,44 @@
-# OfficeCLI
+# OfficeCLI (Rust)
 
-> **OfficeCLI는 세계 최초이자 최고의, AI 에이전트를 위해 설계된 Office 스위트입니다.**
+> **AI 에이전트를 위한 순수 Rust CLI — Office 문서와 PDF 생성, 읽기, 수정, 렌더링.**
 
-**모든 AI 에이전트에게 Word, Excel, PowerPoint, PDF의 완전한 제어권을 — 단 한 줄의 코드로.**
+**모든 AI 에이전트에게 Word, Excel, PowerPoint, PDF의 구조화된 제어권을 — 단 한 줄의 코드로.**
 
-오픈소스. 단일 바이너리. Office 설치 불필요. 의존성 제로. 모든 플랫폼 지원.
+오픈소스. 단일 바이너리. Office 설치 불필요. 런타임 의존성 없음. macOS, Linux, Windows 지원.
 
-**에이전트 친화적 렌더링 엔진 내장** — 에이전트가 자신이 만든 것을 "볼" 수 있고, Office 불필요. `.docx` / `.xlsx` / `.pptx` / `.pdf`를 HTML 또는 SVG로 렌더링하며, *렌더링 → 보기 → 수정* 루프는 바이너리가 실행되는 어디서나 닫힙니다.
-
-[![GitHub Release](https://img.shields.io/github/v/release/iOfficeAI/OfficeCLI)](https://github.com/iOfficeAI/OfficeCLI/releases)
+[![GitHub Release](https://img.shields.io/github/v/release/RainLib/OfficeCli-rust)](https://github.com/RainLib/OfficeCli-rust/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/language-Rust-orange.svg)](https://www.rust-lang.org/)
 
 [English](README.md) | [中文](README_zh.md) | [日本語](README_ja.md) | **한국어**
 
-<p align="center">
-  <strong>💬 커뮤니티:</strong> <a href="https://discord.gg/2QAwJn7Egx" target="_blank">Discord</a>
-</p>
+## 이 저장소에 대하여
 
-<p align="center">
-  <img src="assets/ppt-process.webp" alt="OfficeCLI로 PowerPoint 프레젠테이션 생성" width="100%">
-</p>
+이것은 **[RainLib/OfficeCli-rust](https://github.com/RainLib/OfficeCli-rust)** — [OfficeCLI](https://github.com/iOfficeAI/OfficeCLI)의 **Rust 재구현**입니다. OfficeCLI는 [iOfficeAI](https://github.com/iOfficeAI)가 C#/.NET으로 만든 오픈소스 Office 자동화 CLI입니다.
 
-<p align="center"><em><a href="https://github.com/iOfficeAI/AionUi">AionUi</a>에서 OfficeCLI로 PPT 제작 과정</em></p>
+| | **이 저장소 (Rust)** | **[업스트림 (C#)](https://github.com/iOfficeAI/OfficeCLI)** |
+|---|---|---|
+| 저장소 | [RainLib/OfficeCli-rust](https://github.com/RainLib/OfficeCli-rust) | [iOfficeAI/OfficeCLI](https://github.com/iOfficeAI/OfficeCLI) |
+| 언어 | 순수 Rust | C# / .NET (자체 포함 바이너리) |
+| 버전 | v0.1.x (초기) | v1.0.x (성숙, 6k+ stars) |
+| 런타임 | 없음 — 네이티브 바이너리 | 바이너리 내장 .NET |
+| PDF 지원 | ✅ 읽기 / 수정 / 미리보기 | 플러그인 경유 |
+| 목표 | 경량, 감사 가능, 임베딩 가능한 Rust 코어 | 풀기능 프로덕션 CLI + 생태계 |
+
+Rust 버전은 동일한 **CLI 철학** — 경로 기반 DOM 작업, JSON 출력, TextOffsetMap, 3계층 아키텍처, MCP 서버, 라이브 HTML 미리보기 — 을 공유하지만, 기능 범위에서는 아직 업스트림을 따라잡는 중입니다. 최대 호환성이 필요하면 업스트림을, **의존성 없는 Rust 바이너리**나 Rust 구현 기여가 필요하면 이 저장소를 사용하세요.
 
 ## 지원 형식
 
-| 형식 | 읽기 | 수정 | 생성 | 텍스트/오프셋 매핑 |
-|------|------|------|------|-------------------|
-| Word (.docx) | ✅ | ✅ | ✅ | ✅ |
-| Excel (.xlsx) | ✅ | ✅ | ✅ | ✅ |
-| PowerPoint (.pptx) | ✅ | ✅ | ✅ | ✅ |
-| PDF (.pdf) | ✅ | ✅ (텍스트 바꾸기, 페이지 삭제) | — | ✅ |
+| 형식 | 읽기 | 수정 | 생성 | 텍스트/오프셋 매핑 | 레거시 변환 |
+|------|------|------|------|-------------------|------------|
+| Word (.docx) | ✅ | ✅ | ✅ | ✅ | ✅ .doc → .docx |
+| Excel (.xlsx) | ✅ | ✅ | ✅ | ✅ | ✅ .xls → .xlsx |
+| PowerPoint (.pptx) | ✅ | ✅ | ✅ | ✅ | ✅ .ppt → .pptx |
+| PDF (.pdf) | ✅ | ✅ (텍스트 바꾸기, 페이지 삭제) | ✅ | ✅ | — |
 
 ## AI 에이전트용 — 텍스트/오프셋 → 경로 매핑
 
-모든 문서는 **TextOffsetMap**을 출력 — 전체 텍스트와 문자 오프셋→경로 ID 매핑. AI 에이전트는 맵을 읽고, 변경해야 할 텍스트 위치를 찾고, 정확한 문서 경로(예: `/body/p[3]/r[1]`)를 가져와서 `set`으로 정확히 수정합니다. 추측 불필요, 정규식 파싱 불필요.
+지원하는 모든 형식이 **TextOffsetMap**을 출력합니다 — 전체 텍스트와 문자 오프셋→경로 매핑. 에이전트는 맵을 읽고, 변경할 텍스트를 찾고, 정확한 경로(예: `/body/p[3]/r[1]`)로 `set`을 호출합니다. 정규식 추측이 필요 없습니다.
 
 ```bash
 officecli extract-text report.docx --with-offsets --json
@@ -44,82 +48,98 @@ officecli extract-text report.docx --with-offsets --json
 {
   "full_text": "안녕하세요 세계\n두 번째 단락",
   "spans": [
-    {"start": 0, "end": 5, "path": "/body/p[1]/r[1]", "text": "안녕하세요", "element_type": "run"},
-    {"start": 5, "end": 7, "path": "/body/p[1]/r[2]", "text": "세계", "element_type": "run"},
-    {"start": 7, "end": 13, "path": "/body/p[2]/r[1]", "text": "두 번째 단락", "element_type": "run"}
+    { "start": 0, "end": 5, "path": "/body/p[1]/r[1]", "text": "안녕하세요", "element_type": "run" },
+    { "start": 5, "end": 7, "path": "/body/p[1]/r[2]", "text": "세계", "element_type": "run" },
+    { "start": 7, "end": 13, "path": "/body/p[2]/r[1]", "text": "두 번째 단락", "element_type": "run" }
   ],
-  "meta": {"format": "docx", "total_chars": 13, "total_spans": 3}
+  "meta": { "format": "docx", "total_chars": 13, "total_spans": 3 }
 }
 ```
 
-4가지 형식 모두 지원 — docx, xlsx, pptx, pdf.
-
-## 개발자용 — 30초 만에 라이브로 확인
+**에이전트 설정** — 스킬 파일을 코딩 에이전트에 제공:
 
 ```bash
-# 1. 설치 (macOS / Linux)
-curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh | bash
-# Windows: GitHub Releases에서 다운로드
-
-# 2. 빈 PowerPoint 생성
-officecli create deck.pptx
-
-# 3. 라이브 미리보기 시작 — 브라우저에서 http://localhost:26315 열기
-officecli watch deck.pptx
-
-# 4. 다른 터미널을 열고 슬라이드 추가 — 브라우저 즉시 업데이트
-officecli add deck.pptx / --type slide --prop title="Hello, World!"
+curl -fsSL https://raw.githubusercontent.com/RainLib/OfficeCli-rust/main/SKILL.md
 ```
+
+또는 한 번에 바이너리와 스킬 설치 ([설치](#설치) 참조).
 
 ## 빠른 시작
 
 ```bash
-# 프레젠테이션을 생성하고 콘텐츠 추가
+# 1. 설치 (macOS / Linux)
+curl -fsSL https://raw.githubusercontent.com/RainLib/OfficeCli-rust/main/install.sh | bash
+# Windows (PowerShell):
+#   irm https://raw.githubusercontent.com/RainLib/OfficeCli-rust/main/install.ps1 | iex
+
+# 2. 빈 PowerPoint 생성
 officecli create deck.pptx
-officecli add deck.pptx / --type slide --prop title="Q4 보고서"
 
-# 개요 보기
-officecli view deck.pptx outline
+# 3. 슬라이드 추가
+officecli add deck.pptx / --type slide --prop title="Hello, World!"
 
-# HTML로 보기 — 브라우저에서 렌더링된 미리보기 열기
-officecli view deck.pptx html
+# 4. HTML 미리보기
+officecli view deck.pptx --mode html
 
-# 모든 요소의 구조화된 데이터 가져오기
-officecli get deck.pptx '/slide[1]' --json
-
-# PDF 문서 보기
-officecli view report.pdf --mode text
-officecli get report.pdf '/page[1]' --json
-
-# 텍스트와 오프셋 매핑 추출 (AI 에이전트 위치 지정용)
-officecli extract-text report.docx --with-offsets --json
+# 5. 라이브 미리보기 — 편집마다 자동 새로고침
+officecli watch deck.pptx
 ```
+
+다른 터미널에서 `add` / `set` / `remove` 할 때마다 `http://localhost:26315` 브라우저가 갱신됩니다.
 
 ## 왜 OfficeCLI인가?
 
-**OfficeCLI로 할 수 있는 것:**
+50줄 Python과 3개 라이브러리가 필요했던 작업이:
 
-- **생성** 문서 — 빈 문서 또는 콘텐츠 포함
-- **읽기** 텍스트, 구조, 스타일 — 일반 텍스트 또는 구조화된 JSON
-- **수정** 모든 요소 — 텍스트, 스타일, 레이아웃
-- **재구성** 콘텐츠 — 요소 추가, 삭제, 이동, 복사
-- **검증** 문서 구조, 문제 감지
-- **추출** 텍스트와 오프셋→경로 매핑, AI 에이전트 위치 지정용
-- **렌더링** 문서를 HTML/SVG로, 시각적 미리보기용
-- **PDF 지원** — 읽기, 보기, 텍스트 수정, 페이지 삭제, 이미지 추출
+```python
+from pptx import Presentation
+prs = Presentation()
+slide = prs.slides.add_slide(prs.slide_layouts[0])
+slide.shapes.title.text = "Q4 보고서"
+# ... 수십 줄 더 ...
+prs.save("deck.pptx")
+```
+
+한 줄 명령으로:
+
+```bash
+officecli add deck.pptx / --type slide --prop title="Q4 보고서"
+```
+
+**본 Rust 빌드의 핵심 기능:**
+
+- **생성** 빈 문서 또는 구조화된 콘텐츠 추가
+- **읽기** 텍스트, 개요, 통계, 주석 뷰 — 일반 텍스트 또는 `--json`
+- **수정** 경로 기반 `set` / `add` / `remove` / `move`
+- **검증** 문서 구조 및 문제 감지
+- **추출** 오프셋→경로 매핑이 있는 텍스트
+- **렌더링** HTML/SVG 시각적 피드백
+- **변환** 레거시 `.doc` / `.xls` / `.ppt` → 현대 형식
+- **PDF** — 읽기, 미리보기, 텍스트 바꾸기, 페이지 삭제
+- **배치** — 한 사이클에 여러 작업
+- **MCP** — JSON-RPC로 모든 작업을 AI 도구로 노출
 
 ## 설치
 
-단일 네이티브 바이너리로 제공. 순 Rust 구현, 크로스 플랫폼, 런타임 의존성 없음.
+단일 네이티브 바이너리로 제공. 순 Rust — .NET, Python, Office 불필요.
 
 **원라인 설치:**
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/RainLib/OfficeCli-rust/main/install.sh | bash
+
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/RainLib/OfficeCli-rust/main/install.ps1 | iex
 ```
 
-**또는 수동 다운로드** [GitHub Releases](https://github.com/iOfficeAI/OfficeCLI/releases):
+특정 버전 지정:
+
+```bash
+OFFICECLI_VERSION=v0.1.1 curl -fsSL https://raw.githubusercontent.com/RainLib/OfficeCli-rust/main/install.sh | bash
+```
+
+**수동 다운로드** [GitHub Releases](https://github.com/RainLib/OfficeCli-rust/releases):
 
 | 플랫폼 | 바이너리 |
 |--------|---------|
@@ -127,8 +147,17 @@ curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh
 | macOS Intel | `officecli-mac-x64` |
 | Linux x64 | `officecli-linux-x64` |
 | Linux ARM64 | `officecli-linux-arm64` |
+| Linux Alpine x64 | `officecli-linux-alpine-x64` |
 | Windows x64 | `officecli-win-x64.exe` |
 | Windows ARM64 | `officecli-win-arm64.exe` |
+
+```bash
+./scripts/download.sh
+./scripts/download.sh v0.1.1 all
+gh release download v0.1.1 --repo RainLib/OfficeCli-rust --pattern 'officecli-*'
+```
+
+> **릴리스 참고:** `v*` 태그 푸시 시 CI가 바이너리를 **Draft** Release에 업로드합니다. [Releases](https://github.com/RainLib/OfficeCli-rust/releases)에서 Publish 후 `latest` URL을 사용하세요. 태그는 `github` 리모트에 푸시하세요 (`git push github v0.1.2`).
 
 설치 확인: `officecli --version`
 
@@ -136,225 +165,174 @@ curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh
 
 ### 3계층 아키텍처
 
-간단하게 시작하고, 필요할 때만 깊이 들어가세요.
-
 | 레이어 | 용도 | 명령어 |
 |--------|------|--------|
-| **L1: 읽기** | 콘텐츠의 시맨틱 뷰 | `view` (text, annotated, outline, stats, issues, html, svg) |
-| **L2: DOM** | 구조화된 요소 작업 | `get`, `query`, `set`, `add`, `remove`, `move`, `copy` |
-| **L3: 원시 XML** | XPath 직접 접근 — 범용 폴백 | `raw`, `raw-set`, `add-part`, `validate` |
+| **L1: 읽기** | 시맨틱 뷰 | `view` (text, annotated, outline, stats, issues, html, svg) |
+| **L2: DOM** | 구조화된 요소 작업 | `get`, `query`, `set`, `add`, `remove`, `move` |
+| **L3: 원시 XML** | XPath 직접 접근 | `raw`, `raw-set`, `validate` |
+
+### 라이브 미리보기와 렌더링
 
 ```bash
-# L1 — 고수준 뷰
-officecli view report.docx annotated
-officecli view budget.xlsx stats
-officecli view report.pdf text
-
-# L2 — 요소 수준 작업
-officecli query report.docx "paragraph"
-officecli add budget.xlsx / --type sheet --prop name="Q2 보고서"
-officecli remove report.pptx '/slide[3]'
-
-# L3 — L2로 부족할 때 원시 XML
-officecli raw deck.pptx 'ppt/slides/slide1.xml'
-officecli raw-set report.docx document --xpath "//w:p[1]" --action append --xml '<w:r><w:t>삽입 텍스트</w:t></w:r>'
+officecli view deck.pptx --mode html
+officecli view deck.pptx --mode svg
+officecli watch deck.pptx
 ```
+
+### 형식 변환
+
+```bash
+officecli convert old.doc
+officecli convert old.xls -o new.xlsx
+officecli convert old.ppt --engine oxide
+```
+
+| 엔진 | 충실도 | 속도 | 의존성 |
+|------|--------|------|--------|
+| `libreoffice` (기본) | ~1:1 | 느림 | LibreOffice (~700MB) |
+| `oxide` | 낮음 | 빠름 | 없음 (순 Rust) |
 
 ### 레지던트 모드와 배치
 
-다단계 워크플로우에서 레지던트 모드는 문서를 메모리에 유지합니다. 배치 모드는 한 번의 open/save 사이클에서 여러 작업을 실행합니다.
-
 ```bash
-# 레지던트 모드 — Unix Domain Socket으로 거의 제로 지연
 officecli open report.docx
 officecli set report.docx /body/p[1]/r[1] --prop text="업데이트됨"
+officecli save report.docx
 officecli close report.docx
-
-# 배치 모드 — 원자적 다중 명령 실행
-echo '[{"command":"set","path":"/slide[1]/shape[1]","props":{"text":"안녕하세요"}}]' \
-  | officecli batch deck.pptx --json
 ```
 
 ### PDF 지원
 
-PDF 문서 읽기, 보기, 수정:
-
 ```bash
-# PDF 텍스트 읽기
-officecli view report.pdf text
-officecli view report.pdf outline
-
-# 페이지 콘텐츠 가져오기
-officecli get report.pdf '/page[1]'
-
-# 텍스트와 오프셋 매핑 추출
+officecli view report.pdf --mode text
 officecli extract-text report.pdf --with-offsets --json
-
-# PDF 수정 — 페이지 텍스트 바꾸기
 officecli set report.pdf '/page[1]' --prop text="새 콘텐츠"
-officecli save report.pdf
-
-# 페이지 삭제
 officecli remove report.pdf '/page[3]'
 officecli save report.pdf
-
-# SVG 미리보기로 렌더링
-officecli view report.pdf svg
-```
-
-### 텍스트/오프셋 → 경로 매핑
-
-모든 형식에서 오프셋→경로 매핑을 출력하여 AI 에이전트가 텍스트를 정확히 찾고 수정할 수 있습니다:
-
-```bash
-# Docx: 문자 오프셋이 단락/런 경로에 매핑
-officecli extract-text report.docx --with-offsets --json
-
-# Xlsx: 셀 오프셋이 시트/셀 경로에 매핑
-officecli extract-text budget.xlsx --with-offsets --json
-
-# Pptx: 텍스트 오프셋이 슬라이드/도형/단락 경로에 매핑
-officecli extract-text deck.pptx --with-offsets --json
-
-# Pdf: 문자 오프셋이 페이지/텍스트블록 경로에 매핑
-officecli extract-text report.pdf --with-offsets --json
 ```
 
 ## AI 통합
 
 ### MCP 서버
 
-내장 [MCP](https://modelcontextprotocol.io) 서버:
-
 ```bash
-officecli mcp         # MCP stdio 서버 시작
+officecli mcp
 ```
-
-JSON-RPC로 모든 문서 작업 제공 — 셸 접근 불필요.
 
 ### 내장 도움말
 
 ```bash
-officecli --help                     # 전체 명령어 개요
-officecli view --help                # view 명령어 상세
-officecli get --help                 # get 명령어 상세
+officecli --help
+officecli help docx paragraph
+officecli help xlsx cell --json
 ```
+
+## 비교
+
+### 기존 도구와 비교
+
+| | OfficeCLI (Rust) | [OfficeCLI (C#)](https://github.com/iOfficeAI/OfficeCLI) | Microsoft Office | python-docx / openpyxl |
+|---|---|---|---|---|
+| 오픈소스 & 무료 | ✅ | ✅ | ✗ | ✅ |
+| AI 네이티브 CLI + JSON | ✅ | ✅ | ✗ | ✗ |
+| 제로 런타임 (단일 바이너리) | ✅ (Rust) | ✅ (.NET 내장) | ✗ | ✗ |
+| Word + Excel + PowerPoint + PDF | ✅ | ✅ | ✅ | 별도 라이브러리 |
+| 텍스트/오프셋 → 경로 매핑 | ✅ | ✅ | ✗ | ✗ |
+| 라이브 HTML 미리보기 | ✅ | ✅ | ✗ | ✗ |
+| MCP 서버 | ✅ | ✅ | ✗ | ✗ |
+| 헤드리스 / CI / Docker | ✅ | ✅ | ✗ | ✅ |
+
+### 업스트림 OfficeCLI (C#)와 비교
+
+| 기능 | 업스트림 (C#) | 이 저장소 (Rust) |
+|------|--------------|-----------------|
+| 템플릿 `merge` | ✅ | 🔜 |
+| `view screenshot` | ✅ | 🔜 |
+| `swap`, `refresh`, `plugins` | ✅ | 🔜 |
+| `officecli install` | ✅ | `install.sh` / `install.ps1` 사용 |
+| 수식 엔진 (150+ 함수) | ✅ | 부분 지원 |
+| 피벗, Morph, 3D 모델 | ✅ | 부분 지원 / 개발 중 |
+| Python SDK | ✅ | 🔜 |
+| AionUi GUI | ✅ | 해당 없음 |
+| Wiki 및 성숙한 생태계 | ✅ | 초기 단계 |
+
+전체 참조: [iOfficeAI/OfficeCLI Wiki](https://github.com/iOfficeAI/OfficeCLI/wiki)
 
 ## 명령어 참조
 
 | 명령어 | 설명 |
 |--------|------|
-| `create` | 빈 .docx, .xlsx, .pptx 생성 |
-| `view` | 콘텐츠 보기 (모드: text, annotated, outline, stats, issues, html, svg) |
-| `get` | 요소와 하위 요소 가져오기 (`--depth N`, `--json`) |
+| `create` | 빈 `.docx` / `.xlsx` / `.pptx` / `.pdf` 생성 |
+| `view` | 콘텐츠 보기 (text, annotated, outline, stats, issues, html, svg) |
+| `get` | 요소와 하위 요소 가져오기 |
 | `query` | CSS 스타일 쿼리 |
-| `set` | 요소 속성 수정 |
-| `add` | 요소 추가 |
-| `remove` | 요소 삭제 |
-| `move` | 요소 이동 |
-| `copy` | 소스에서 타겟으로 요소 복사 |
-| `validate` | 문서 구조 검증 |
-| `extract-text` | 텍스트와 오프셋→경로 매핑 추출 (`--with-offsets`, `--json`) |
-| `batch` | 한 사이클에서 여러 작업 실행 |
-| `dump` | 문서를 재생 가능한 JSON으로 직렬화 |
-| `raw` | 문서 파트의 원시 XML 보기 |
-| `raw-set` | XPath로 원시 XML 수정 |
-| `watch` | 라이브 HTML 미리보기, 자동 새로고침 |
-| `open` | 레지던트 모드 시작 |
-| `close` | 저장하고 레지던트 모드 종료 |
-| `mcp` | AI 도구 통합용 MCP 서버 시작 |
+| `set` / `add` / `remove` / `move` | 요소 변경 |
+| `save` / `validate` / `extract-text` / `convert` / `batch` / `dump` | 각종 작업 |
+| `raw` / `raw-set` | 원시 XML 작업 |
+| `watch` / `unwatch` | 라이브 미리보기 |
+| `open` / `close` | 레지던트 모드 (Unix) |
+| `info` / `mcp` | 정보 / MCP 서버 |
 
-## 비교
+전역 플래그: `--json`
 
-| | OfficeCLI | Microsoft Office | LibreOffice | python-docx / openpyxl |
-|---|---|---|---|---|
-| 오픈소스 & 무료 | ✓ (Apache 2.0) | ✗ (유료 라이선스) | ✓ | ✓ |
-| AI 네이티브 CLI + JSON | ✓ | ✗ | ✗ | ✗ |
-| 제로 설치 (단일 바이너리) | ✓ | ✗ | ✗ | ✗ (Python + pip 필요) |
-| PDF 읽기/수정 | ✓ | ✗ | ✓ | ✗ |
-| 텍스트/오프셋 → 경로 매핑 | ✓ | ✗ | ✗ | ✗ |
-| 경로 기반 요소 접근 | ✓ | ✗ | ✗ | ✗ |
-| 원시 XML 폴백 | ✓ | ✗ | ✗ | 부분 지원 |
-| 크로스 플랫폼 네이티브 | ✓ (Rust) | Windows/Mac | ✓ | ✓ |
-| Word + Excel + PowerPoint + PDF | ✓ | ✓ | ✓ | 여러 라이브러리 필요 |
+## 사용 사례
+
+**개발자** — CI/CD 자동화, Docker 헤드리스 처리, 경량 Rust 바이너리 임베딩
+
+**AI 에이전트** — TextOffsetMap 정밀 편집, `watch` 시각 피드백, MCP 통합
+
+**팀** — 감사 가능한 Rust 코드로 내부 자동화, 업스트림에서 점진적 마이그레이션
 
 ## 소스에서 빌드
 
-[Rust](https://rustup.rs/) (1.75+) 필요.
+[Rust](https://rustup.rs/) 1.75+ (CI는 1.90.0) 필요.
 
 ```bash
+git clone https://github.com/RainLib/OfficeCli-rust.git
+cd OfficeCli-rust
 cargo build --release
-# 바이너리는 target/release/officecli에 생성
 ```
 
-다른 플랫폼용 크로스 컴파일:
-
 ```bash
-# macOS ARM
-cargo build --release --target aarch64-apple-darwin
-
-# Linux x64 (크로스 링커 필요)
-cargo build --release --target x86_64-unknown-linux-gnu
-
-# Windows x64 (크로스 링커 필요)
-cargo build --release --target x86_64-pc-windows-msvc
+make dist
+make download VERSION=v0.1.1 PLATFORM=all
+make smoke
 ```
 
 ## 프로젝트 구조
 
 ```
-OfficeCLI/
-├── Cargo.toml                 # Workspace 루트
-├── crates/
-│   ├── officecli/              # CLI 엔트리 + 명령어
-│   ├── handler-common/         # 공유 trait + 타입
-│   ├── oxml/                   # OOXML ZIP/XML 패키지 처리
-│   ├── docx-handler/           # Word 문서 핸들러
-│   ├── xlsx-handler/           # Excel 문서 핸들러
-│   ├── pptx-handler/           # PowerPoint 핸들러
-│   └── pdf-handler/            # PDF 핸들러 (lopdf + 커스텀 파서)
-├── examples/                   # 테스트 샘플 파일
-└── scripts/                    # 빌드/릴리스 스크립트
+OfficeCli-rust/
+├── Cargo.toml
+├── install.sh / install.ps1
+├── scripts/download.sh
+├── SKILL.md
+├── crates/ (officecli, handler-common, oxml, docx/xlsx/pptx/pdf-handler)
+├── examples/
+└── skills/
 ```
+
+## 기여
+
+[CONTRIBUTING.md](CONTRIBUTING.md) 참조. 이슈: [GitHub Issues](https://github.com/RainLib/OfficeCli-rust/issues)
+
+업스트림 참조: [iOfficeAI/OfficeCLI](https://github.com/iOfficeAI/OfficeCLI)
 
 ## 라이선스
 
 [Apache License 2.0](LICENSE)
 
-버그 리포트와 기여는 [GitHub Issues](https://github.com/iOfficeAI/OfficeCLI/issues)로 환영합니다.
-
 ---
 
-OfficeCLI가 유용하다면 [GitHub에서 스타를 눌러주세요](https://github.com/iOfficeAI/OfficeCLI) — 더 많은 사람들이 프로젝트를 발견하는 데 도움이 됩니다.
-
-[OfficeCLI.AI](https://OfficeCLI.AI) | [GitHub](https://github.com/iOfficeAI/OfficeCLI)
-
-<!--
-yaml-frontmatter:
-  name: officecli
-  version: see GitHub Releases
-  description: AI 에이전트용 Office & PDF 문서 작업 표준 CLI
-  formats: [docx, xlsx, pptx, pdf]
-  platforms: [macos, linux, windows]
-  license: Apache-2.0
-  keywords: [office, cli, ai-agent, automation, docx, xlsx, pptx, pdf, openxml, document-generation, mcp-server, word, excel, powerpoint, rust]
-  ai-agent-compatible: true
-  mcp-server: true
-  skill-file: SKILL.md
--->
+[GitHub — RainLib/OfficeCli-rust](https://github.com/RainLib/OfficeCli-rust) | [업스트림 — iOfficeAI/OfficeCLI](https://github.com/iOfficeAI/OfficeCLI) | [Releases](https://github.com/RainLib/OfficeCli-rust/releases)
 
 <!-- LLM/agent discovery metadata
 tool: officecli
+repo: RainLib/OfficeCli-rust
+upstream: iOfficeAI/OfficeCLI
 type: cli
-canonical: AI 기반 Office & PDF 문서 작업 표준 CLI
+language: rust
 formats: docx, xlsx, pptx, pdf
-capabilities: create, read, modify, validate, batch, resident-mode, mcp-server, live-preview, text-offset-mapping
-output: json, text, annotated
-platforms: macos, linux, windows
 license: Apache-2.0
-keywords: office, cli, ai-agent, automation, docx, xlsx, pptx, pdf, openxml, document-generation, mcp-server, word, excel, powerpoint, ai-tools, command-line, structured-output, rust
-ai-agent-compatible: true
-mcp-server: true
 skill-file: SKILL.md
-alternatives: python-docx, openpyxl, python-pptx, libreoffice --headless, pdftotext
 -->

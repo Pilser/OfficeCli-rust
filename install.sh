@@ -1,28 +1,18 @@
 #!/bin/bash
 set -e
 
-REPO="iOfficeAI/OfficeCLI"
+REPO="RainLib/OfficeCli-rust"
 BINARY_NAME="officecli"
-
-# Mirror primary, github fallback. The mirror is exercised first so issues
-# surface there fast; github is the final safety net.
-MIRROR_BASE="https://d.officecli.ai"
-GITHUB_RELEASE_BASE="https://github.com/$REPO/releases/latest/download"
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/$REPO/main"
 
-# fetch_with_fallback <primary_url> <fallback_url> <output_path>
-# Returns 0 if either source delivered the file, non-zero if both failed.
-# Short connect-timeout on primary so a dead mirror doesn't add minutes
-# of stall before falling through.
-fetch_with_fallback() {
-    local primary="$1" fallback="$2" out="$3"
-    if curl -fsSL --max-time 300 --connect-timeout 5 "$primary" -o "$out" 2>/dev/null; then
-        echo "  (via mirror)"
-        return 0
-    fi
-    echo "  mirror unreachable, falling back to github..."
-    curl -fsSL --max-time 300 "$fallback" -o "$out" 2>/dev/null
-}
+# Optional: pin a release tag, e.g. OFFICECLI_VERSION=v0.1.1
+# Default "latest" uses the newest published (non-draft) GitHub Release.
+OFFICECLI_VERSION="${OFFICECLI_VERSION:-latest}"
+if [ "$OFFICECLI_VERSION" = "latest" ]; then
+    RELEASE_BASE="https://github.com/$REPO/releases/latest/download"
+else
+    RELEASE_BASE="https://github.com/$REPO/releases/download/$OFFICECLI_VERSION"
+fi
 
 # Detect platform
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -37,7 +27,6 @@ case "$OS" in
         esac
         ;;
     linux)
-        # Detect musl libc (Alpine, etc.)
         LIBC="gnu"
         if command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -qi musl; then
             LIBC="musl"
@@ -54,7 +43,9 @@ case "$OS" in
                 ;;
             aarch64|arm64)
                 if [ "$LIBC" = "musl" ]; then
-                    ASSET="officecli-linux-alpine-arm64"
+                    echo "Linux ARM64 musl (Alpine) binary is not published yet."
+                    echo "Use a gnu build or build from source: cargo build --release"
+                    exit 1
                 else
                     ASSET="officecli-linux-arm64"
                 fi
@@ -64,25 +55,19 @@ case "$OS" in
         ;;
     *)
         echo "Unsupported OS: $OS"
-        echo "For Windows, download from: https://github.com/$REPO/releases"
+        echo "For Windows, run: irm https://raw.githubusercontent.com/$REPO/main/install.ps1 | iex"
+        echo "Or download from: https://github.com/$REPO/releases"
         exit 1
         ;;
 esac
 
 SOURCE=""
 
-# Step 1: Try downloading (mirror first, github fallback)
-echo "Downloading OfficeCLI ($ASSET)..."
-if fetch_with_fallback \
-        "$MIRROR_BASE/releases/latest/download/$ASSET" \
-        "$GITHUB_RELEASE_BASE/$ASSET" \
-        "/tmp/$BINARY_NAME"; then
-    # Verify checksum if available
+# Step 1: Download from GitHub Release
+echo "Downloading OfficeCLI ($ASSET) from $REPO..."
+if curl -fsSL --max-time 300 "$RELEASE_BASE/$ASSET" -o "/tmp/$BINARY_NAME"; then
     CHECKSUM_OK=false
-    if fetch_with_fallback \
-            "$MIRROR_BASE/releases/latest/download/SHA256SUMS" \
-            "$GITHUB_RELEASE_BASE/SHA256SUMS" \
-            "/tmp/officecli-SHA256SUMS"; then
+    if curl -fsSL --max-time 300 "$RELEASE_BASE/SHA256SUMS" -o "/tmp/officecli-SHA256SUMS" 2>/dev/null; then
         EXPECTED=$(grep "$ASSET" "/tmp/officecli-SHA256SUMS" | awk '{print $1}')
         if [ -n "$EXPECTED" ]; then
             if command -v sha256sum >/dev/null 2>&1; then
@@ -108,12 +93,14 @@ if fetch_with_fallback \
     SOURCE="/tmp/$BINARY_NAME"
 else
     echo "Download failed."
+    echo "Tip: releases/latest/download only works for published (non-draft) releases."
+    echo "Try a specific version: OFFICECLI_VERSION=v0.1.1 curl -fsSL ... | bash"
 fi
 
 # Step 2: Fallback to local files
 if [ -z "$SOURCE" ]; then
     echo "Looking for local binary..."
-    for candidate in "./$ASSET" "./$BINARY_NAME" "./bin/$ASSET" "./bin/$BINARY_NAME" "./bin/release/$ASSET" "./bin/release/$BINARY_NAME"; do
+    for candidate in "./$ASSET" "./$BINARY_NAME" "./bin/$ASSET" "./bin/$BINARY_NAME" "./dist/$ASSET" "./target/release/$BINARY_NAME"; do
         if [ -f "$candidate" ]; then
             if [ ! -x "$candidate" ]; then
                 chmod +x "$candidate"
@@ -143,15 +130,9 @@ else
 fi
 
 mkdir -p "$INSTALL_DIR"
-# Atomic replace: stage as .new alongside the target, sign there, then rename.
-# Overwriting the binary in place would trash the text segment of any
-# running officecli process (macOS does not block ETXTBSY), leaving it
-# stuck in uninterruptible `UE` state on the next code page fault.
 cp "$SOURCE" "$INSTALL_DIR/$BINARY_NAME.new"
 chmod +x "$INSTALL_DIR/$BINARY_NAME.new"
 
-# macOS: remove quarantine flag and ad-hoc codesign (required by AppleSystemPolicy)
-# Done on the staged .new copy so the live binary is never mutated in place.
 if [ "$(uname -s)" = "Darwin" ]; then
     xattr -d com.apple.quarantine "$INSTALL_DIR/$BINARY_NAME.new" 2>/dev/null || true
     codesign -s - -f "$INSTALL_DIR/$BINARY_NAME.new" 2>/dev/null || true
@@ -159,7 +140,6 @@ fi
 
 mv -f "$INSTALL_DIR/$BINARY_NAME.new" "$INSTALL_DIR/$BINARY_NAME"
 
-# Auto-add to PATH if needed
 case ":$PATH:" in
     *":$INSTALL_DIR:"*) ;;
     *)
@@ -197,10 +177,7 @@ if [ ! -f "$SKILL_MARKER" ]; then
 
     if [ -n "$SKILL_TARGETS" ]; then
         echo "Downloading officecli skill..."
-        if fetch_with_fallback \
-                "$MIRROR_BASE/SKILL.md" \
-                "$GITHUB_RAW_BASE/SKILL.md" \
-                "/tmp/officecli-skill.md"; then
+        if curl -fsSL --max-time 300 "$GITHUB_RAW_BASE/SKILL.md" -o "/tmp/officecli-skill.md" 2>/dev/null; then
             for target in $SKILL_TARGETS; do
                 mkdir -p "$target"
                 cp "/tmp/officecli-skill.md" "$target/SKILL.md"
