@@ -284,12 +284,17 @@ fn convert_via_oxide(input_file: &str, output_path: &std::path::Path) -> Result<
 }
 
 /// Validate that the conversion is supported.
-fn validate_conversion(input_ext: &str, output_ext: &str, engine: ConvertEngine) -> Result<(), HandlerError> {
+fn validate_conversion(
+    input_ext: &str,
+    output_ext: &str,
+    engine: ConvertEngine,
+) -> Result<(), HandlerError> {
     // Cross-family: PDF -> DOCX (LibreOffice only)
     if input_ext == "pdf" && output_ext == "docx" {
         if engine != ConvertEngine::LibreOffice {
             return Err(HandlerError::UnsupportedMode(
-                "PDF to DOCX conversion requires LibreOffice engine (--engine libreoffice)".to_string(),
+                "PDF to DOCX conversion requires LibreOffice engine (--engine libreoffice)"
+                    .to_string(),
             ));
         }
         return Ok(());

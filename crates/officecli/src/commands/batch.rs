@@ -90,7 +90,9 @@ fn execute_batch_op(
                 .get("parent")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            let element_type = op.params.get("type")
+            let element_type = op
+                .params
+                .get("type")
                 .or_else(|| op.params.get("typeName"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
@@ -180,13 +182,13 @@ fn parse_position(params: &HashMap<String, serde_json::Value>) -> InsertPosition
     }
 }
 
-fn string_map(params: &HashMap<String, serde_json::Value>, key: &str) -> Option<HashMap<String, String>> {
-    params
-        .get(key)
-        .and_then(|v| v.as_object())
-        .map(|obj| {
-            obj.iter()
-                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                .collect()
-        })
+fn string_map(
+    params: &HashMap<String, serde_json::Value>,
+    key: &str,
+) -> Option<HashMap<String, String>> {
+    params.get(key).and_then(|v| v.as_object()).map(|obj| {
+        obj.iter()
+            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+            .collect()
+    })
 }

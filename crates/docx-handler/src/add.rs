@@ -1,7 +1,5 @@
 use crate::dom_types::{WordDom, WordElementType, WordNode};
-use crate::helpers::{
-    generate_bookmark_id, quote_attr_value_if_needed, validate_bookmark_name,
-};
+use crate::helpers::{generate_bookmark_id, quote_attr_value_if_needed, validate_bookmark_name};
 use crate::navigation::{navigate_to_element, navigate_to_element_mut, parse_path};
 use handler_common::{HandlerError, InsertPosition, PathRangeSegment};
 use std::collections::HashMap;
@@ -76,6 +74,134 @@ fn add_bookmark(
     add_bookmark_positional(dom, parent, position, properties)
 }
 
+/// Resolve a range-paths segment to paragraph-level path and offsets.
+/// Supports both paragraph-level paths (/body/p[3][5..20]) and
+/// run-level paths (/body/p[3]/r[2][10..15]) which are converted by
+/// finding the run's cumulative offset within the paragraph text.
+fn resolve_range_to_paragraph(
+    dom: &WordDom,
+    seg_path: &str,
+    seg_start: Option<usize>,
+    seg_end: Option<usize>,
+) -> Result<(String, usize, usize), HandlerError> {
+    // Try navigating to the path directly (read-only)
+    let node = navigate_to_element(dom, seg_path)?;
+
+    if node.element_type == WordElementType::Paragraph {
+        // Already a paragraph path — use offsets directly
+        let total = node.paragraph_text().chars().count();
+        let start = seg_start.unwrap_or(0);
+        let end = seg_end.unwrap_or(total);
+        return Ok((seg_path.to_string(), start, end));
+    }
+
+    if node.element_type == WordElementType::Run {
+        // Run-level path — need to convert to paragraph-level offsets
+        // Extract paragraph path by stripping the run suffix: /body/p[3]/r[2] → /body/p[3]
+        let para_path = extract_paragraph_path(seg_path)?;
+
+        let para_node = navigate_to_element(dom, &para_path)?;
+        if para_node.element_type != WordElementType::Paragraph {
+            return Err(HandlerError::InvalidArgument(format!(
+                "cannot find paragraph for run path '{}'",
+                seg_path
+            )));
+        }
+
+        // Calculate cumulative text offset of the target run within the paragraph
+        let run_offset = compute_run_offset_in_paragraph(para_node, seg_path)?;
+        let run_text_len = node.paragraph_text().chars().count();
+
+        let start = run_offset + seg_start.unwrap_or(0);
+        let end = run_offset + seg_end.unwrap_or(run_text_len);
+
+        Ok((para_path, start, end))
+    } else {
+        Err(HandlerError::InvalidArgument(format!(
+            "range-paths must point to a Paragraph or Run, found: {:?}",
+            node.element_type
+        )))
+    }
+}
+
+/// Extract the paragraph path from a run path by stripping the /r[N] suffix
+/// and any enclosing /hyperlink[N].
+fn extract_paragraph_path(run_path: &str) -> Result<String, HandlerError> {
+    // Strip /r[N] suffix first
+    let without_run = if let Some(pos) = run_path.rfind("/r[") {
+        run_path[..pos].to_string()
+    } else {
+        return Err(HandlerError::InvalidArgument(format!(
+            "cannot extract paragraph path from '{}'",
+            run_path
+        )));
+    };
+    // If what remains ends with /hyperlink[N], strip that too
+    // e.g. /body/p[3]/hyperlink[1] → /body/p[3]
+    let para_path = if let Some(pos) = without_run.rfind("/hyperlink[") {
+        without_run[..pos].to_string()
+    } else {
+        without_run
+    };
+    Ok(para_path)
+}
+
+/// Compute the cumulative character offset of a specific run within its paragraph.
+fn compute_run_offset_in_paragraph(
+    para_node: &crate::dom_types::WordNode,
+    run_path: &str,
+) -> Result<usize, HandlerError> {
+    // Walk children, counting until we reach the target run
+    let run_idx = extract_run_index_from_path(run_path)?;
+    let mut offset = 0;
+    let mut current_idx = 0;
+
+    for child in &para_node.children {
+        if child.element_type == WordElementType::Run {
+            current_idx += 1;
+            if current_idx == run_idx {
+                return Ok(offset);
+            }
+            offset += child.paragraph_text().chars().count();
+        } else if child.element_type == WordElementType::Hyperlink {
+            for hl_child in &child.children {
+                if hl_child.element_type == WordElementType::Run {
+                    current_idx += 1;
+                    if current_idx == run_idx {
+                        return Ok(offset);
+                    }
+                    offset += hl_child.paragraph_text().chars().count();
+                }
+            }
+        }
+    }
+
+    Err(HandlerError::InvalidPath(format!(
+        "run index {} not found in paragraph for path '{}'",
+        run_idx, run_path
+    )))
+}
+
+/// Extract 1-based run index from path like /body/p[3]/r[2] → 2
+fn extract_run_index_from_path(path: &str) -> Result<usize, HandlerError> {
+    // Find /r[N] and extract N
+    let rfind_result = path.rfind("/r[");
+    if rfind_result.is_none() {
+        return Err(HandlerError::InvalidPath(format!(
+            "no run index in path '{}'",
+            path
+        )));
+    }
+    let start = rfind_result.unwrap() + 3; // after "/r["
+    let rest = &path[start..];
+    let end_pos = rest.find(']').ok_or_else(|| {
+        HandlerError::InvalidPath(format!("malformed run index in path '{}'", path))
+    })?;
+    rest[..end_pos]
+        .parse::<usize>()
+        .map_err(|_| HandlerError::InvalidPath(format!("non-numeric run index in path '{}'", path)))
+}
+
 /// Add bookmark using --range-paths: atomically split runs at char offsets
 /// and insert bookmarkStart/bookmarkEnd around the highlighted region.
 fn add_bookmark_by_range(
@@ -85,10 +211,7 @@ fn add_bookmark_by_range(
     segments: &[PathRangeSegment],
 ) -> Result<String, HandlerError> {
     // Validate name
-    let bk_name = properties
-        .get("name")
-        .cloned()
-        .unwrap_or_default();
+    let bk_name = properties.get("name").cloned().unwrap_or_default();
     validate_bookmark_name(&bk_name)?;
 
     // Reject duplicate names
@@ -100,8 +223,7 @@ fn add_bookmark_by_range(
     let bookmark_start = WordNode::new(WordElementType::BookmarkStart)
         .with_attribute("id", &bk_id)
         .with_attribute("name", &bk_name);
-    let bookmark_end = WordNode::new(WordElementType::BookmarkEnd)
-        .with_attribute("id", &bk_id);
+    let bookmark_end = WordNode::new(WordElementType::BookmarkEnd).with_attribute("id", &bk_id);
 
     // Format properties for the bookmarked content
     let mut format_props = properties.clone();
@@ -114,7 +236,10 @@ fn add_bookmark_by_range(
     // For range-paths with a single segment, wrap around that range
     if segments.len() == 1 {
         let seg = &segments[0];
-        let para_node = navigate_to_element_mut(dom, &seg.path)?;
+        let (para_path, target_start, target_end) =
+            resolve_range_to_paragraph(dom, &seg.path, seg.start, seg.end)?;
+
+        let para_node = navigate_to_element_mut(dom, &para_path)?;
         if para_node.element_type != WordElementType::Paragraph {
             return Err(HandlerError::InvalidArgument(format!(
                 "range-paths for bookmark must point to a Paragraph, found: {:?}",
@@ -136,9 +261,8 @@ fn add_bookmark_by_range(
             global_start = global_end;
         }
 
-        let total_text_len = global_start;
-        let target_start = seg.start.unwrap_or(0);
-        let target_end = seg.end.unwrap_or(total_text_len);
+        let _total_text_len = global_start;
+        // target_start/target_end already resolved to paragraph-level offsets by resolve_range_to_paragraph
 
         // Phase 1: Split runs at char boundaries (reverse order for stable indices)
         // Track which split fragments fall inside the bookmark range.
@@ -162,7 +286,7 @@ fn add_bookmark_by_range(
             let parent_path = &path[..path.len() - 1];
             let last_idx = path[path.len() - 1];
 
-            let para_node = navigate_to_element_mut(dom, &seg.path)?;
+            let para_node = navigate_to_element_mut(dom, &para_path)?;
             let run_parent = get_node_mut_by_path(para_node, parent_path);
             let run = run_parent.children[last_idx].clone();
             let text = run.paragraph_text();
@@ -182,8 +306,7 @@ fn add_bookmark_by_range(
             let mut mid = None;
             let mut right = None;
             if let Some(r) = rest {
-                let (m, rg) =
-                    crate::helpers::split_run_at_offset(&r, byte_end - byte_start);
+                let (m, rg) = crate::helpers::split_run_at_offset(&r, byte_end - byte_start);
                 mid = m;
                 right = rg;
             }
@@ -213,7 +336,7 @@ fn add_bookmark_by_range(
                 inside_fragment_indices.push((parent_path.to_vec(), last_idx + left_count));
             }
 
-            let para_node = navigate_to_element_mut(dom, &seg.path)?;
+            let para_node = navigate_to_element_mut(dom, &para_path)?;
             let run_parent = get_node_mut_by_path(para_node, parent_path);
             run_parent.children.splice(last_idx..=last_idx, inserted);
         }
@@ -223,7 +346,7 @@ fn add_bookmark_by_range(
         // Walk through all run children, compute cumulative char offset,
         // find the child whose text starts at target_start → bookmarkStart before it
         // find the child whose text ends at target_end → bookmarkEnd after it
-        let para_node = navigate_to_element_mut(dom, &seg.path)?;
+        let para_node = navigate_to_element_mut(dom, &para_path)?;
 
         let mut cumulative = 0;
         let mut bk_start_idx: Option<usize> = None;
@@ -234,7 +357,8 @@ fn add_bookmark_by_range(
                 continue;
             }
             if child.element_type == WordElementType::BookmarkStart
-                || child.element_type == WordElementType::BookmarkEnd {
+                || child.element_type == WordElementType::BookmarkEnd
+            {
                 continue;
             }
 
@@ -266,13 +390,14 @@ fn add_bookmark_by_range(
 
         if let Some(start_idx) = bk_start_idx {
             // Re-navigate since we just inserted bookmarkEnd
-            let para_node = navigate_to_element_mut(dom, &seg.path)?;
+            let para_node = navigate_to_element_mut(dom, &para_path)?;
             para_node.children.insert(start_idx, bookmark_start.clone());
         } else {
             // target_start is 0 — insert bookmarkStart at first position past pPr
-            let para_node = navigate_to_element_mut(dom, &seg.path)?;
-            let past_ppr = if para_node.children.first()
-                .map(|c| c.element_type.clone()) == Some(WordElementType::ParagraphProperties) {
+            let para_node = navigate_to_element_mut(dom, &para_path)?;
+            let past_ppr = if para_node.children.first().map(|c| c.element_type.clone())
+                == Some(WordElementType::ParagraphProperties)
+            {
                 1
             } else {
                 0
@@ -281,7 +406,7 @@ fn add_bookmark_by_range(
         }
 
         let quoted = quote_attr_value_if_needed(&bk_name)?;
-        return Ok(format!("{}/bookmarkStart[@name={}]", seg.path, quoted));
+        return Ok(format!("{}/bookmarkStart[@name={}]", para_path, quoted));
     }
 
     // Multi-segment range: bookmarkStart at first segment start, bookmarkEnd at last segment end
@@ -289,9 +414,18 @@ fn add_bookmark_by_range(
     let first_seg = &segments[0];
     let last_seg = segments.last().unwrap();
 
+    // Resolve first/last segment paths to paragraph-level before the loop
+    let (first_para_path, first_target_start, _) =
+        resolve_range_to_paragraph(dom, &first_seg.path, first_seg.start, first_seg.end)?;
+    let (last_para_path, _, last_target_end) =
+        resolve_range_to_paragraph(dom, &last_seg.path, last_seg.start, last_seg.end)?;
+
     // Process each segment: split runs at boundaries
     for seg in segments {
-        let para_node = navigate_to_element_mut(dom, &seg.path)?;
+        let (para_path, seg_target_start, seg_target_end) =
+            resolve_range_to_paragraph(dom, &seg.path, seg.start, seg.end)?;
+
+        let para_node = navigate_to_element_mut(dom, &para_path)?;
         if para_node.element_type != WordElementType::Paragraph {
             return Err(HandlerError::InvalidArgument(
                 "range-paths for bookmark must point to Paragraphs".to_string(),
@@ -311,9 +445,8 @@ fn add_bookmark_by_range(
             global_start = global_end;
         }
 
-        let total_text_len = global_start;
-        let target_start = seg.start.unwrap_or(0);
-        let target_end = seg.end.unwrap_or(total_text_len);
+        let target_start = seg_target_start;
+        let target_end = seg_target_end;
 
         for (path, r_start, r_end) in runs_with_spans.iter().rev() {
             let overlap_start = (*r_start).max(target_start);
@@ -329,7 +462,7 @@ fn add_bookmark_by_range(
             let parent_path = &path[..path.len() - 1];
             let last_idx = path[path.len() - 1];
 
-            let para_node = navigate_to_element_mut(dom, &seg.path)?;
+            let para_node = navigate_to_element_mut(dom, &para_path)?;
             let run_parent = get_node_mut_by_path(para_node, parent_path);
             let run = run_parent.children[last_idx].clone();
             let text = run.paragraph_text();
@@ -349,8 +482,7 @@ fn add_bookmark_by_range(
             let mut mid = None;
             let mut right = None;
             if let Some(r) = rest {
-                let (m, rg) =
-                    crate::helpers::split_run_at_offset(&r, byte_end - byte_start);
+                let (m, rg) = crate::helpers::split_run_at_offset(&r, byte_end - byte_start);
                 mid = m;
                 right = rg;
             }
@@ -369,7 +501,7 @@ fn add_bookmark_by_range(
                 inserted.push(rg);
             }
 
-            let para_node = navigate_to_element_mut(dom, &seg.path)?;
+            let para_node = navigate_to_element_mut(dom, &para_path)?;
             let run_parent = get_node_mut_by_path(para_node, parent_path);
             run_parent.children.splice(last_idx..=last_idx, inserted);
         }
@@ -377,16 +509,16 @@ fn add_bookmark_by_range(
 
     // Insert bookmarkStart at the correct position in the first segment's paragraph
     {
-        let seg = first_seg;
-        let target_start = seg.start.unwrap_or(0);
-        let para_node = navigate_to_element_mut(dom, &seg.path)?;
+        let target_start = first_target_start;
+        let para_node = navigate_to_element_mut(dom, &first_para_path)?;
 
         let mut cumulative = 0;
         let mut bk_start_idx: Option<usize> = None;
         for (i, child) in para_node.children.iter().enumerate() {
             if child.element_type == WordElementType::ParagraphProperties
                 || child.element_type == WordElementType::BookmarkStart
-                || child.element_type == WordElementType::BookmarkEnd {
+                || child.element_type == WordElementType::BookmarkEnd
+            {
                 continue;
             }
             let text_len = child.paragraph_text().chars().count();
@@ -402,8 +534,9 @@ fn add_bookmark_by_range(
         if let Some(start_idx) = bk_start_idx {
             para_node.children.insert(start_idx, bookmark_start.clone());
         } else {
-            let past_ppr = if para_node.children.first()
-                .map(|c| c.element_type.clone()) == Some(WordElementType::ParagraphProperties) {
+            let past_ppr = if para_node.children.first().map(|c| c.element_type.clone())
+                == Some(WordElementType::ParagraphProperties)
+            {
                 1
             } else {
                 0
@@ -414,25 +547,16 @@ fn add_bookmark_by_range(
 
     // Insert bookmarkEnd at the correct position in the last segment's paragraph
     {
-        let seg = last_seg;
-        let target_end = seg.end.unwrap_or({
-            let para_node = navigate_to_element(dom, &seg.path)?;
-            let mut total = 0;
-            for child in &para_node.children {
-                if child.element_type == WordElementType::Run {
-                    total += child.paragraph_text().chars().count();
-                }
-            }
-            total
-        });
-        let para_node = navigate_to_element_mut(dom, &seg.path)?;
+        let target_end = last_target_end;
+        let para_node = navigate_to_element_mut(dom, &last_para_path)?;
 
         let mut cumulative = 0;
         let mut bk_end_idx: Option<usize> = None;
         for (i, child) in para_node.children.iter().enumerate() {
             if child.element_type == WordElementType::ParagraphProperties
                 || child.element_type == WordElementType::BookmarkStart
-                || child.element_type == WordElementType::BookmarkEnd {
+                || child.element_type == WordElementType::BookmarkEnd
+            {
                 continue;
             }
             let text_len = child.paragraph_text().chars().count();
@@ -455,7 +579,7 @@ fn add_bookmark_by_range(
     let quoted = quote_attr_value_if_needed(&bk_name)?;
     Ok(format!(
         "{}/bookmarkStart[@name={}]",
-        first_seg.path, quoted
+        first_para_path, quoted
     ))
 }
 
@@ -469,10 +593,7 @@ fn add_bookmark_wrap(
     wrap_path: &str,
 ) -> Result<String, HandlerError> {
     // Validate name
-    let bk_name = properties
-        .get("name")
-        .cloned()
-        .unwrap_or_default();
+    let bk_name = properties.get("name").cloned().unwrap_or_default();
     validate_bookmark_name(&bk_name)?;
 
     // Reject duplicate names
@@ -484,8 +605,7 @@ fn add_bookmark_wrap(
     let bookmark_start = WordNode::new(WordElementType::BookmarkStart)
         .with_attribute("id", &bk_id)
         .with_attribute("name", &bk_name);
-    let bookmark_end = WordNode::new(WordElementType::BookmarkEnd)
-        .with_attribute("id", &bk_id);
+    let bookmark_end = WordNode::new(WordElementType::BookmarkEnd).with_attribute("id", &bk_id);
 
     // Navigate to the wrap target
     let target = navigate_to_element(dom, wrap_path)?;
@@ -522,18 +642,22 @@ fn add_bookmark_wrap(
                     }
                 }
             }
-            result_idx.ok_or_else(|| HandlerError::PathNotFound(format!(
-                "target not found in parent: {}", wrap_path
-            )))?
+            result_idx.ok_or_else(|| {
+                HandlerError::PathNotFound(format!("target not found in parent: {}", wrap_path))
+            })?
         };
 
         let parent_node = navigate_to_element_mut(dom, &parent_path_str)?;
 
         // Insert bookmarkStart before the target run
-        parent_node.children.insert(target_idx_in_parent, bookmark_start.clone());
+        parent_node
+            .children
+            .insert(target_idx_in_parent, bookmark_start.clone());
 
         // Insert bookmarkEnd after the target run (target_idx + 2 because bookmarkStart was just inserted)
-        parent_node.children.insert(target_idx_in_parent + 2, bookmark_end.clone());
+        parent_node
+            .children
+            .insert(target_idx_in_parent + 2, bookmark_end.clone());
 
         // Optionally apply highlight/color to the wrapped run
         let mut format_props = properties.clone();
@@ -567,7 +691,8 @@ fn add_bookmark_wrap(
         } else {
             0
         };
-        para.children.insert(insert_start_idx, bookmark_start.clone());
+        para.children
+            .insert(insert_start_idx, bookmark_start.clone());
 
         // Insert bookmarkEnd at the end of paragraph content
         let para = navigate_to_element_mut(dom, wrap_path)?;
@@ -575,9 +700,11 @@ fn add_bookmark_wrap(
         let insert_end_idx = para
             .children
             .iter()
-            .rposition(|c| c.element_type == WordElementType::Run
-                || c.element_type == WordElementType::BookmarkEnd
-                || c.element_type == WordElementType::Text)
+            .rposition(|c| {
+                c.element_type == WordElementType::Run
+                    || c.element_type == WordElementType::BookmarkEnd
+                    || c.element_type == WordElementType::Text
+            })
             .map(|i| i + 1)
             .unwrap_or(para.children.len());
         para.children.insert(insert_end_idx, bookmark_end.clone());
@@ -604,10 +731,7 @@ fn add_bookmark_wrap(
         }
 
         let quoted = quote_attr_value_if_needed(&bk_name)?;
-        Ok(format!(
-            "{}/bookmarkStart[@name={}]",
-            wrap_path, quoted
-        ))
+        Ok(format!("{}/bookmarkStart[@name={}]", wrap_path, quoted))
     } else if target.element_type == WordElementType::TableCell {
         // TableCell redirect: redirect to the cell's first paragraph
         let cell = navigate_to_element_mut(dom, wrap_path)?;
@@ -620,8 +744,8 @@ fn add_bookmark_wrap(
 
         if first_para_idx.is_none() {
             let para_id = crate::helpers::generate_para_id();
-            let empty_para = WordNode::new(WordElementType::Paragraph)
-                .with_attribute("paraId", &para_id);
+            let empty_para =
+                WordNode::new(WordElementType::Paragraph).with_attribute("paraId", &para_id);
             cell.children.push(empty_para);
         }
 
@@ -656,10 +780,7 @@ fn add_bookmark_positional(
     let (actual_parent, actual_position) = handle_tablecell_redirect(dom, parent, position)?;
 
     // Validate name
-    let bk_name = properties
-        .get("name")
-        .cloned()
-        .unwrap_or_default();
+    let bk_name = properties.get("name").cloned().unwrap_or_default();
     validate_bookmark_name(&bk_name)?;
 
     // Reject duplicate names
@@ -671,8 +792,7 @@ fn add_bookmark_positional(
     let bookmark_start = WordNode::new(WordElementType::BookmarkStart)
         .with_attribute("id", &bk_id)
         .with_attribute("name", &bk_name);
-    let bookmark_end = WordNode::new(WordElementType::BookmarkEnd)
-        .with_attribute("id", &bk_id);
+    let bookmark_end = WordNode::new(WordElementType::BookmarkEnd).with_attribute("id", &bk_id);
 
     // Parse endPara
     let cross_para_end_offset = parse_end_para(properties);
@@ -736,7 +856,8 @@ fn add_bookmark_positional(
                 // Fall back: positional insert of bookmarkStart + run + bookmarkEnd
                 let run = make_run_with_text(bk_text, properties);
                 let para = navigate_to_element_mut(dom, &actual_parent)?;
-                let insert_idx = clamp_past_ppr(&para.children, resolved_idx.unwrap_or(para.children.len()));
+                let insert_idx =
+                    clamp_past_ppr(&para.children, resolved_idx.unwrap_or(para.children.len()));
                 para.children.insert(insert_idx, bookmark_start.clone());
                 para.children.insert(insert_idx + 1, run);
                 para.children.insert(insert_idx + 2, bookmark_end.clone());
@@ -746,9 +867,13 @@ fn add_bookmark_positional(
             let run = make_run_with_text(bk_text, properties);
             let container = navigate_to_element_mut(dom, &actual_parent)?;
             let insert_idx = resolved_idx.unwrap_or(container.children.len());
-            container.children.insert(insert_idx, bookmark_start.clone());
+            container
+                .children
+                .insert(insert_idx, bookmark_start.clone());
             container.children.insert(insert_idx + 1, run);
-            container.children.insert(insert_idx + 2, bookmark_end.clone());
+            container
+                .children
+                .insert(insert_idx + 2, bookmark_end.clone());
         }
     } else if resolved_idx.is_some() && parent_is_para {
         // No text + anchor in paragraph: insert [bookmarkStart, bookmarkEnd]
@@ -773,7 +898,9 @@ fn add_bookmark_positional(
             resolved_idx.unwrap_or(container.children.len())
         };
 
-        container.children.insert(insert_idx, bookmark_start.clone());
+        container
+            .children
+            .insert(insert_idx, bookmark_start.clone());
         let end_idx = if resolved_idx.is_some() {
             insert_idx + 1
         } else {
@@ -802,10 +929,7 @@ fn add_bookmark_positional(
             actual_parent, para_idx, quoted
         ))
     } else {
-        Ok(format!(
-            "{}/bookmarkStart[@name={}]",
-            actual_parent, quoted
-        ))
+        Ok(format!("{}/bookmarkStart[@name={}]", actual_parent, quoted))
     }
 }
 
@@ -832,20 +956,25 @@ fn reject_duplicate_bookmark_name(dom: &WordDom, name: &str) -> Result<(), Handl
 /// Recursively search for a BookmarkStart with the given name.
 fn find_bookmark_by_name(node: &WordNode, name: &str) -> bool {
     if node.element_type == WordElementType::BookmarkStart
-        && node.attributes.get("name").map(|s| s.as_str()) == Some(name) {
-            return true;
-        }
+        && node.attributes.get("name").map(|s| s.as_str()) == Some(name)
+    {
+        return true;
+    }
     node.children.iter().any(|c| find_bookmark_by_name(c, name))
 }
 
 /// Resolve bookmark ID: custom id property or auto-generated.
-fn resolve_bookmark_id(dom: &WordDom, properties: &HashMap<String, String>) -> Result<String, HandlerError> {
+fn resolve_bookmark_id(
+    dom: &WordDom,
+    properties: &HashMap<String, String>,
+) -> Result<String, HandlerError> {
     if let Some(custom_id) = properties.get("id") {
-        let id_val: i32 = custom_id
-            .parse()
-            .map_err(|_| HandlerError::InvalidArgument(format!(
-                "bookmark id must be a non-negative integer, got: {}", custom_id
-            )))?;
+        let id_val: i32 = custom_id.parse().map_err(|_| {
+            HandlerError::InvalidArgument(format!(
+                "bookmark id must be a non-negative integer, got: {}",
+                custom_id
+            ))
+        })?;
         if id_val < 0 {
             return Err(HandlerError::InvalidArgument(
                 "bookmark id must be non-negative".to_string(),
@@ -883,8 +1012,8 @@ fn handle_tablecell_redirect(
 
         if !has_para {
             let para_id = crate::helpers::generate_para_id();
-            let empty_para = WordNode::new(WordElementType::Paragraph)
-                .with_attribute("paraId", &para_id);
+            let empty_para =
+                WordNode::new(WordElementType::Paragraph).with_attribute("paraId", &para_id);
             let cell = navigate_to_element_mut(dom, parent)?;
             cell.children.push(empty_para);
         }
@@ -961,10 +1090,10 @@ fn relocate_bookmark_end_cross_para(
         .find(|&idx| {
             let para = &para_parent.children[*idx];
             // Match by paraId or by finding bookmarkStart with our bk_id inside
-            para.children.iter().any(|c|
+            para.children.iter().any(|c| {
                 c.element_type == WordElementType::BookmarkStart
-                && c.attributes.get("id").map(|s| s.as_str()) == Some(&bk_id)
-            )
+                    && c.attributes.get("id").map(|s| s.as_str()) == Some(&bk_id)
+            })
         })
         .copied()
         .unwrap_or(0);
@@ -987,7 +1116,9 @@ fn relocate_bookmark_end_cross_para(
 
     // Append BookmarkEnd to the target paragraph
     let para_parent = navigate_to_element_mut(dom, &para_parent_path)?;
-    para_parent.children[target_real_idx].children.push(bookmark_end_node);
+    para_parent.children[target_real_idx]
+        .children
+        .push(bookmark_end_node);
 
     Ok(())
 }
@@ -1004,13 +1135,15 @@ fn remove_bookmark_end_by_id(dom: &mut WordDom, bk_id: &str) -> Result<WordNode,
     remove_bookmark_end_from_node(&mut dom.root.children[body_idx], bk_id)
 }
 
-fn remove_bookmark_end_from_node(node: &mut WordNode, bk_id: &str) -> Result<WordNode, HandlerError> {
+fn remove_bookmark_end_from_node(
+    node: &mut WordNode,
+    bk_id: &str,
+) -> Result<WordNode, HandlerError> {
     // Check direct children first
-    let end_idx = node
-        .children
-        .iter()
-        .position(|c| c.element_type == WordElementType::BookmarkEnd
-            && c.attributes.get("id").map(|s| s.as_str()) == Some(bk_id));
+    let end_idx = node.children.iter().position(|c| {
+        c.element_type == WordElementType::BookmarkEnd
+            && c.attributes.get("id").map(|s| s.as_str()) == Some(bk_id)
+    });
 
     if let Some(idx) = end_idx {
         return Ok(node.children.remove(idx));
@@ -1024,15 +1157,13 @@ fn remove_bookmark_end_from_node(node: &mut WordNode, bk_id: &str) -> Result<Wor
     }
 
     Err(HandlerError::PathNotFound(format!(
-        "bookmarkEnd with id '{}' not found", bk_id
+        "bookmarkEnd with id '{}' not found",
+        bk_id
     )))
 }
 
 /// Create a Run node containing the given text, with optional run properties.
-pub fn make_run_with_text(
-    text: &str,
-    properties: &HashMap<String, String>,
-) -> WordNode {
+pub fn make_run_with_text(text: &str, properties: &HashMap<String, String>) -> WordNode {
     let run_props: HashMap<String, String> = properties
         .iter()
         .filter(|(k, _)| {
@@ -1062,7 +1193,9 @@ pub fn make_run_with_text(
 
 /// Clamp insertion index past pPr (ParagraphProperties) if present.
 fn clamp_past_ppr(children: &[WordNode], idx: usize) -> usize {
-    if children.first().map(|c| c.element_type.clone()) == Some(WordElementType::ParagraphProperties) {
+    if children.first().map(|c| c.element_type.clone())
+        == Some(WordElementType::ParagraphProperties)
+    {
         if idx == 0 {
             1 // skip past pPr
         } else {
@@ -1199,9 +1332,11 @@ fn resolve_insert_index(
             let anchor_real_idx = parent_node
                 .children
                 .iter()
-                .position(|c| c.element_type == anchor_node.element_type
-                    && c.attributes == anchor_node.attributes
-                    && c.text_content == anchor_node.text_content)
+                .position(|c| {
+                    c.element_type == anchor_node.element_type
+                        && c.attributes == anchor_node.attributes
+                        && c.text_content == anchor_node.text_content
+                })
                 .unwrap_or(parent_node.children.len() - 1);
 
             match position {

@@ -144,9 +144,7 @@ pub fn generate_bookmark_id(dom: &crate::dom_types::WordDom) -> String {
         .children
         .iter()
         .find(|c| c.element_type == crate::dom_types::WordElementType::Body);
-    let max_id = body
-        .map(max_bookmark_id_in_node)
-        .unwrap_or(0);
+    let max_id = body.map(max_bookmark_id_in_node).unwrap_or(0);
     (max_id + 1).to_string()
 }
 
