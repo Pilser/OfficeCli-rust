@@ -20,12 +20,12 @@
 |---|---|---|
 | 저장소 | [RainLib/OfficeCli-rust](https://github.com/RainLib/OfficeCli-rust) | [iOfficeAI/OfficeCLI](https://github.com/iOfficeAI/OfficeCLI) |
 | 언어 | 순수 Rust | C# / .NET (자체 포함 바이너리) |
-| 버전 | v0.1.x (초기) | v1.0.x (성숙, 6k+ stars) |
+| 버전 | v0.1.x (명령어 패리티) | v1.0.x (성숙, 6k+ stars) |
 | 런타임 | 없음 — 네이티브 바이너리 | 바이너리 내장 .NET |
 | PDF 지원 | ✅ 읽기 / 수정 / 미리보기 | 플러그인 경유 |
 | 목표 | 경량, 감사 가능, 임베딩 가능한 Rust 코어 | 풀기능 프로덕션 CLI + 생태계 |
 
-Rust 버전은 동일한 **CLI 철학** — 경로 기반 DOM 작업, JSON 출력, TextOffsetMap, 3계층 아키텍처, MCP 서버, 라이브 HTML 미리보기 — 을 공유하지만, 기능 범위에서는 아직 업스트림을 따라잡는 중입니다. 최대 호환성이 필요하면 업스트림을, **의존성 없는 Rust 바이너리**나 Rust 구현 기여가 필요하면 이 저장소를 사용하세요.
+Rust 버전은 동일한 **CLI 철학** — 경로 기반 DOM 작업, JSON 출력, TextOffsetMap, 3계층 아키텍처, MCP 서버, 라이브 HTML 미리보기 — 을 공유하며, C# 업스트림과의 **명령어 수준 패리티**에 도달했습니다. 남은 차이는 엣지 케이스 충실도와 생태계 도구에 있으며, 명령어 커버리지에는 없습니다. 최대 생태계 통합(AionUi, 플러그인 마켓)이 필요하면 업스트림을, **의존성 없는 Rust 바이너리**나 Rust 구현 기여가 필요하면 이 저장소를 사용하세요.
 
 ## 지원 형식
 
@@ -167,8 +167,8 @@ gh release download v0.1.1 --repo RainLib/OfficeCli-rust --pattern 'officecli-*'
 
 | 레이어 | 용도 | 명령어 |
 |--------|------|--------|
-| **L1: 읽기** | 시맨틱 뷰 | `view` (text, annotated, outline, stats, issues, html, svg) |
-| **L2: DOM** | 구조화된 요소 작업 | `get`, `query`, `set`, `add`, `remove`, `move` |
+| **L1: 읽기** | 시맨틱 뷰 | `view` (text, annotated, outline, stats, issues, html, svg, screenshot, pdf, forms) |
+| **L2: DOM** | 구조화된 요소 작업 | `get`, `query`, `set`, `add`, `add-part`, `remove`, `move`, `swap` |
 | **L3: 원시 XML** | XPath 직접 접근 | `raw`, `raw-set`, `validate` |
 
 ### 라이브 미리보기와 렌더링
@@ -246,13 +246,26 @@ officecli help xlsx cell --json
 
 | 기능 | 업스트림 (C#) | 이 저장소 (Rust) |
 |------|--------------|-----------------|
-| 템플릿 `merge` | ✅ | 🔜 |
-| `view screenshot` | ✅ | 🔜 |
-| `swap`, `refresh`, `plugins` | ✅ | 🔜 |
-| `officecli install` | ✅ | `install.sh` / `install.ps1` 사용 |
-| 수식 엔진 (150+ 함수) | ✅ | 부분 지원 |
-| 피벗, Morph, 3D 모델 | ✅ | 부분 지원 / 개발 중 |
-| Python SDK | ✅ | 🔜 |
+이 Rust 이식판은 C# 업스트림과 **API 호환** (동일한 명령어 이름, 경로 구문, `--prop` 규약)이며, **명령어 수준 패리티**에 도달했습니다. 남은 차이는 엣지 케이스 충실도와 생태계 도구에 있으며, 명령어 커버리지에는 없습니다.
+
+| 기능 | 업스트림 (C#) | 이 저장소 (Rust) |
+|------|--------------|-----------------|
+| 템플릿 `merge` | ✅ | ✅ |
+| `view screenshot` (PNG) | ✅ | ✅ (헤드리스 Chrome/Edge/Firefox) |
+| `view pdf` (PDF 내보내기) | ✅ | ✅ (헤드리스 Chromium `--print-to-pdf`) |
+| `view forms` (SDT 양식 필드) | ✅ | ✅ (docx SDT 파싱) |
+| `swap`, `refresh`, `plugins` | ✅ | ✅ |
+| `add-part` (차트/헤더/푸터) | ✅ | ✅ |
+| `import` (CSV/TSV → xlsx) | ✅ | ✅ |
+| `mark/unmark/marks/goto` (watch) | ✅ | ✅ (watch 서버 라우트) |
+| `officecli install` | ✅ | ✅ (바이너리 + 스킬 + MCP) |
+| 수식 엔진 (150+ 함수) | ✅ | ✅ (80+ 함수) |
+| 피벗 테이블 (목록) | ✅ | ✅ (목록 + 소스 범위) |
+| Morph 전환 (보고) | ✅ | ✅ (감지 + 후보 카운트) |
+| 3D 모델 | ✅ | ✅ (HTML 미리보기) |
+| Python SDK | ✅ | ✅ (Unix 도메인 소켓 IPC) |
+| CLI 스모크 & 통합 테스트 | ✅ | ✅ (39 CLI + 32 유닛 테스트) |
+| `cargo clippy -D warnings` 클린 | 해당 없음 | ✅ |
 | AionUi GUI | ✅ | 해당 없음 |
 | Wiki 및 성숙한 생태계 | ✅ | 초기 단계 |
 
@@ -263,15 +276,33 @@ officecli help xlsx cell --json
 | 명령어 | 설명 |
 |--------|------|
 | `create` | 빈 `.docx` / `.xlsx` / `.pptx` / `.pdf` 생성 |
-| `view` | 콘텐츠 보기 (text, annotated, outline, stats, issues, html, svg) |
-| `get` | 요소와 하위 요소 가져오기 |
+| `view` | 콘텐츠 보기 (text, annotated, outline, stats, issues, html, svg, screenshot, pdf, forms) |
+| `get` | 요소와 하위 요소 가져오기 (`--depth N`, `--json`) |
 | `query` | CSS 스타일 쿼리 |
-| `set` / `add` / `remove` / `move` | 요소 변경 |
-| `save` / `validate` / `extract-text` / `convert` / `batch` / `dump` | 각종 작업 |
-| `raw` / `raw-set` | 원시 XML 작업 |
-| `watch` / `unwatch` | 라이브 미리보기 |
+| `set` | 요소 속성 수정 |
+| `add` | 요소 추가 |
+| `add-part` | 문서 파트 (차트/헤더/푸터) 생성 및 rel ID 반환 |
+| `remove` | 요소 삭제 |
+| `move` | 요소 이동 |
+| `swap` | 두 요소 교환 (단락/슬라이드/셀) |
+| `save` | 변경사항을 파일에 저장 |
+| `validate` | 문서 구조 검증 |
+| `extract-text` | 텍스트와 오프셋→경로 매핑 추출 (`--with-offsets`, `--json`) |
+| `convert` | 레거시 형식 변환 (`.doc`/`.xls`/`.ppt`) (`--engine libreoffice|oxide`) |
+| `batch` | 하나의 사이클에서 여러 작업 실행 |
+| `dump` | 문서 구조를 재생 가능한 JSON으로 직렬화 |
+| `raw` | 원시 XML 보기 |
+| `raw-set` | XPath로 원시 XML 수정 (`setattr`, `remove`) |
+| `import` | CSV/TSV 데이터를 Excel 시트에 가져오기 |
+| `merge` | 템플릿 플레이스홀더 (`{{key}}`)와 JSON 데이터 병합 |
+| `refresh` | 파생 필드 새로고침 (목차, 상호 참조) |
+| `watch` | 라이브 미리보기 (자동 새로고침) |
+| `unwatch` | watch 서버 중지 |
 | `open` / `close` | 레지던트 모드 (Unix) |
-| `info` / `mcp` | 정보 / MCP 서버 |
+| `plugins` | 플러그인 목록/검사/린트 (`list`, `info`, `lint`) |
+| `install` | 바이너리, 스킬, MCP 구성 설치 (`--dry-run`, `--prefix`) |
+| `info` | 도구 또는 문서 주제 정보 |
+| `mcp` | MCP 서버 시작 (AI 도구 통합) |
 
 전역 플래그: `--json`
 

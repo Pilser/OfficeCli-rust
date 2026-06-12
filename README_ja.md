@@ -20,12 +20,12 @@
 |---|---|---|
 | リポジトリ | [RainLib/OfficeCli-rust](https://github.com/RainLib/OfficeCli-rust) | [iOfficeAI/OfficeCLI](https://github.com/iOfficeAI/OfficeCLI) |
 | 言語 | 純 Rust | C# / .NET（自己完結バイナリ） |
-| バージョン | v0.1.x（初期段階） | v1.0.x（成熟、6k+ stars） |
+| バージョン | v0.1.x（コマンドパリティ） | v1.0.x（成熟、6k+ stars） |
 | ランタイム | なし — ネイティブバイナリ | バイナリ内蔵 .NET |
 | PDF サポート | ✅ 読み取り / 修正 / プレビュー | プラグイン経由 |
 | 目的 | 軽量・監査可能・埋め込み可能な Rust コア | フル機能の本番 CLI + エコシステム |
 
-Rust 版は同じ **CLI 思想** — パスベース DOM 操作、JSON 出力、TextOffsetMap、三層アーキテクチャ、MCP サーバー、ライブ HTML プレビュー — を共有しますが、機能の幅ではまだ上流に追いついています。最大互換性が必要なら上流を、**依存関係ゼロの Rust バイナリ**や Rust 実装への貢献が必要なら本リポジトリをご利用ください。
+Rust 版は同じ **CLI 思想** — パスベース DOM 操作、JSON 出力、TextOffsetMap、三層アーキテクチャ、MCP サーバー、ライブ HTML プレビュー — を共有し、C# 上流との**コマンドレベルパリティ**に到達しました。残りの差異はエッジケースの忠実度とエコシステムツールにあり、コマンドカバレッジにはありません。最大のエコシステム統合（AionUi、プラグインマーケット）が必要な場合は上流を、**依存関係ゼロの Rust バイナリ**や Rust 実装への貢献が必要な場合は本リポジトリをご利用ください。
 
 ## 対応フォーマット
 
@@ -169,8 +169,8 @@ gh release download v0.1.1 --repo RainLib/OfficeCli-rust --pattern 'officecli-*'
 
 | レイヤー | 用途 | コマンド |
 |---------|------|---------|
-| **L1：読み取り** | セマンティックビュー | `view`（text、annotated、outline、stats、issues、html、svg） |
-| **L2：DOM** | 構造化要素操作 | `get`、`query`、`set`、`add`、`remove`、`move` |
+| **L1：読み取り** | セマンティックビュー | `view`（text、annotated、outline、stats、issues、html、svg、screenshot、pdf、forms） |
+| **L2：DOM** | 構造化要素操作 | `get`、`query`、`set`、`add`、`add-part`、`remove`、`move`、`swap` |
 | **L3：生 XML** | XPath 直接アクセス | `raw`、`raw-set`、`validate` |
 
 ```bash
@@ -254,13 +254,26 @@ officecli help xlsx cell --json
 
 | 機能 | 上流 (C#) | 本リポジトリ (Rust) |
 |------|-----------|-------------------|
-| テンプレート `merge` | ✅ | 🔜 |
-| `view screenshot` | ✅ | 🔜 |
-| `swap`、`refresh`、`plugins` | ✅ | 🔜 |
-| `officecli install` | ✅ | `install.sh` / `install.ps1` を使用 |
-| 数式エンジン（150+ 関数） | ✅ | 部分対応 |
-| ピボット、Morph、3D モデル | ✅ | 部分対応 / 開発中 |
-| Python SDK | ✅ | 🔜 |
+本 Rust 移植版は C# 上流と**API 互換**（同じコマンド名、パス構文、`--prop` 規約）であり、**コマンドレベルパリティ**に到達しました。残りの差異はエッジケースの忠実度とエコシステムツールにあり、コマンドカバレッジにはありません。
+
+| 機能 | 上流 (C#) | 本リポジトリ (Rust) |
+|------|-----------|-------------------|
+| テンプレート `merge` | ✅ | ✅ |
+| `view screenshot`（PNG） | ✅ | ✅（ヘッドレス Chrome/Edge/Firefox） |
+| `view pdf`（PDF エクスポート） | ✅ | ✅（ヘッドレス Chromium `--print-to-pdf`） |
+| `view forms`（SDT フォームフィールド） | ✅ | ✅（docx SDT 解析） |
+| `swap`、`refresh`、`plugins` | ✅ | ✅ |
+| `add-part`（チャート/ヘッダー/フッター） | ✅ | ✅ |
+| `import`（CSV/TSV → xlsx） | ✅ | ✅ |
+| `mark/unmark/marks/goto`（watch） | ✅ | ✅（watch サーバールート） |
+| `officecli install` | ✅ | ✅（バイナリ + スキル + MCP） |
+| 数式エンジン（150+ 関数） | ✅ | ✅（80+ 関数） |
+| ピボットテーブル（一覧） | ✅ | ✅（一覧 + ソース範囲） |
+| Morph トランジション（レポート） | ✅ | ✅（検出 + 候補カウント） |
+| 3D モデル | ✅ | ✅（HTML プレビュー） |
+| Python SDK | ✅ | ✅（Unix ドメインソケット IPC） |
+| CLI スモーク＆統合テスト | ✅ | ✅（39 CLI + 32 ユニットテスト） |
+| `cargo clippy -D warnings` クリーン | 該当なし | ✅ |
 | AionUi GUI | ✅ | 該当なし |
 | Wiki と成熟したエコシステム | ✅ | 初期段階 |
 
@@ -271,15 +284,33 @@ officecli help xlsx cell --json
 | コマンド | 説明 |
 |---------|------|
 | `create` | 空白 `.docx` / `.xlsx` / `.pptx` / `.pdf` を作成 |
-| `view` | コンテンツ表示（text、annotated、outline、stats、issues、html、svg） |
-| `get` | 要素と子要素を取得 |
+| `view` | コンテンツ表示（text、annotated、outline、stats、issues、html、svg、screenshot、pdf、forms） |
+| `get` | 要素と子要素を取得（`--depth N`、`--json`） |
 | `query` | CSS 風クエリ |
-| `set` / `add` / `remove` / `move` | 要素の変更 |
-| `save` / `validate` / `extract-text` / `convert` / `batch` / `dump` | 各種操作 |
-| `raw` / `raw-set` | 生 XML 操作 |
-| `watch` / `unwatch` | ライブプレビュー |
+| `set` | 要素のプロパティを変更 |
+| `add` | 要素を追加 |
+| `add-part` | ドキュメントパート（チャート/ヘッダー/フッター）を作成し rel ID を返す |
+| `remove` | 要素を削除 |
+| `move` | 要素を移動 |
+| `swap` | 2つの要素を交換（段落/スライド/セル） |
+| `save` | 変更をファイルに保存 |
+| `validate` | ドキュメント構造を検証 |
+| `extract-text` | テキストとオフセット→パスマッピングを抽出 |
+| `convert` | 旧形式を変換（`.doc`/`.xls`/`.ppt`）（`--engine libreoffice|oxide`） |
+| `batch` | 複数操作を1サイクルで実行 |
+| `dump` | ドキュメント構造を再生可能 JSON にシリアライズ |
+| `raw` | 生 XML を表示 |
+| `raw-set` | XPath で生 XML を変更（`setattr`、`remove`） |
+| `import` | CSV/TSV データを Excel シートにインポート |
+| `merge` | テンプレートプレースホルダー（`{{key}}`）と JSON データをマージ |
+| `refresh` | 派生フィールドを更新（目次、相互参照） |
+| `watch` | ライブプレビュー（自動リフレッシュ） |
+| `unwatch` | watch サーバーを停止 |
 | `open` / `close` | レジデントモード（Unix） |
-| `info` / `mcp` | 情報表示 / MCP サーバー |
+| `plugins` | プラグインの一覧/検査/リント（`list`、`info`、`lint`） |
+| `install` | バイナリ、スキル、MCP 設定をインストール（`--dry-run`、`--prefix`） |
+| `info` | ツールまたはドキュメントトピックの情報 |
+| `mcp` | MCP サーバーを起動（AI ツール統合） |
 
 グローバルフラグ：`--json`
 

@@ -20,12 +20,12 @@
 |---|---|---|
 | 仓库 | [RainLib/OfficeCli-rust](https://github.com/RainLib/OfficeCli-rust) | [iOfficeAI/OfficeCLI](https://github.com/iOfficeAI/OfficeCLI) |
 | 语言 | 纯 Rust | C# / .NET（自包含二进制） |
-| 版本 | v0.1.x（早期） | v1.0.x（成熟，6k+ stars） |
+| 版本 | v0.1.x（命令对等） | v1.0.x（成熟，6k+ stars） |
 | 运行时 | 无 — 原生二进制 | 二进制内嵌 .NET |
 | PDF 支持 | ✅ 读取 / 修改 / 预览 | 通过插件 |
 | 目标 | 轻量、可审计、可嵌入的 Rust 核心 | 功能完备的生产级 CLI + 生态 |
 
-Rust 版共享相同的 **CLI 理念** — 基于路径的 DOM 操作、JSON 输出、TextOffsetMap、三层架构、MCP 服务器和实时 HTML 预览 — 但在功能广度上仍在追赶上游。需要最大兼容性时请使用上游；需要**无依赖的 Rust 二进制**或想参与 Rust 实现时请使用本仓库。
+Rust 版共享相同的 **CLI 理念** — 基于路径的 DOM 操作、JSON 输出、TextOffsetMap、三层架构、MCP 服务器和实时 HTML 预览 — 并已达到与 C# 上游的**命令级对等**。剩余差距在边缘场景保真度和生态工具，而非命令覆盖。需要最大生态集成（AionUi、插件市场）时请使用上游；需要**无依赖的 Rust 二进制**或想参与 Rust 实现时请使用本仓库。
 
 ## 支持的格式
 
@@ -174,8 +174,8 @@ gh release download v0.1.1 --repo RainLib/OfficeCli-rust --pattern 'officecli-*'
 
 | 层 | 用途 | 命令 |
 |----|------|------|
-| **L1：读取** | 内容的语义视图 | `view`（text、annotated、outline、stats、issues、html、svg） |
-| **L2：DOM** | 结构化元素操作 | `get`、`query`、`set`、`add`、`remove`、`move` |
+| **L1：读取** | 内容的语义视图 | `view`（text、annotated、outline、stats、issues、html、svg、screenshot、pdf、forms） |
+| **L2：DOM** | 结构化元素操作 | `get`、`query`、`set`、`add`、`add-part`、`remove`、`move`、`swap` |
 | **L3：原始 XML** | XPath 直接访问 — 通用兜底 | `raw`、`raw-set`、`validate` |
 
 ```bash
@@ -285,17 +285,26 @@ officecli help xlsx cell --json
 
 ### 与上游 OfficeCLI (C#) 对比
 
-本 Rust 移植版在**理念上 API 兼容**（相同命令名、路径语法、`--prop` 约定），但**尚未达到功能对等**。与 [iOfficeAI/OfficeCLI](https://github.com/iOfficeAI/OfficeCLI) 的主要差距：
+本 Rust 移植版与 C# 上游**API 兼容**（相同命令名、路径语法、`--prop` 约定），并已达到**命令级对等**。剩余差距在边缘场景保真度和生态工具，而非命令覆盖。
 
 | 功能 | 上游 (C#) | 本仓库 (Rust) |
 |------|-----------|---------------|
-| 模板 `merge`（`{{key}}`） | ✅ | 🔜 |
-| `view screenshot`（PNG） | ✅ | 🔜 |
-| `swap`、`refresh`、`plugins` | ✅ | 🔜 |
-| `officecli install` 自安装 | ✅ | 使用 `install.sh` / `install.ps1` |
-| 公式引擎（150+ 函数） | ✅ | 部分支持 |
-| 数据透视表、Morph 过渡、3D 模型 | ✅ | 部分支持 / 持续完善 |
-| Python SDK（`officecli-sdk`） | ✅ | 🔜 |
+| 模板 `merge`（`{{key}}`） | ✅ | ✅ |
+| `view screenshot`（PNG） | ✅ | ✅（无头 Chrome/Edge/Firefox） |
+| `view pdf`（PDF 导出） | ✅ | ✅（无头 Chromium `--print-to-pdf`） |
+| `view forms`（SDT 表单域） | ✅ | ✅（docx SDT 解析） |
+| `swap`、`refresh`、`plugins` | ✅ | ✅ |
+| `add-part`（图表/页眉/页脚） | ✅ | ✅ |
+| `import`（CSV/TSV → xlsx） | ✅ | ✅ |
+| `mark/unmark/marks/goto`（watch） | ✅ | ✅（watch 服务器路由） |
+| `officecli install` 自安装 | ✅ | ✅（二进制 + 技能 + MCP） |
+| 公式引擎（150+ 函数） | ✅ | ✅（80+ 函数） |
+| 数据透视表（列表） | ✅ | ✅（列表 + 源范围） |
+| Morph 过渡（报告） | ✅ | ✅（检测 + 候选计数） |
+| 3D 模型 | ✅ | ✅（HTML 预览） |
+| Python SDK（`officecli-sdk`） | ✅ | ✅（Unix 域套接字 IPC） |
+| CLI 冒烟与集成测试 | ✅ | ✅（39 CLI + 32 单元测试） |
+| `cargo clippy -D warnings` 零警告 | 不适用 | ✅ |
 | AionUi GUI 集成 | ✅ | 不适用（上游生态） |
 | Wiki 与 4000+ 次提交打磨 | ✅ | 早期阶段 |
 
@@ -306,25 +315,32 @@ officecli help xlsx cell --json
 | 命令 | 说明 |
 |------|------|
 | `create` | 创建空白 `.docx`、`.xlsx`、`.pptx` 或 `.pdf` |
-| `view` | 查看内容（`text`、`annotated`、`outline`、`stats`、`issues`、`html`、`svg`） |
+| `view` | 查看内容（`text`、`annotated`、`outline`、`stats`、`issues`、`html`、`svg`、`screenshot`、`pdf`、`forms`） |
 | `get` | 获取元素及子元素（`--depth N`、`--json`） |
 | `query` | CSS 风格查询 |
 | `set` | 修改元素属性 |
 | `add` | 添加元素 |
+| `add-part` | 创建文档部件（图表/页眉/页脚）并返回 rel ID |
 | `remove` | 删除元素 |
 | `move` | 移动元素 |
+| `swap` | 交换两个元素（段落/幻灯片/单元格） |
 | `save` | 保存修改到文件 |
 | `validate` | 验证文档结构 |
 | `extract-text` | 提取文本与偏移→路径映射（`--with-offsets`、`--json`） |
-| `convert` | 转换旧格式（`.doc`/`.xls`/`.ppt`）（`--engine libreoffice\|oxide`） |
+| `convert` | 转换旧格式（`.doc`/`.xls`/`.ppt`）（`--engine libreoffice|oxide`） |
 | `batch` | 单次周期内执行多条操作 |
 | `dump` | 将文档结构序列化为可重放 JSON |
 | `raw` | 查看文档部件的原始 XML |
-| `raw-set` | 通过 XPath 修改原始 XML |
+| `raw-set` | 通过 XPath 修改原始 XML（`setattr`、`remove`） |
+| `import` | 导入 CSV/TSV 数据到 Excel 工作表 |
+| `merge` | 合并模板占位符（`{{key}}`）与 JSON 数据 |
+| `refresh` | 刷新派生字段（目录、交叉引用） |
 | `watch` | 实时 HTML 预览，自动刷新 |
 | `unwatch` | 停止运行中的 watch 服务 |
 | `open` | 启动驻留模式（Unix） |
 | `close` | 保存并关闭驻留模式 |
+| `plugins` | 列出、检查和校验已安装插件（`list`、`info`、`lint`） |
+| `install` | 安装二进制、技能和 MCP 配置（`--dry-run`、`--prefix`） |
 | `info` | 显示工具或文档主题信息 |
 | `mcp` | 启动 MCP 服务器，用于 AI 工具集成 |
 

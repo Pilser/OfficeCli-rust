@@ -20,12 +20,12 @@ This is **[RainLib/OfficeCli-rust](https://github.com/RainLib/OfficeCli-rust)** 
 |---|---|---|
 | Repository | [RainLib/OfficeCli-rust](https://github.com/RainLib/OfficeCli-rust) | [iOfficeAI/OfficeCLI](https://github.com/iOfficeAI/OfficeCLI) |
 | Language | Pure Rust | C# / .NET (self-contained binary) |
-| Version | v0.1.x (early) | v1.0.x (mature, 6k+ stars) |
+| Version | v0.1.x (command parity) | v1.0.x (mature, 6k+ stars) |
 | Runtime | None — native binary | .NET embedded in binary |
 | PDF support | ✅ read / modify / preview | Via plugins |
 | Goal | Lightweight, auditable, embeddable Rust core | Full-featured production CLI + ecosystem |
 
-The Rust edition shares the same **CLI philosophy** — path-based DOM operations, JSON output, TextOffsetMap, three-layer architecture, MCP server, and live HTML preview — but is still catching up on upstream feature breadth. Use upstream for maximum compatibility today; use this repo when you need a **dependency-free Rust binary** or want to contribute to the Rust implementation.
+The Rust edition shares the same **CLI philosophy** — path-based DOM operations, JSON output, TextOffsetMap, three-layer architecture, MCP server, and live HTML preview — and has reached **command-level parity** with the C# upstream. Use upstream for maximum ecosystem integration (AionUi, plugins marketplace); use this repo when you need a **dependency-free Rust binary** or want to contribute to the Rust implementation.
 
 ## Supported Formats
 
@@ -174,15 +174,17 @@ Start simple, go deep only when needed.
 
 | Layer           | Purpose                                  | Commands                                                         |
 | --------------- | ---------------------------------------- | ---------------------------------------------------------------- |
-| **L1: Read**    | Semantic views of content                | `view` (text, annotated, outline, stats, issues, html, svg)     |
-| **L2: DOM**     | Structured element operations            | `get`, `query`, `set`, `add`, `remove`, `move`                   |
+| **L1: Read**    | Semantic views of content                | `view` (text, annotated, outline, stats, issues, html, svg, screenshot, pdf, forms) |
+| **L2: DOM**     | Structured element operations            | `get`, `query`, `set`, `add`, `add-part`, `remove`, `move`, `swap`  |
 | **L3: Raw**     | Direct XML/XPath access — universal fallback | `raw`, `raw-set`, `validate`                                 |
 
 ```bash
 # L1 — high-level views
 officecli view report.docx --mode annotated
+officecli view report.docx --mode forms      # list form fields (SDT)
 officecli view budget.xlsx --mode stats
 officecli view report.pdf --mode text
+officecli view report.pdf --mode pdf        # export as PDF via headless browser
 
 # L2 — element-level operations
 officecli query report.docx paragraph
@@ -285,19 +287,26 @@ When unsure about property names, use `officecli help <format> <element>` — it
 
 ### vs. Upstream OfficeCLI (C#)
 
-This Rust port is **API-compatible in spirit** (same command names, path syntax, `--prop` conventions) but **not yet at feature parity**. Notable gaps vs. [iOfficeAI/OfficeCLI](https://github.com/iOfficeAI/OfficeCLI):
+This Rust port is **API-compatible** (same command names, path syntax, `--prop` conventions) and has reached **command-level parity** with the C# upstream. Remaining gaps are in edge-case fidelity and ecosystem tooling, not in command coverage.
 
 | Feature | Upstream (C#) | This repo (Rust) |
 | ------- | ------------- | ---------------- |
 | Template `merge` (`{{key}}`) | ✅ | ✅ |
 | `view screenshot` (PNG) | ✅ | ✅ (headless Chrome/Edge/Firefox) |
+| `view pdf` (PDF export) | ✅ | ✅ (headless Chromium `--print-to-pdf`) |
+| `view forms` (SDT form fields) | ✅ | ✅ (docx SDT parsing) |
 | `swap`, `refresh`, `plugins` | ✅ | ✅ |
+| `add-part` (chart/header/footer) | ✅ | ✅ |
+| `import` (CSV/TSV → xlsx) | ✅ | ✅ |
+| `mark/unmark/marks/goto` (watch) | ✅ | ✅ (watch server routes) |
 | `officecli install` self-setup | ✅ | ✅ (binary + skills + MCP) |
 | Formula engine (150+ functions) | ✅ | ✅ (80+ functions) |
 | Pivot tables (listing) | ✅ | ✅ (listing + source range) |
 | Morph transitions (reporting) | ✅ | ✅ (detection + candidate count) |
 | 3D models | ✅ | ✅ (HTML preview) |
 | Python SDK (`officecli-sdk`) | ✅ | ✅ (Unix domain socket IPC) |
+| CLI smoke & integration tests | ✅ | ✅ (39 CLI + 32 unit tests) |
+| `cargo clippy -D warnings` clean | N/A | ✅ |
 | AionUi GUI integration | ✅ | N/A (upstream ecosystem) |
 | Wiki & 4000+ commits of polish | ✅ | Early stage |
 
@@ -308,13 +317,15 @@ Track upstream for the full command reference and wiki: [iOfficeAI/OfficeCLI Wik
 | Command        | Description                                                                   |
 | -------------- | ----------------------------------------------------------------------------- |
 | `create`       | Create a blank `.docx`, `.xlsx`, `.pptx`, or `.pdf`                           |
-| `view`         | View content (`text`, `annotated`, `outline`, `stats`, `issues`, `html`, `svg`, `screenshot`) |
+| `view`         | View content (`text`, `annotated`, `outline`, `stats`, `issues`, `html`, `svg`, `screenshot`, `pdf`, `forms`) |
 | `get`          | Get element and children (`--depth N`, `--json`)                                |
 | `query`        | CSS-like element query                                                        |
 | `set`          | Modify element properties                                                     |
 | `add`          | Add element                                                                   |
+| `add-part`     | Create a new document part (chart, header, footer) and return its rel ID      |
 | `remove`       | Remove an element                                                             |
 | `move`         | Move element                                                                  |
+| `swap`         | Swap two elements (paragraphs, slides, cells)                                  |
 | `save`         | Save changes back to file                                                     |
 | `validate`     | Validate document structure                                                   |
 | `extract-text` | Extract text with offset→path mapping (`--with-offsets`, `--json`)            |
@@ -322,14 +333,14 @@ Track upstream for the full command reference and wiki: [iOfficeAI/OfficeCLI Wik
 | `batch`        | Multiple operations in one cycle                                              |
 | `dump`         | Serialize document structure to replayable JSON                               |
 | `raw`          | View raw XML of a document part                                               |
-| `raw-set`      | Modify raw XML via XPath                                                      |
+| `raw-set`      | Modify raw XML via XPath (`setattr`, `remove`)                                |
+| `import`       | Import CSV/TSV data into an Excel sheet                                       |
+| `merge`        | Merge template placeholders (`{{key}}`) with JSON data                        |
+| `refresh`      | Refresh derived fields (TOC, cross-references)                                 |
 | `watch`        | Live HTML preview with auto-refresh                                           |
 | `unwatch`      | Stop a running watch server                                                   |
 | `open`         | Start resident mode (Unix)                                                    |
 | `close`        | Save and close resident mode                                                   |
-| `swap`         | Swap two elements (paragraphs, slides, cells)                                  |
-| `merge`        | Merge template placeholders (`{{key}}`) with JSON data                        |
-| `refresh`      | Refresh derived fields (TOC, cross-references)                                 |
 | `plugins`      | List, inspect, and lint installed plugins (`list`, `info`, `lint`)              |
 | `install`      | Install binary, skills, and MCP configuration (`--dry-run`, `--prefix`)        |
 | `info`         | Show info about the tool or document topics                                   |
