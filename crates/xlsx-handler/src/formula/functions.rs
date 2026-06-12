@@ -6,6 +6,7 @@ use super::parser::{compare_values, CellResolver};
 use super::types::*;
 
 /// Evaluate a function call by name with the given arguments.
+#[allow(clippy::only_used_in_recursion)]
 pub fn eval_function(
     name: &str,
     args: &[FormulaResult],
@@ -172,10 +173,10 @@ pub fn eval_function(
         "TRUE" => Some(FormulaResult::Bool(true)),
         "FALSE" => Some(FormulaResult::Bool(false)),
         "IFERROR" | "IFNA" => {
-            if args.get(0).map(|a| a.is_error()).unwrap_or(false) {
+            if args.first().map(|a| a.is_error()).unwrap_or(false) {
                 args.get(1).cloned()
             } else {
-                args.get(0).cloned()
+                args.first().cloned()
             }
         }
         "SWITCH" => {
@@ -191,7 +192,7 @@ pub fn eval_function(
                 i += 2;
             }
             // Default value (odd number of args after the first)
-            if args.len() % 2 == 0 {
+            if args.len().is_multiple_of(2) {
                 args.last().cloned()
             } else {
                 Some(FormulaResult::Error("#N/A".to_string()))
@@ -716,34 +717,20 @@ fn eval_npv(args: &[FormulaResult]) -> Option<FormulaResult> {
 /// Supports: plain value, >5, <10, >=3, <=7, <>0
 fn matches_criteria_f64(value: f64, criteria: &str) -> bool {
     let criteria = criteria.trim();
-    if criteria.starts_with(">=") {
-        criteria[2..]
-            .parse::<f64>()
-            .map(|c| value >= c)
-            .unwrap_or(false)
-    } else if criteria.starts_with("<=") {
-        criteria[2..]
-            .parse::<f64>()
-            .map(|c| value <= c)
-            .unwrap_or(false)
-    } else if criteria.starts_with("<>") {
-        criteria[2..]
-            .parse::<f64>()
+    if let Some(rest) = criteria.strip_prefix(">=") {
+        rest.parse::<f64>().map(|c| value >= c).unwrap_or(false)
+    } else if let Some(rest) = criteria.strip_prefix("<=") {
+        rest.parse::<f64>().map(|c| value <= c).unwrap_or(false)
+    } else if let Some(rest) = criteria.strip_prefix("<>") {
+        rest.parse::<f64>()
             .map(|c| (value - c).abs() > 1e-10)
             .unwrap_or(false)
-    } else if criteria.starts_with('>') {
-        criteria[1..]
-            .parse::<f64>()
-            .map(|c| value > c)
-            .unwrap_or(false)
-    } else if criteria.starts_with('<') {
-        criteria[1..]
-            .parse::<f64>()
-            .map(|c| value < c)
-            .unwrap_or(false)
-    } else if criteria.starts_with('=') {
-        criteria[1..]
-            .parse::<f64>()
+    } else if let Some(rest) = criteria.strip_prefix('>') {
+        rest.parse::<f64>().map(|c| value > c).unwrap_or(false)
+    } else if let Some(rest) = criteria.strip_prefix('<') {
+        rest.parse::<f64>().map(|c| value < c).unwrap_or(false)
+    } else if let Some(rest) = criteria.strip_prefix('=') {
+        rest.parse::<f64>()
             .map(|c| (value - c).abs() < 1e-10)
             .unwrap_or(false)
     } else {
@@ -821,7 +808,7 @@ fn chrono_date_to_oa(y: i32, m: u32, d: u32) -> f64 {
     }
     let month_days = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     for mo in 1..m {
-        days += month_days[mo as usize] as i32;
+        days += month_days[mo as usize];
         if mo == 2 && is_leap_year(y) {
             days += 1;
         }

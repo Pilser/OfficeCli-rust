@@ -243,7 +243,7 @@ fn capture_pdf_chromium(
         return Err("PDF file was not created".to_string());
     }
 
-    Ok(format!("{}", out_path))
+    Ok(out_path.to_string())
 }
 
 fn capture_pdf_via_any_browser(

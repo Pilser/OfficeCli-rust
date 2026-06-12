@@ -53,7 +53,7 @@ pub fn query_elements(
                 if slide.has_morph {
                     let path = format!("/slide[{}]", slide.index);
                     let mut node = DocumentNode::new(&path, "morph-transition");
-                    node = node.with_text(&format!(
+                    node = node.with_text(format!(
                         "morph transition, {} candidates",
                         slide.morph_candidates
                     ));

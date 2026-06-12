@@ -144,7 +144,7 @@ impl<'a> crate::formula::parser::CellResolver for WorkbookResolver<'a> {
                     let val = ws
                         .cells
                         .get(&(row, col))
-                        .map(|c| cell_value_to_formula_result(c))
+                        .map(cell_value_to_formula_result)
                         .unwrap_or(FormulaResult::Blank);
                     result.push((ref_str, val));
                 }
@@ -174,7 +174,7 @@ impl<'a> crate::formula::parser::CellResolver for WorkbookResolver<'a> {
                 let val = ws
                     .cells
                     .get(&(row, col))
-                    .map(|c| cell_value_to_formula_result(c))
+                    .map(cell_value_to_formula_result)
                     .unwrap_or(FormulaResult::Blank);
                 result.push((ref_str, val));
             }

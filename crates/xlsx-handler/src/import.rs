@@ -114,9 +114,9 @@ pub fn import_csv(
                 new_rows_xml.push_str(&format!("<c r=\"{}\" t=\"b\"><v>1</v></c>", cell_ref));
             } else if field.eq_ignore_ascii_case("FALSE") {
                 new_rows_xml.push_str(&format!("<c r=\"{}\" t=\"b\"><v>0</v></c>", cell_ref));
-            } else if field.starts_with('=') {
+            } else if let Some(formula) = field.strip_prefix('=') {
                 // Formula
-                let formula_xml = escape_xml_text(&field[1..]);
+                let formula_xml = escape_xml_text(formula);
                 new_rows_xml.push_str(&format!("<c r=\"{}\"><f>{}</f></c>", cell_ref, formula_xml));
             } else {
                 // String — use inline string to avoid shared string management
@@ -239,7 +239,7 @@ fn parse_csv(content: &str, delimiter: char) -> Vec<Vec<String>> {
             i += 1;
         } else if c == '\r' {
             current_row.push(std::mem::take(&mut field));
-            if !current_row.is_empty() && !(current_row.len() == 1 && current_row[0].is_empty()) {
+            if !(current_row.is_empty() || current_row.len() == 1 && current_row[0].is_empty()) {
                 rows.push(std::mem::take(&mut current_row));
             } else {
                 current_row.clear();
@@ -250,7 +250,7 @@ fn parse_csv(content: &str, delimiter: char) -> Vec<Vec<String>> {
             }
         } else if c == '\n' {
             current_row.push(std::mem::take(&mut field));
-            if !current_row.is_empty() && !(current_row.len() == 1 && current_row[0].is_empty()) {
+            if !(current_row.is_empty() || current_row.len() == 1 && current_row[0].is_empty()) {
                 rows.push(std::mem::take(&mut current_row));
             } else {
                 current_row.clear();
@@ -265,7 +265,7 @@ fn parse_csv(content: &str, delimiter: char) -> Vec<Vec<String>> {
     // Last field/row
     if !field.is_empty() || !current_row.is_empty() {
         current_row.push(field);
-        if !current_row.is_empty() && !(current_row.len() == 1 && current_row[0].is_empty()) {
+        if !(current_row.is_empty() || current_row.len() == 1 && current_row[0].is_empty()) {
             rows.push(current_row);
         }
     }

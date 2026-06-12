@@ -60,7 +60,7 @@ impl<'a> FormulaParser<'a> {
 
     fn parse_comparison(&mut self) -> Option<FormulaResult> {
         let left = self.parse_concat()?;
-        while self.pos < self.tokens.len() && self.tokens[self.pos].tt == TokenType::Compare {
+        if self.pos < self.tokens.len() && self.tokens[self.pos].tt == TokenType::Compare {
             let op = self.tokens[self.pos].value.clone();
             self.pos += 1;
             let right = self.parse_concat()?;

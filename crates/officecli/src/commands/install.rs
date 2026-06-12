@@ -70,10 +70,8 @@ fn install_binary(dry_run: bool, prefix: &Option<String>) -> Result<String, Hand
     let dest = bin_install_path(prefix);
 
     // Skip if already there and identical
-    if dest.exists() {
-        if files_identical(&exe, &dest) {
-            return Ok(format!("Binary already installed: {}", dest.display()));
-        }
+    if dest.exists() && files_identical(&exe, &dest) {
+        return Ok(format!("Binary already installed: {}", dest.display()));
     }
 
     if dry_run {
