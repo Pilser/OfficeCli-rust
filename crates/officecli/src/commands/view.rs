@@ -193,9 +193,8 @@ fn handle_view_pdf(cmd: &ViewCommand, _format: OutputFormat) -> Result<String, H
             .unwrap_or_default()
             .as_millis()
     ));
-    std::fs::write(&html_path, &html).map_err(|e| {
-        HandlerError::OperationFailed(format!("failed to write temp HTML: {}", e))
-    })?;
+    std::fs::write(&html_path, &html)
+        .map_err(|e| HandlerError::OperationFailed(format!("failed to write temp HTML: {}", e)))?;
 
     // Use headless browser to print to PDF
     let result = crate::screenshot::capture_pdf(
@@ -239,9 +238,8 @@ fn handle_screenshot(
             .unwrap_or_default()
             .as_millis()
     ));
-    std::fs::write(&html_path, &html).map_err(|e| {
-        HandlerError::OperationFailed(format!("failed to write temp HTML: {}", e))
-    })?;
+    std::fs::write(&html_path, &html)
+        .map_err(|e| HandlerError::OperationFailed(format!("failed to write temp HTML: {}", e)))?;
 
     // Step 3: Determine output path
     let out_path = cmd.out.clone().unwrap_or_else(|| {
@@ -267,7 +265,10 @@ fn handle_screenshot(
     // Clean up temp HTML
     let _ = std::fs::remove_file(&html_path);
 
-    Ok(format!("Screenshot saved: {} (backend: {})", result.output_path, result.backend))
+    Ok(format!(
+        "Screenshot saved: {} (backend: {})",
+        result.output_path, result.backend
+    ))
 }
 
 /// Write HTML to a temp file and open in the default browser.
@@ -285,9 +286,8 @@ fn open_html_in_browser(html: &str, source_file: &str) -> Result<(), HandlerErro
             .unwrap_or_default()
             .as_millis()
     ));
-    std::fs::write(&html_path, html).map_err(|e| {
-        HandlerError::OperationFailed(format!("failed to write temp HTML: {}", e))
-    })?;
+    std::fs::write(&html_path, html)
+        .map_err(|e| HandlerError::OperationFailed(format!("failed to write temp HTML: {}", e)))?;
     println!("{}", html_path.display());
     open_path_in_browser(&html_path);
     Ok(())
@@ -308,9 +308,8 @@ fn open_svg_in_browser(svg: &str, source_file: &str) -> Result<(), HandlerError>
             .unwrap_or_default()
             .as_millis()
     ));
-    std::fs::write(&svg_path, svg).map_err(|e| {
-        HandlerError::OperationFailed(format!("failed to write temp SVG: {}", e))
-    })?;
+    std::fs::write(&svg_path, svg)
+        .map_err(|e| HandlerError::OperationFailed(format!("failed to write temp SVG: {}", e)))?;
     println!("{}", svg_path.display());
     open_path_in_browser(&svg_path);
     Ok(())

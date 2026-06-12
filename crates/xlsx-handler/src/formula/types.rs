@@ -63,10 +63,7 @@ impl FormulaResult {
             }
             Self::Error(e) => e.clone(),
             Self::Blank => String::new(),
-            Self::Array(a) => a
-                .first()
-                .map(|v| format_number(*v))
-                .unwrap_or_default(),
+            Self::Array(a) => a.first().map(|v| format_number(*v)).unwrap_or_default(),
         }
     }
 
@@ -99,10 +96,7 @@ impl FormulaResult {
             Self::Str(s) => s.clone(),
             Self::Error(e) => e.clone(),
             Self::Blank => "0".to_string(),
-            Self::Array(a) => a
-                .first()
-                .map(|v| format_number(*v))
-                .unwrap_or_default(),
+            Self::Array(a) => a.first().map(|v| format_number(*v)).unwrap_or_default(),
         }
     }
 }

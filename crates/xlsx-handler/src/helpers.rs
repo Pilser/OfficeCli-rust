@@ -449,10 +449,9 @@ fn parse_pivot_tables(package: &OxmlPackage) -> Vec<PivotTableDef> {
                             // Count pivotField children
                             for attr in e.attributes().filter_map(|a| a.ok()) {
                                 if attr.key.as_ref() == b"count" {
-                                    field_count =
-                                        String::from_utf8_lossy(attr.value.as_ref())
-                                            .parse()
-                                            .unwrap_or(0);
+                                    field_count = String::from_utf8_lossy(attr.value.as_ref())
+                                        .parse()
+                                        .unwrap_or(0);
                                 }
                             }
                         }
@@ -466,9 +465,9 @@ fn parse_pivot_tables(package: &OxmlPackage) -> Vec<PivotTableDef> {
         }
 
         // Try to resolve the source range from the pivot cache definition
-        let source_range = cache_id.as_ref().and_then(|cid| {
-            resolve_pivot_cache_range(package, cid)
-        });
+        let source_range = cache_id
+            .as_ref()
+            .and_then(|cid| resolve_pivot_cache_range(package, cid));
 
         pivot_tables.push(PivotTableDef {
             name,
@@ -494,9 +493,7 @@ fn resolve_pivot_cache_range(package: &OxmlPackage, cache_id: &str) -> Option<St
     let all_parts = package.list_parts();
     let cache_parts: Vec<String> = all_parts
         .iter()
-        .filter(|p| {
-            p.starts_with("xl/pivotCache/") && p.contains("pivotCacheDefinition")
-        })
+        .filter(|p| p.starts_with("xl/pivotCache/") && p.contains("pivotCacheDefinition"))
         .map(|s| (*s).clone())
         .collect();
 

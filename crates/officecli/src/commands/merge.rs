@@ -53,14 +53,15 @@ pub fn handle_merge(cmd: MergeCommand, _format: OutputFormat) -> Result<String, 
 /// Parse JSON data (object or file) into a flat HashMap.
 /// Supports nested objects (flattened as "a.b") and arrays (as "items[0]").
 /// Literal keys take precedence over flattened dot-paths.
-fn parse_merge_data(json_text: &str) -> Result<std::collections::HashMap<String, String>, HandlerError> {
-    let val: serde_json::Value = serde_json::from_str(json_text).map_err(|e| {
-        HandlerError::InvalidArgument(format!("invalid JSON data: {}", e))
-    })?;
+fn parse_merge_data(
+    json_text: &str,
+) -> Result<std::collections::HashMap<String, String>, HandlerError> {
+    let val: serde_json::Value = serde_json::from_str(json_text)
+        .map_err(|e| HandlerError::InvalidArgument(format!("invalid JSON data: {}", e)))?;
 
-    let obj = val.as_object().ok_or_else(|| {
-        HandlerError::InvalidArgument("JSON data must be an object".to_string())
-    })?;
+    let obj = val
+        .as_object()
+        .ok_or_else(|| HandlerError::InvalidArgument("JSON data must be an object".to_string()))?;
 
     let mut data = std::collections::HashMap::new();
 

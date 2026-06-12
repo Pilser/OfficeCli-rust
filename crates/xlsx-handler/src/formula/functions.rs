@@ -24,7 +24,9 @@ pub fn eval_function(
             if n.is_empty() {
                 Some(FormulaResult::Error("#DIV/0!".to_string()))
             } else {
-                Some(FormulaResult::Number(n.iter().sum::<f64>() / n.len() as f64))
+                Some(FormulaResult::Number(
+                    n.iter().sum::<f64>() / n.len() as f64,
+                ))
             }
         }
         "COUNT" => Some(FormulaResult::Number(nums().len() as f64)),
@@ -32,14 +34,13 @@ pub fn eval_function(
         "COUNTBLANK" => Some(FormulaResult::Number(0.0)),
         "MIN" => {
             let n = nums();
-            n.iter().cloned().fold(f64::INFINITY, f64::min)
-                .pipe(|v| {
-                    if v == f64::INFINITY {
-                        Some(FormulaResult::Number(0.0))
-                    } else {
-                        Some(FormulaResult::Number(v))
-                    }
-                })
+            n.iter().cloned().fold(f64::INFINITY, f64::min).pipe(|v| {
+                if v == f64::INFINITY {
+                    Some(FormulaResult::Number(0.0))
+                } else {
+                    Some(FormulaResult::Number(v))
+                }
+            })
         }
         "MAX" => {
             let n = nums();
@@ -158,8 +159,12 @@ pub fn eval_function(
             }
             Some(FormulaResult::Error("#N/A".to_string()))
         }
-        "AND" => Some(FormulaResult::Bool(args.iter().all(|a| a.as_number() != 0.0))),
-        "OR" => Some(FormulaResult::Bool(args.iter().any(|a| a.as_number() != 0.0))),
+        "AND" => Some(FormulaResult::Bool(
+            args.iter().all(|a| a.as_number() != 0.0),
+        )),
+        "OR" => Some(FormulaResult::Bool(
+            args.iter().any(|a| a.as_number() != 0.0),
+        )),
         "NOT" => Some(FormulaResult::Bool(num(0) == 0.0)),
         "XOR" => Some(FormulaResult::Bool(
             args.iter().filter(|a| a.as_number() != 0.0).count() % 2 == 1,
@@ -229,10 +234,7 @@ pub fn eval_function(
         "TRIM" => {
             let s = str_arg(0);
             let trimmed = s.trim();
-            let collapsed: String = trimmed
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ");
+            let collapsed: String = trimmed.split_whitespace().collect::<Vec<_>>().join(" ");
             Some(FormulaResult::Str(collapsed))
         }
         "UPPER" => Some(FormulaResult::Str(str_arg(0).to_uppercase())),
@@ -267,7 +269,11 @@ pub fn eval_function(
         "FIND" => {
             let find = str_arg(0);
             let within = str_arg(1);
-            let start = if args.len() > 2 { (num(2) as usize).saturating_sub(1) } else { 0 };
+            let start = if args.len() > 2 {
+                (num(2) as usize).saturating_sub(1)
+            } else {
+                0
+            };
             match within[start..].find(&find) {
                 Some(pos) => Some(FormulaResult::Number((start + pos + 1) as f64)),
                 None => Some(FormulaResult::Error("#VALUE!".to_string())),
@@ -276,16 +282,18 @@ pub fn eval_function(
         "SEARCH" => {
             let find = str_arg(0).to_lowercase();
             let within = str_arg(1);
-            let start = if args.len() > 2 { (num(2) as usize).saturating_sub(1) } else { 0 };
+            let start = if args.len() > 2 {
+                (num(2) as usize).saturating_sub(1)
+            } else {
+                0
+            };
             match within[start..].to_lowercase().find(&find) {
                 Some(pos) => Some(FormulaResult::Number((start + pos + 1) as f64)),
                 None => Some(FormulaResult::Error("#VALUE!".to_string())),
             }
         }
         "REPT" => Some(FormulaResult::Str(str_arg(0).repeat(num(1) as usize))),
-        "CHAR" => Some(FormulaResult::Str(
-            (num(0) as u8 as char).to_string(),
-        )),
+        "CHAR" => Some(FormulaResult::Str((num(0) as u8 as char).to_string())),
         "CODE" => Some(FormulaResult::Number(
             str_arg(0).chars().next().map(|c| c as usize).unwrap_or(0) as f64,
         )),
@@ -403,7 +411,10 @@ pub fn eval_function(
             }
             let criteria = str_arg(1);
             let n = nums();
-            let count = n.iter().filter(|v| matches_criteria_f64(**v, &criteria)).count();
+            let count = n
+                .iter()
+                .filter(|v| matches_criteria_f64(**v, &criteria))
+                .count();
             Some(FormulaResult::Number(count as f64))
         }
         "COUNTIFS" => {
@@ -413,7 +424,10 @@ pub fn eval_function(
             }
             let criteria = str_arg(1);
             let n = nums();
-            let count = n.iter().filter(|v| matches_criteria_f64(**v, &criteria)).count();
+            let count = n
+                .iter()
+                .filter(|v| matches_criteria_f64(**v, &criteria))
+                .count();
             Some(FormulaResult::Number(count as f64))
         }
 
@@ -424,7 +438,10 @@ pub fn eval_function(
             }
             let criteria = str_arg(1);
             let n = nums();
-            let sum: f64 = n.iter().filter(|v| matches_criteria_f64(**v, &criteria)).sum();
+            let sum: f64 = n
+                .iter()
+                .filter(|v| matches_criteria_f64(**v, &criteria))
+                .sum();
             Some(FormulaResult::Number(sum))
         }
         "SUMIFS" => {
@@ -441,11 +458,17 @@ pub fn eval_function(
             }
             let criteria = str_arg(1);
             let n = nums();
-            let matching: Vec<f64> = n.iter().cloned().filter(|v| matches_criteria_f64(*v, &criteria)).collect();
+            let matching: Vec<f64> = n
+                .iter()
+                .cloned()
+                .filter(|v| matches_criteria_f64(*v, &criteria))
+                .collect();
             if matching.is_empty() {
                 Some(FormulaResult::Error("#DIV/0!".to_string()))
             } else {
-                Some(FormulaResult::Number(matching.iter().sum::<f64>() / matching.len() as f64))
+                Some(FormulaResult::Number(
+                    matching.iter().sum::<f64>() / matching.len() as f64,
+                ))
             }
         }
         "AVERAGEIFS" => {
@@ -453,12 +476,16 @@ pub fn eval_function(
             if n.is_empty() {
                 Some(FormulaResult::Error("#DIV/0!".to_string()))
             } else {
-                Some(FormulaResult::Number(n.iter().sum::<f64>() / n.len() as f64))
+                Some(FormulaResult::Number(
+                    n.iter().sum::<f64>() / n.len() as f64,
+                ))
             }
         }
         "MAXIFS" => {
             let n = nums();
-            n.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
+            n.iter()
+                .cloned()
+                .fold(f64::NEG_INFINITY, f64::max)
                 .pipe(|v| {
                     if v == f64::NEG_INFINITY {
                         Some(FormulaResult::Number(0.0))
@@ -469,23 +496,32 @@ pub fn eval_function(
         }
         "MINIFS" => {
             let n = nums();
-            n.iter().cloned().fold(f64::INFINITY, f64::min)
-                .pipe(|v| {
-                    if v == f64::INFINITY {
-                        Some(FormulaResult::Number(0.0))
-                    } else {
-                        Some(FormulaResult::Number(v))
-                    }
-                })
+            n.iter().cloned().fold(f64::INFINITY, f64::min).pipe(|v| {
+                if v == f64::INFINITY {
+                    Some(FormulaResult::Number(0.0))
+                } else {
+                    Some(FormulaResult::Number(v))
+                }
+            })
         }
 
         // ===== Info =====
-        "ISNUMBER" => Some(FormulaResult::Bool(args.first().map(|a| a.is_numeric()).unwrap_or(false))),
-        "ISTEXT" => Some(FormulaResult::Bool(args.first().map(|a| a.is_string()).unwrap_or(false))),
-        "ISBLANK" => Some(FormulaResult::Bool(args.first().map(|a| a.is_blank()).unwrap_or(true))),
-        "ISERROR" | "ISERR" => Some(FormulaResult::Bool(args.first().map(|a| a.is_error()).unwrap_or(false))),
+        "ISNUMBER" => Some(FormulaResult::Bool(
+            args.first().map(|a| a.is_numeric()).unwrap_or(false),
+        )),
+        "ISTEXT" => Some(FormulaResult::Bool(
+            args.first().map(|a| a.is_string()).unwrap_or(false),
+        )),
+        "ISBLANK" => Some(FormulaResult::Bool(
+            args.first().map(|a| a.is_blank()).unwrap_or(true),
+        )),
+        "ISERROR" | "ISERR" => Some(FormulaResult::Bool(
+            args.first().map(|a| a.is_error()).unwrap_or(false),
+        )),
         "ISNA" => Some(FormulaResult::Bool(
-            args.first().map(|a| matches!(a, FormulaResult::Error(e) if e == "#N/A")).unwrap_or(false),
+            args.first()
+                .map(|a| matches!(a, FormulaResult::Error(e) if e == "#N/A"))
+                .unwrap_or(false),
         )),
         "TYPE" => Some(FormulaResult::Number(match args.first() {
             Some(FormulaResult::Number(_)) => 1.0,
@@ -535,11 +571,17 @@ pub fn eval_function(
 
         // ===== Conversions =====
         "ROMAN" => Some(FormulaResult::Str(to_roman(num(0) as i32))),
-        "BIN2DEC" => Some(FormulaResult::Number(i64::from_str_radix(&str_arg(0), 2).unwrap_or(0) as f64)),
+        "BIN2DEC" => Some(FormulaResult::Number(
+            i64::from_str_radix(&str_arg(0), 2).unwrap_or(0) as f64,
+        )),
         "DEC2BIN" => Some(FormulaResult::Str(format!("{:b}", num(0) as i64))),
-        "HEX2DEC" => Some(FormulaResult::Number(i64::from_str_radix(&str_arg(0), 16).unwrap_or(0) as f64)),
+        "HEX2DEC" => Some(FormulaResult::Number(
+            i64::from_str_radix(&str_arg(0), 16).unwrap_or(0) as f64,
+        )),
         "DEC2HEX" => Some(FormulaResult::Str(format!("{:X}", num(0) as i64))),
-        "OCT2DEC" => Some(FormulaResult::Number(i64::from_str_radix(&str_arg(0), 8).unwrap_or(0) as f64)),
+        "OCT2DEC" => Some(FormulaResult::Number(
+            i64::from_str_radix(&str_arg(0), 8).unwrap_or(0) as f64,
+        )),
         "DEC2OCT" => Some(FormulaResult::Str(format!("{:o}", num(0) as i64))),
 
         "NA" => Some(FormulaResult::Error("#N/A".to_string())),
@@ -603,8 +645,7 @@ fn eval_pmt(args: &[FormulaResult]) -> Option<FormulaResult> {
         return Some(FormulaResult::Number(-(pv + fv) / nper));
     }
     Some(FormulaResult::Number(
-        -(rate * (pv * (1.0 + rate).powf(nper) + fv))
-            / ((1.0 + rate).powf(nper) - 1.0),
+        -(rate * (pv * (1.0 + rate).powf(nper) + fv)) / ((1.0 + rate).powf(nper) - 1.0),
     ))
 }
 
@@ -676,19 +717,40 @@ fn eval_npv(args: &[FormulaResult]) -> Option<FormulaResult> {
 fn matches_criteria_f64(value: f64, criteria: &str) -> bool {
     let criteria = criteria.trim();
     if criteria.starts_with(">=") {
-        criteria[2..].parse::<f64>().map(|c| value >= c).unwrap_or(false)
+        criteria[2..]
+            .parse::<f64>()
+            .map(|c| value >= c)
+            .unwrap_or(false)
     } else if criteria.starts_with("<=") {
-        criteria[2..].parse::<f64>().map(|c| value <= c).unwrap_or(false)
+        criteria[2..]
+            .parse::<f64>()
+            .map(|c| value <= c)
+            .unwrap_or(false)
     } else if criteria.starts_with("<>") {
-        criteria[2..].parse::<f64>().map(|c| (value - c).abs() > 1e-10).unwrap_or(false)
+        criteria[2..]
+            .parse::<f64>()
+            .map(|c| (value - c).abs() > 1e-10)
+            .unwrap_or(false)
     } else if criteria.starts_with('>') {
-        criteria[1..].parse::<f64>().map(|c| value > c).unwrap_or(false)
+        criteria[1..]
+            .parse::<f64>()
+            .map(|c| value > c)
+            .unwrap_or(false)
     } else if criteria.starts_with('<') {
-        criteria[1..].parse::<f64>().map(|c| value < c).unwrap_or(false)
+        criteria[1..]
+            .parse::<f64>()
+            .map(|c| value < c)
+            .unwrap_or(false)
     } else if criteria.starts_with('=') {
-        criteria[1..].parse::<f64>().map(|c| (value - c).abs() < 1e-10).unwrap_or(false)
+        criteria[1..]
+            .parse::<f64>()
+            .map(|c| (value - c).abs() < 1e-10)
+            .unwrap_or(false)
     } else {
-        criteria.parse::<f64>().map(|c| (value - c).abs() < 1e-10).unwrap_or(false)
+        criteria
+            .parse::<f64>()
+            .map(|c| (value - c).abs() < 1e-10)
+            .unwrap_or(false)
     }
 }
 
@@ -724,9 +786,19 @@ fn to_roman(mut num: i32) -> String {
         return format!("{}", num);
     }
     let pairs = [
-        (1000, "M"), (900, "CM"), (500, "D"), (400, "CD"),
-        (100, "C"), (90, "XC"), (50, "L"), (40, "XL"),
-        (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I"),
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
     ];
     let mut result = String::new();
     for (value, symbol) in &pairs {

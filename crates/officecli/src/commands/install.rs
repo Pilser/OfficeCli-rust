@@ -77,7 +77,11 @@ fn install_binary(dry_run: bool, prefix: &Option<String>) -> Result<String, Hand
     }
 
     if dry_run {
-        return Ok(format!("[DRY RUN] Would copy {} → {}", exe.display(), dest.display()));
+        return Ok(format!(
+            "[DRY RUN] Would copy {} → {}",
+            exe.display(),
+            dest.display()
+        ));
     }
 
     // Ensure parent dir exists
@@ -101,7 +105,11 @@ fn install_binary(dry_run: bool, prefix: &Option<String>) -> Result<String, Hand
 
 fn bin_install_path(prefix: &Option<String>) -> PathBuf {
     if let Some(p) = prefix {
-        return PathBuf::from(p).join(if cfg!(windows) { "officecli.exe" } else { "officecli" });
+        return PathBuf::from(p).join(if cfg!(windows) {
+            "officecli.exe"
+        } else {
+            "officecli"
+        });
     }
     if cfg!(windows) {
         PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_else(|_| r"C:\OfficeCli".to_string()))
@@ -135,7 +143,11 @@ fn install_skills(
         let dest = PathBuf::from(&home).join(skill_dir);
 
         if dry_run {
-            installed.push(format!("[DRY RUN] Would install skill '{}' → {}", name, dest.display()));
+            installed.push(format!(
+                "[DRY RUN] Would install skill '{}' → {}",
+                name,
+                dest.display()
+            ));
             continue;
         }
 
@@ -147,10 +159,7 @@ fn install_skills(
         if let Some(skill_src) = find_skill_source(name) {
             let skill_dest = dest.join("SKILL.md");
             std::fs::copy(&skill_src, &skill_dest).map_err(|e| {
-                HandlerError::OperationFailed(format!(
-                    "failed to copy skill: {}",
-                    e
-                ))
+                HandlerError::OperationFailed(format!("failed to copy skill: {}", e))
             })?;
             installed.push(format!("Installed skill '{}' → {}", name, dest.display()));
         } else {
@@ -193,10 +202,7 @@ fn install_mcp_fallback(
     _prefix: &Option<String>,
 ) -> Result<Option<String>, HandlerError> {
     // MCP targets: vscode, lms — tools without skill aliases
-    let mcp_targets: &[(&str, &str)] = &[
-        ("vscode", "vscode"),
-        ("lms", "lms"),
-    ];
+    let mcp_targets: &[(&str, &str)] = &[("vscode", "vscode"), ("lms", "lms")];
 
     for (name, _) in mcp_targets {
         if target != "all" && target != *name {
@@ -313,8 +319,12 @@ fn home_dir() -> String {
 
 fn files_identical(a: &Path, b: &Path) -> bool {
     use std::io::Read;
-    let Ok(mut fa) = std::fs::File::open(a) else { return false };
-    let Ok(mut fb) = std::fs::File::open(b) else { return false };
+    let Ok(mut fa) = std::fs::File::open(a) else {
+        return false;
+    };
+    let Ok(mut fb) = std::fs::File::open(b) else {
+        return false;
+    };
 
     let meta_a = std::fs::metadata(a);
     let meta_b = std::fs::metadata(b);

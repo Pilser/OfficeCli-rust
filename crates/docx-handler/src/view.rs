@@ -382,13 +382,18 @@ pub fn view_as_forms(dom: &WordDom) -> Result<String, HandlerError> {
             }
 
             // Determine field type from tag/name
-            let field_type = if sdt_tag.contains("date") || sdt_alias.to_lowercase().contains("date") {
+            let field_type = if sdt_tag.contains("date")
+                || sdt_alias.to_lowercase().contains("date")
+            {
                 "date"
-            } else if sdt_tag.contains("dropdown") || sdt_alias.to_lowercase().contains("dropdown") {
+            } else if sdt_tag.contains("dropdown") || sdt_alias.to_lowercase().contains("dropdown")
+            {
                 "dropdown"
-            } else if sdt_tag.contains("checkbox") || sdt_alias.to_lowercase().contains("checkbox") {
+            } else if sdt_tag.contains("checkbox") || sdt_alias.to_lowercase().contains("checkbox")
+            {
                 "checkbox"
-            } else if sdt_tag.contains("combobox") || sdt_alias.to_lowercase().contains("combobox") {
+            } else if sdt_tag.contains("combobox") || sdt_alias.to_lowercase().contains("combobox")
+            {
                 "combobox"
             } else if sdt_tag.contains("picture") || sdt_alias.to_lowercase().contains("picture") {
                 "picture"
@@ -406,7 +411,10 @@ pub fn view_as_forms(dom: &WordDom) -> Result<String, HandlerError> {
 
             let field_desc = format!(
                 "#{} {}  type={}  path={}  value=\"{}\"",
-                sdt_idx, name, field_type, path,
+                sdt_idx,
+                name,
+                field_type,
+                path,
                 if sdt_value.len() > 60 {
                     format!("{}...", &sdt_value[..60])
                 } else {
@@ -434,7 +442,10 @@ pub fn view_as_forms(dom: &WordDom) -> Result<String, HandlerError> {
     }
 
     if !non_editable_fields.is_empty() {
-        result.push_str(&format!("\nNon-editable Fields ({}):\n", non_editable_count));
+        result.push_str(&format!(
+            "\nNon-editable Fields ({}):\n",
+            non_editable_count
+        ));
         for f in &non_editable_fields {
             result.push_str(&format!("  {}\n", f));
         }

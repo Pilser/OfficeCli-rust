@@ -141,7 +141,9 @@ impl<'a> crate::formula::parser::CellResolver for WorkbookResolver<'a> {
             for row in 1..=ws.max_row {
                 for col in min_col..=max_col {
                     let ref_str = format!("{}{}", index_to_col(col), row);
-                    let val = ws.cells.get(&(row, col))
+                    let val = ws
+                        .cells
+                        .get(&(row, col))
                         .map(|c| cell_value_to_formula_result(c))
                         .unwrap_or(FormulaResult::Blank);
                     result.push((ref_str, val));
@@ -169,7 +171,9 @@ impl<'a> crate::formula::parser::CellResolver for WorkbookResolver<'a> {
         for row in min_row..=max_row {
             for col in min_col..=max_col {
                 let ref_str = format!("{}{}", index_to_col(col), row);
-                let val = ws.cells.get(&(row, col))
+                let val = ws
+                    .cells
+                    .get(&(row, col))
                     .map(|c| cell_value_to_formula_result(c))
                     .unwrap_or(FormulaResult::Blank);
                 result.push((ref_str, val));
@@ -198,11 +202,9 @@ fn cell_value_to_formula_result(cell: &crate::dom_types::Cell) -> FormulaResult 
         | crate::dom_types::CellValueType::InlineString => {
             FormulaResult::Str(cell.display_value.clone())
         }
-        crate::dom_types::CellValueType::Boolean => {
-            FormulaResult::Bool(cell.display_value == "1" || cell.display_value.eq_ignore_ascii_case("true"))
-        }
-        crate::dom_types::CellValueType::Error => {
-            FormulaResult::Error(cell.display_value.clone())
-        }
+        crate::dom_types::CellValueType::Boolean => FormulaResult::Bool(
+            cell.display_value == "1" || cell.display_value.eq_ignore_ascii_case("true"),
+        ),
+        crate::dom_types::CellValueType::Error => FormulaResult::Error(cell.display_value.clone()),
     }
 }

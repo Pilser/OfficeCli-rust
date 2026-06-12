@@ -323,7 +323,10 @@ pub fn handle_unmark(cmd: UnmarkCommand, json: bool) -> Result<String, HandlerEr
 /// Handle `marks` command — list all marks
 pub fn handle_marks(cmd: MarksCommand, _json: bool) -> Result<String, HandlerError> {
     // For now, report no marks. Full impl would query watch server.
-    Ok(format!("(no marks for {}) — no watch process running", cmd.file))
+    Ok(format!(
+        "(no marks for {}) — no watch process running",
+        cmd.file
+    ))
 }
 
 /// Handle `goto` command — scroll watch viewer to element

@@ -32,7 +32,10 @@ pub struct ImportCommand {
     pub start_cell: String,
 }
 
-pub fn handle_import(cmd: ImportCommand, _format: handler_common::OutputFormat) -> Result<String, HandlerError> {
+pub fn handle_import(
+    cmd: ImportCommand,
+    _format: handler_common::OutputFormat,
+) -> Result<String, HandlerError> {
     // Only xlsx supported
     if !cmd.file.to_lowercase().ends_with(".xlsx") {
         return Err(HandlerError::InvalidArgument(
@@ -50,7 +53,10 @@ pub fn handle_import(cmd: ImportCommand, _format: handler_common::OutputFormat) 
         content
     } else if let Some(source_path) = &cmd.file_source {
         std::fs::read_to_string(source_path).map_err(|e| {
-            HandlerError::OperationFailed(format!("Failed to read source file '{}': {}", source_path, e))
+            HandlerError::OperationFailed(format!(
+                "Failed to read source file '{}': {}",
+                source_path, e
+            ))
         })?
     } else {
         return Err(HandlerError::InvalidArgument(
@@ -71,11 +77,7 @@ pub fn handle_import(cmd: ImportCommand, _format: handler_common::OutputFormat) 
             }
         }
     } else if let Some(source_path) = &cmd.file_source {
-        let ext = source_path
-            .rsplit('.')
-            .next()
-            .unwrap_or("")
-            .to_lowercase();
+        let ext = source_path.rsplit('.').next().unwrap_or("").to_lowercase();
         if ext == "tsv" || ext == "tab" {
             '\t'
         } else {
@@ -86,8 +88,8 @@ pub fn handle_import(cmd: ImportCommand, _format: handler_common::OutputFormat) 
     };
 
     // Open the xlsx file for editing
-    let mut package = OxmlPackage::open(&cmd.file, true)
-        .map_err(|e| HandlerError::OpenError(e.to_string()))?;
+    let mut package =
+        OxmlPackage::open(&cmd.file, true).map_err(|e| HandlerError::OpenError(e.to_string()))?;
 
     // Perform the import
     let result = xlsx_handler::import::import_csv(
@@ -97,7 +99,8 @@ pub fn handle_import(cmd: ImportCommand, _format: handler_common::OutputFormat) 
         delimiter,
         cmd.header,
         &cmd.start_cell,
-    ).map_err(|e| HandlerError::OperationFailed(e))?;
+    )
+    .map_err(|e| HandlerError::OperationFailed(e))?;
 
     // Save the changes
     package

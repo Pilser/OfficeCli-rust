@@ -48,7 +48,10 @@ pub fn handle_refresh(cmd: RefreshCommand, _format: OutputFormat) -> Result<Stri
     if page_map.is_empty() {
         // No TOC to update or no pagination info available
         handler.save()?;
-        return Ok(format!("Refreshed: {} (backend: html, no TOC updates needed)", cmd.file));
+        return Ok(format!(
+            "Refreshed: {} (backend: html, no TOC updates needed)",
+            cmd.file
+        ));
     }
 
     // Apply TOC updates via the handler's set mechanism

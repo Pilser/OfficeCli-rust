@@ -240,15 +240,15 @@ pub fn swap_cells(
     let pc1 = navigation::parse_path(path1)?;
     let pc2 = navigation::parse_path(path2)?;
 
-    let sheet1 = pc1.sheet_name.ok_or_else(|| {
-        HandlerError::InvalidPath("swap path1 requires a sheet name".to_string())
-    })?;
+    let sheet1 = pc1
+        .sheet_name
+        .ok_or_else(|| HandlerError::InvalidPath("swap path1 requires a sheet name".to_string()))?;
     let ref1 = pc1.cell_ref.ok_or_else(|| {
         HandlerError::InvalidPath("swap path1 requires a cell reference".to_string())
     })?;
-    let sheet2 = pc2.sheet_name.ok_or_else(|| {
-        HandlerError::InvalidPath("swap path2 requires a sheet name".to_string())
-    })?;
+    let sheet2 = pc2
+        .sheet_name
+        .ok_or_else(|| HandlerError::InvalidPath("swap path2 requires a sheet name".to_string()))?;
     let ref2 = pc2.cell_ref.ok_or_else(|| {
         HandlerError::InvalidPath("swap path2 requires a cell reference".to_string())
     })?;
@@ -262,27 +262,28 @@ pub fn swap_cells(
     // Read both cells' content
     let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
 
-    let get_cell_props = |sheet_name: &str, cell_ref: &CellRef| -> Result<HashMap<String, String>, HandlerError> {
-        let ws = model
-            .sheets
-            .iter()
-            .find(|s| s.name == sheet_name)
-            .ok_or_else(|| HandlerError::PathNotFound(format!("sheet '{}'", sheet_name)))?;
-        let cell = ws.cells.get(&(cell_ref.row, cell_ref.col));
-        let mut props = HashMap::new();
-        if let Some(c) = cell {
-            if let Some(v) = &c.raw_value {
-                props.insert("value".to_string(), v.clone());
+    let get_cell_props =
+        |sheet_name: &str, cell_ref: &CellRef| -> Result<HashMap<String, String>, HandlerError> {
+            let ws = model
+                .sheets
+                .iter()
+                .find(|s| s.name == sheet_name)
+                .ok_or_else(|| HandlerError::PathNotFound(format!("sheet '{}'", sheet_name)))?;
+            let cell = ws.cells.get(&(cell_ref.row, cell_ref.col));
+            let mut props = HashMap::new();
+            if let Some(c) = cell {
+                if let Some(v) = &c.raw_value {
+                    props.insert("value".to_string(), v.clone());
+                }
+                if let Some(f) = &c.formula {
+                    props.insert("formula".to_string(), f.clone());
+                }
+                if let Some(si) = c.style_index {
+                    props.insert("style".to_string(), si.to_string());
+                }
             }
-            if let Some(f) = &c.formula {
-                props.insert("formula".to_string(), f.clone());
-            }
-            if let Some(si) = c.style_index {
-                props.insert("style".to_string(), si.to_string());
-            }
-        }
-        Ok(props)
-    };
+            Ok(props)
+        };
 
     let props1 = get_cell_props(&sheet1, &ref1)?;
     let props2 = get_cell_props(&sheet2, &ref2)?;

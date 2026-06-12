@@ -40,7 +40,12 @@ pub fn tokenize(formula: &str) -> Result<Vec<Token>, String> {
                 && (tokens.is_empty()
                     || matches!(
                         tokens.last().map(|t| t.tt),
-                        Some(TokenType::Op | TokenType::LParen | TokenType::Comma | TokenType::Compare)
+                        Some(
+                            TokenType::Op
+                                | TokenType::LParen
+                                | TokenType::Comma
+                                | TokenType::Compare
+                        )
                     ))
             {
                 if let Some(ns) = parse_number_chars(&chars, i, &mut i) {
@@ -147,10 +152,8 @@ pub fn tokenize(formula: &str) -> Result<Vec<Token>, String> {
                 ei += 1;
             }
             if ei < len && ei > si && ei + 1 < len && chars[ei + 1] == '!' {
-                let sheet_name: String = chars[si..ei]
-                    .iter()
-                    .collect::<String>()
-                    .replace("''", "'");
+                let sheet_name: String =
+                    chars[si..ei].iter().collect::<String>().replace("''", "'");
                 i = ei + 2; // skip closing ' and !
                 let (ref_part, new_i) = read_ref_part(&chars, i);
                 i = new_i;
@@ -181,9 +184,7 @@ pub fn tokenize(formula: &str) -> Result<Vec<Token>, String> {
                     while peek_end < len && chars[peek_end].is_ascii_digit() {
                         peek_end += 1;
                     }
-                    if peek_end > peek_start
-                        && ns.chars().all(|c| c.is_ascii_digit())
-                    {
+                    if peek_end > peek_start && ns.chars().all(|c| c.is_ascii_digit()) {
                         let rhs_row: String = chars[peek_start..peek_end].iter().collect();
                         i = peek_end;
                         tokens.push(Token::new(TokenType::Range, format!("{}:{}", ns, rhs_row)));
@@ -198,7 +199,12 @@ pub fn tokenize(formula: &str) -> Result<Vec<Token>, String> {
         // Identifier: cell ref, function, boolean, sheet ref, range
         if ch.is_ascii_alphabetic() || ch == '_' || ch == '$' {
             let start = i;
-            while i < len && (chars[i].is_ascii_alphanumeric() || chars[i] == '_' || chars[i] == '$' || chars[i] == '.') {
+            while i < len
+                && (chars[i].is_ascii_alphanumeric()
+                    || chars[i] == '_'
+                    || chars[i] == '$'
+                    || chars[i] == '.')
+            {
                 i += 1;
             }
             let word: String = chars[start..i].iter().collect();
@@ -248,18 +254,12 @@ pub fn tokenize(formula: &str) -> Result<Vec<Token>, String> {
             }
 
             // Entire-column range like A:A or A:C
-            if i < len
-                && chars[i] == ':'
-                && stripped.chars().all(|c| c.is_ascii_alphabetic())
-            {
+            if i < len && chars[i] == ':' && stripped.chars().all(|c| c.is_ascii_alphabetic()) {
                 i += 1;
                 let (rhs, new_i) = read_ref_part(&chars, i);
                 i = new_i;
                 let rhs_stripped = strip_dollar(&rhs);
-                if rhs_stripped
-                    .chars()
-                    .all(|c| c.is_ascii_alphabetic())
-                {
+                if rhs_stripped.chars().all(|c| c.is_ascii_alphabetic()) {
                     tokens.push(Token::new(
                         TokenType::Range,
                         format!("{}:{}", stripped, rhs_stripped),
@@ -295,10 +295,7 @@ pub fn tokenize(formula: &str) -> Result<Vec<Token>, String> {
             if i < len && chars[i] == '!' {
                 i += 1;
             }
-            tokens.push(Token::new(
-                TokenType::Error,
-                formula[start..i].to_string(),
-            ));
+            tokens.push(Token::new(TokenType::Error, formula[start..i].to_string()));
             continue;
         }
 
@@ -353,9 +350,7 @@ fn parse_number_chars(chars: &[char], start: usize, pos: &mut usize) -> Option<S
 fn read_ref_part(chars: &[char], start: usize) -> (String, usize) {
     let mut i = start;
     while i < chars.len()
-        && (chars[i].is_ascii_alphanumeric()
-            || chars[i] == '$'
-            || chars[i] == ':')
+        && (chars[i].is_ascii_alphanumeric() || chars[i] == '$' || chars[i] == ':')
     {
         i += 1;
     }

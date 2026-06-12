@@ -35,8 +35,8 @@ pub trait DocumentHandler: Send {
         Err(HandlerError::UnsupportedMode("svg".to_string()))
     }
 
-       /// View form fields (docx content controls and legacy form fields)
-       fn view_as_forms(&self) -> Result<String, HandlerError> {
+    /// View form fields (docx content controls and legacy form fields)
+    fn view_as_forms(&self) -> Result<String, HandlerError> {
         Err(HandlerError::UnsupportedMode("forms".to_string()))
     }
 

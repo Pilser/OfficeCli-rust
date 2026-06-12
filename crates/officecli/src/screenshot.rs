@@ -73,7 +73,8 @@ pub fn capture(
 
     // Ensure output directory exists
     if let Some(parent) = Path::new(out_path).parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("failed to create output dir: {}", e))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create output dir: {}", e))?;
     }
 
     // Cap to <= 1920px width for LLM limits (mirrors upstream)
@@ -178,7 +179,8 @@ pub fn capture_pdf(
 
     // Ensure output directory exists
     if let Some(parent) = Path::new(out_path).parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("failed to create output dir: {}", e))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create output dir: {}", e))?;
     }
 
     let url = format!(
@@ -196,7 +198,14 @@ pub fn capture_pdf(
             // Fall through to chromium approach with --print-to-pdf
             let pw_chromium = find_playwright_chromium();
             if let Some(chrome_path) = pw_chromium {
-                return capture_pdf_chromium(&chrome_path, &url, out_path, width, height, "playwright/chromium");
+                return capture_pdf_chromium(
+                    &chrome_path,
+                    &url,
+                    out_path,
+                    width,
+                    height,
+                    "playwright/chromium",
+                );
             }
             // Fallback: try any chromium
             capture_pdf_via_any_browser(&url, out_path, width, height)
@@ -265,7 +274,9 @@ fn find_playwright_chromium() -> Option<PathBuf> {
     let pw_dir = PathBuf::from(home).join(".cache/ms-playwright");
     if let Ok(entries) = std::fs::read_dir(&pw_dir) {
         for entry in entries.flatten() {
-            let chrome_dir = entry.path().join("chrome-mac/Chromium.app/Contents/MacOS/Chromium");
+            let chrome_dir = entry
+                .path()
+                .join("chrome-mac/Chromium.app/Contents/MacOS/Chromium");
             if chrome_dir.exists() {
                 return Some(chrome_dir);
             }

@@ -23,7 +23,9 @@ pub fn evaluate(formula: &str, model: &crate::dom_types::WorkbookModel) -> Optio
 /// Evaluate a formula string with a specific resolver.
 pub fn evaluate_with_resolver(formula: &str, resolver: &dyn CellResolver) -> FormulaResult {
     match parser::FormulaParser::new(formula, resolver) {
-        Ok(mut p) => p.evaluate().unwrap_or(FormulaResult::Error("#VALUE!".to_string())),
+        Ok(mut p) => p
+            .evaluate()
+            .unwrap_or(FormulaResult::Error("#VALUE!".to_string())),
         Err(_) => FormulaResult::Error("#NAME?".to_string()),
     }
 }

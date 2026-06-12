@@ -194,9 +194,18 @@ fn list_plugins(format: OutputFormat) -> Result<String, HandlerError> {
                 .iter()
                 .map(|p| {
                     let mut obj = serde_json::Map::new();
-                    obj.insert("name".into(), serde_json::Value::String(p.manifest.name.clone()));
-                    obj.insert("version".into(), serde_json::Value::String(p.manifest.version.clone()));
-                    obj.insert("protocol".into(), serde_json::Value::Number(p.manifest.protocol.into()));
+                    obj.insert(
+                        "name".into(),
+                        serde_json::Value::String(p.manifest.name.clone()),
+                    );
+                    obj.insert(
+                        "version".into(),
+                        serde_json::Value::String(p.manifest.version.clone()),
+                    );
+                    obj.insert(
+                        "protocol".into(),
+                        serde_json::Value::Number(p.manifest.protocol.into()),
+                    );
                     obj.insert(
                         "kinds".into(),
                         serde_json::Value::Array(
@@ -220,7 +229,10 @@ fn list_plugins(format: OutputFormat) -> Result<String, HandlerError> {
                     if let Some(tier) = &p.manifest.tier {
                         obj.insert("tier".into(), serde_json::Value::String(tier.clone()));
                     }
-                    obj.insert("path".into(), serde_json::Value::String(p.executable_path.clone()));
+                    obj.insert(
+                        "path".into(),
+                        serde_json::Value::String(p.executable_path.clone()),
+                    );
                     if !p.warnings.is_empty() {
                         obj.insert(
                             "warnings".into(),
@@ -277,19 +289,17 @@ fn info_plugin(name: &str, format: OutputFormat) -> Result<String, HandlerError>
         .ok_or_else(|| HandlerError::PathNotFound(format!("plugin '{}' not found", name)))?;
 
     match format {
-        OutputFormat::Json => {
-            Ok(serde_json::to_string_pretty(&serde_json::json!({
-                "name": plugin.manifest.name,
-                "version": plugin.manifest.version,
-                "protocol": plugin.manifest.protocol,
-                "kinds": plugin.manifest.kinds,
-                "extensions": plugin.manifest.extensions,
-                "tier": plugin.manifest.tier,
-                "path": plugin.executable_path,
-                "warnings": plugin.warnings,
-            }))
-            .map_err(|e| HandlerError::OperationFailed(e.to_string()))?)
-        }
+        OutputFormat::Json => Ok(serde_json::to_string_pretty(&serde_json::json!({
+            "name": plugin.manifest.name,
+            "version": plugin.manifest.version,
+            "protocol": plugin.manifest.protocol,
+            "kinds": plugin.manifest.kinds,
+            "extensions": plugin.manifest.extensions,
+            "tier": plugin.manifest.tier,
+            "path": plugin.executable_path,
+            "warnings": plugin.warnings,
+        }))
+        .map_err(|e| HandlerError::OperationFailed(e.to_string()))?),
         OutputFormat::Text => {
             let mut lines = Vec::new();
             lines.push(format!("Name:     {}", plugin.manifest.name));
@@ -326,14 +336,16 @@ fn lint_plugin(path: &str, _format: OutputFormat) -> Result<String, HandlerError
         HandlerError::OperationFailed(format!("failed to read '{}': {}", manifest_path, e))
     })?;
 
-    let manifest: PluginManifest = serde_json::from_str(&content).map_err(|e| {
-        HandlerError::OperationFailed(format!("invalid plugin manifest: {}", e))
-    })?;
+    let manifest: PluginManifest = serde_json::from_str(&content)
+        .map_err(|e| HandlerError::OperationFailed(format!("invalid plugin manifest: {}", e)))?;
 
     let warnings = validate_manifest(&manifest);
 
     let mut lines = Vec::new();
-    lines.push(format!("OK: {} v{} (protocol {})", manifest.name, manifest.version, manifest.protocol));
+    lines.push(format!(
+        "OK: {} v{} (protocol {})",
+        manifest.name, manifest.version, manifest.protocol
+    ));
     if warnings.is_empty() {
         lines.push("No warnings.".to_string());
     } else {

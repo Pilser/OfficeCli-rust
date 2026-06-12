@@ -139,10 +139,7 @@ pub fn view_as_outline(package: &OxmlPackage) -> Result<String, HandlerError> {
     }
 
     if !model.pivot_tables.is_empty() {
-        output.push_str(&format!(
-            "  Pivot tables: {}\n",
-            model.pivot_tables.len()
-        ));
+        output.push_str(&format!("  Pivot tables: {}\n", model.pivot_tables.len()));
         for pt in &model.pivot_tables {
             let range_info = pt
                 .source_range

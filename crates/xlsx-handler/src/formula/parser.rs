@@ -2,8 +2,8 @@
 //!
 //! Precedence (low→high): comparison → concat → add/sub → mul/div → power → unary → postfix(%) → atom.
 
-use super::types::*;
 use super::tokenizer;
+use super::types::*;
 
 /// Parse a formula string and evaluate it against a cell resolver.
 pub struct FormulaParser<'a> {
@@ -47,9 +47,7 @@ impl<'a> FormulaParser<'a> {
         }
         // Top-level Array collapses to scalar (first element)
         match result {
-            Some(FormulaResult::Array(ref a)) if !a.is_empty() => {
-                Some(FormulaResult::Number(a[0]))
-            }
+            Some(FormulaResult::Array(ref a)) if !a.is_empty() => Some(FormulaResult::Number(a[0])),
             other => other,
         }
     }
@@ -111,11 +109,7 @@ impl<'a> FormulaParser<'a> {
                 if right.is_error() {
                     return Some(right);
                 }
-                result = FormulaResult::Str(format!(
-                    "{}{}",
-                    result.as_string(),
-                    right.as_string()
-                ));
+                result = FormulaResult::Str(format!("{}{}", result.as_string(), right.as_string()));
             }
             result
         } else {
@@ -260,19 +254,13 @@ impl<'a> FormulaParser<'a> {
             TokenType::Range => {
                 self.pos += 1;
                 let cells = self.resolver.expand_range(&tok.value);
-                let values: Vec<f64> = cells
-                    .iter()
-                    .map(|(_, v)| v.as_number())
-                    .collect();
+                let values: Vec<f64> = cells.iter().map(|(_, v)| v.as_number()).collect();
                 Some(FormulaResult::Array(values))
             }
             TokenType::SheetRange => {
                 self.pos += 1;
                 let cells = self.resolver.expand_range(&tok.value);
-                let values: Vec<f64> = cells
-                    .iter()
-                    .map(|(_, v)| v.as_number())
-                    .collect();
+                let values: Vec<f64> = cells.iter().map(|(_, v)| v.as_number()).collect();
                 Some(FormulaResult::Array(values))
             }
             TokenType::ArrayLit => {

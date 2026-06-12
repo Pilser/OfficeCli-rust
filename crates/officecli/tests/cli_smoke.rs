@@ -1,0 +1,775 @@
+//! CLI smoke tests — mirrors the C# CI smoke test pattern.
+//!
+//! These tests run the `officecli` binary and verify it produces correct
+//! output for the core command pipeline: create → add → get → view → close.
+
+use assert_cmd::Command;
+use predicates::prelude::*;
+use std::path::PathBuf;
+
+/// Helper: get the officecli binary under test.
+fn officecli() -> Command {
+    Command::cargo_bin("officecli").unwrap()
+}
+
+/// Helper: create a temp dir for test files.
+fn temp_dir() -> tempfile::TempDir {
+    tempfile::tempdir().unwrap()
+}
+
+/// Helper: workspace root for sample files.
+fn workspace_root() -> PathBuf {
+    std::env::current_dir().unwrap()
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Basic CLI
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_version() {
+    officecli().arg("--version").assert().success();
+}
+
+#[test]
+fn test_help() {
+    officecli()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Commands:"))
+        .stdout(predicate::str::contains("view"))
+        .stdout(predicate::str::contains("get"))
+        .stdout(predicate::str::contains("set"))
+        .stdout(predicate::str::contains("add"))
+        .stdout(predicate::str::contains("create"))
+        .stdout(predicate::str::contains("help"));
+}
+
+#[test]
+fn test_help_schema() {
+    officecli()
+        .args(["help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("docx"))
+        .stdout(predicate::str::contains("xlsx"))
+        .stdout(predicate::str::contains("pptx"));
+}
+
+#[test]
+fn test_help_format_detail() {
+    officecli()
+        .args(["help", "xlsx"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("cell"))
+        .stdout(predicate::str::contains("sheet"))
+        .stdout(predicate::str::contains("formula"));
+}
+
+#[test]
+fn test_info() {
+    officecli()
+        .args(["info"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("OfficeCLI"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Create — all three formats
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_create_docx() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_create.docx");
+    let path_str = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &path_str]).assert().success();
+    assert!(path.exists(), "created file should exist");
+}
+
+#[test]
+fn test_create_xlsx() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_create.xlsx");
+    let path_str = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &path_str]).assert().success();
+    assert!(path.exists(), "created file should exist");
+}
+
+#[test]
+fn test_create_pptx() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_create.pptx");
+    let path_str = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &path_str]).assert().success();
+    assert!(path.exists(), "created file should exist");
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// View — various modes (docx)
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_view_docx_text() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_view.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args(["view", &p, "-m", "text"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_view_docx_outline() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_outline.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args(["view", &p, "-m", "outline"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_view_docx_stats() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_stats.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args(["view", &p, "-m", "stats"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Paragraphs"));
+}
+
+#[test]
+fn test_view_docx_annotated() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_annotated.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args(["view", &p, "-m", "annotated"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_view_docx_issues() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_issues.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args(["view", &p, "-m", "issues"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_view_docx_forms() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_forms.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    // Blank docx has no form fields — should report "No form fields"
+    officecli()
+        .args(["view", &p, "-m", "forms"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No form fields"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// View — stats for xlsx and pptx
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_view_xlsx_stats() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_stats.xlsx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args(["view", &p, "-m", "stats"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Sheets"));
+}
+
+#[test]
+fn test_view_pptx_stats() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_stats.pptx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args(["view", &p, "-m", "stats"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Slides"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Add + Get — mirrors the C# CI smoke test exactly
+//   C# CI: create → add /body --type paragraph --prop text="Hello from CI"
+//          → get /body/p[1] → close
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_add_and_get_paragraph() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_add.docx");
+    let p = path.to_string_lossy().to_string();
+
+    // Create blank docx (contains a default empty p[1])
+    officecli().args(["create", &p]).assert().success();
+
+    // Add a paragraph — new paragraph becomes p[2] since blank docx has p[1]
+    officecli()
+        .args([
+            "add",
+            &p,
+            "--parent",
+            "/body",
+            "--type-name",
+            "paragraph",
+            "--properties",
+            "text=Hello from test",
+        ])
+        .assert()
+        .success();
+
+    // Get the newly added paragraph at p[2]
+    officecli()
+        .args(["get", &p, "/body/p[2]"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Hello from test"));
+}
+
+#[test]
+fn test_add_and_view_paragraph() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_add_view.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+
+    officecli()
+        .args([
+            "add",
+            &p,
+            "--parent",
+            "/body",
+            "--type-name",
+            "paragraph",
+            "--properties",
+            "text=View test",
+        ])
+        .assert()
+        .success();
+
+    officecli()
+        .args(["view", &p, "-m", "text"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("View test"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Set — modify an existing element's property
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_set_text() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_set.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+
+    officecli()
+        .args([
+            "add",
+            &p,
+            "--parent",
+            "/body",
+            "--type-name",
+            "paragraph",
+            "--properties",
+            "text=Original",
+        ])
+        .assert()
+        .success();
+
+    // Set the text on the added paragraph (p[2])
+    officecli()
+        .args(["set", &p, "/body/p[2]", "text=Modified"])
+        .assert()
+        .success();
+
+    // Verify the change
+    officecli()
+        .args(["get", &p, "/body/p[2]"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Modified"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Remove — delete an element
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_remove_paragraph() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_remove.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+
+    officecli()
+        .args([
+            "add",
+            &p,
+            "--parent",
+            "/body",
+            "--type-name",
+            "paragraph",
+            "--properties",
+            "text=Remove me",
+        ])
+        .assert()
+        .success();
+
+    // Remove the added paragraph
+    officecli()
+        .args(["remove", &p, "/body/p[2]"])
+        .assert()
+        .success();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Query — find elements by CSS-like selector
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_query_paragraphs() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_query.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+
+    officecli()
+        .args([
+            "add",
+            &p,
+            "--parent",
+            "/body",
+            "--type-name",
+            "paragraph",
+            "--properties",
+            "text=First",
+        ])
+        .assert()
+        .success();
+    officecli()
+        .args([
+            "add",
+            &p,
+            "--parent",
+            "/body",
+            "--type-name",
+            "paragraph",
+            "--properties",
+            "text=Second",
+        ])
+        .assert()
+        .success();
+
+    // Query using "p" selector (the actual CLI uses CSS-like selectors)
+    officecli()
+        .args(["query", &p, "p"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("/body/p"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Validate — check document structure
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_validate_docx() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_validate.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli().args(["validate", &p]).assert().success();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Dump — show full XML
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_dump_docx() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_dump.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli().args(["dump", &p]).assert().success();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Raw — read a part by name
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_raw_docx() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_raw.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args(["raw", &p, "word/document.xml"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("w:body"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Extract-text — pull plain text
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_extract_text_docx() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_extract.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args([
+            "add",
+            &p,
+            "--parent",
+            "/body",
+            "--type-name",
+            "paragraph",
+            "--properties",
+            "text=Extract me",
+        ])
+        .assert()
+        .success();
+
+    officecli().args(["extract-text", &p]).assert().success();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// JSON output mode
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_view_json() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_json.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args(["--json", "view", &p, "-m", "stats"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"paragraphs\""));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Sample file tests (use workspace-root relative paths)
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_view_sample_docx() {
+    let root = workspace_root();
+    let sample = root.join("assets/showcase/annual-report.docx");
+    if !sample.exists() {
+        return;
+    }
+
+    officecli()
+        .args(["view", sample.to_string_lossy().as_ref(), "-m", "stats"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Paragraphs"))
+        .stdout(predicate::str::contains("Tables"));
+}
+
+#[test]
+fn test_view_sample_xlsx() {
+    let root = workspace_root();
+    let sample = root.join("assets/showcase/budget-tracker.xlsx");
+    if !sample.exists() {
+        return;
+    }
+
+    officecli()
+        .args(["view", sample.to_string_lossy().as_ref(), "-m", "stats"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Sheets"));
+}
+
+#[test]
+fn test_query_sample_docx() {
+    let root = workspace_root();
+    let sample = root.join("assets/showcase/annual-report.docx");
+    if !sample.exists() {
+        return;
+    }
+
+    officecli()
+        .args(["query", sample.to_string_lossy().as_ref(), "p"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_view_sample_docx_annotated() {
+    let root = workspace_root();
+    let sample = root.join("assets/showcase/annual-report.docx");
+    if !sample.exists() {
+        return;
+    }
+
+    officecli()
+        .args(["view", sample.to_string_lossy().as_ref(), "-m", "annotated"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("/body/"));
+}
+
+#[test]
+fn test_view_sample_docx_issues() {
+    let root = workspace_root();
+    let sample = root.join("assets/showcase/annual-report.docx");
+    if !sample.exists() {
+        return;
+    }
+
+    officecli()
+        .args(["view", sample.to_string_lossy().as_ref(), "-m", "issues"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_view_sample_xlsx_outline() {
+    let root = workspace_root();
+    let sample = root.join("assets/showcase/budget-tracker.xlsx");
+    if !sample.exists() {
+        return;
+    }
+
+    officecli()
+        .args(["view", sample.to_string_lossy().as_ref(), "-m", "outline"])
+        .assert()
+        .success();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// XLSX-specific: set cell value
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_xlsx_view_outline() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_xlsx.xlsx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args(["view", &p, "-m", "outline"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("/Sheet1"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// PPTX-specific: add slide + textbox
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_pptx_add_slide() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_pptx.pptx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+
+    officecli()
+        .args([
+            "add",
+            &p,
+            "--parent",
+            "/presentation",
+            "--type-name",
+            "slide",
+        ])
+        .assert()
+        .success();
+
+    officecli()
+        .args(["view", &p, "-m", "stats"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Slides"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Convert — docx → docx (re-save via oxide engine)
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_convert_docx_resave() {
+    let tmp = temp_dir();
+    let src = tmp.path().join("convert_src.docx");
+    let s = src.to_string_lossy().to_string();
+
+    officecli().args(["create", &s]).assert().success();
+    officecli()
+        .args(["convert", &s, "--engine", "oxide", "--force"])
+        .assert()
+        .success();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Raw-set — modify a part's raw XML
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_raw_set_docx() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_rawset.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+
+    // Use raw-set with 'setattr' action to set an attribute
+    officecli()
+        .args([
+            "raw-set",
+            &p,
+            "word/document.xml",
+            "/w:document",
+            "setattr",
+            "--xml",
+            "mc:Ignorable=wp",
+        ])
+        .assert()
+        .success();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Batch — run multiple operations
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_batch_docx() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_batch.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+
+    // Batch: add paragraph then view stats
+    let batch_json = r#"[{"command":"add","parent":"/body","type":"paragraph","properties":{"text":"Batch test"}},{"command":"view","mode":"stats"}]"#;
+
+    officecli()
+        .args(["batch", &p, batch_json])
+        .assert()
+        .success();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Save — explicit save (create already saves, but test the command)
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_save_docx() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_save.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli().args(["save", &p]).assert().success();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Move — reorder elements
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_move_paragraph() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_move.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+
+    // Add two paragraphs
+    officecli()
+        .args([
+            "add",
+            &p,
+            "--parent",
+            "/body",
+            "--type-name",
+            "paragraph",
+            "--properties",
+            "text=First",
+        ])
+        .assert()
+        .success();
+    officecli()
+        .args([
+            "add",
+            &p,
+            "--parent",
+            "/body",
+            "--type-name",
+            "paragraph",
+            "--properties",
+            "text=Second",
+        ])
+        .assert()
+        .success();
+
+    // Move p[3] before p[2] using --target
+    officecli()
+        .args(["move", &p, "/body/p[3]", "--target", "/body/p[2]"])
+        .assert()
+        .success();
+}

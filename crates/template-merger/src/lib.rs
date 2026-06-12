@@ -27,7 +27,8 @@ pub fn merge_ooxml_parts(
             Err(_) => continue,
         };
 
-        let (modified_xml, replaced, unresolved) = replace_placeholders_in_xml(&xml, text_tag, &re, data);
+        let (modified_xml, replaced, unresolved) =
+            replace_placeholders_in_xml(&xml, text_tag, &re, data);
 
         if replaced > 0 {
             package

@@ -18,7 +18,11 @@ pub fn import_csv(
     start_cell: &str,
 ) -> Result<String, String> {
     // Parse the sheet name from parent_path (e.g. "/Sheet1" → "Sheet1")
-    let sheet_name = parent_path.trim_start_matches('/').split('/').next().unwrap_or("Sheet1");
+    let sheet_name = parent_path
+        .trim_start_matches('/')
+        .split('/')
+        .next()
+        .unwrap_or("Sheet1");
 
     // Find the worksheet part path by parsing workbook.xml
     let _shared_strings = crate::helpers::parse_shared_strings(package);
@@ -59,7 +63,9 @@ pub fn import_csv(
     }
 
     // Read the current worksheet XML
-    let mut ws_xml = package.read_part_xml(part_path).map_err(|e| e.to_string())?;
+    let mut ws_xml = package
+        .read_part_xml(part_path)
+        .map_err(|e| e.to_string())?;
 
     // Simpler approach: just append rows to the sheetData section
     // For each imported row, generate <row r="N"><c r="XXN"><v>value</v></c>...</row>
@@ -105,22 +111,13 @@ pub fn import_csv(
                     }
                 ));
             } else if field.eq_ignore_ascii_case("TRUE") {
-                new_rows_xml.push_str(&format!(
-                    "<c r=\"{}\" t=\"b\"><v>1</v></c>",
-                    cell_ref
-                ));
+                new_rows_xml.push_str(&format!("<c r=\"{}\" t=\"b\"><v>1</v></c>", cell_ref));
             } else if field.eq_ignore_ascii_case("FALSE") {
-                new_rows_xml.push_str(&format!(
-                    "<c r=\"{}\" t=\"b\"><v>0</v></c>",
-                    cell_ref
-                ));
+                new_rows_xml.push_str(&format!("<c r=\"{}\" t=\"b\"><v>0</v></c>", cell_ref));
             } else if field.starts_with('=') {
                 // Formula
                 let formula_xml = escape_xml_text(&field[1..]);
-                new_rows_xml.push_str(&format!(
-                    "<c r=\"{}\"><f>{}</f></c>",
-                    cell_ref, formula_xml
-                ));
+                new_rows_xml.push_str(&format!("<c r=\"{}\"><f>{}</f></c>", cell_ref, formula_xml));
             } else {
                 // String — use inline string to avoid shared string management
                 let escaped = escape_xml_text(field);
@@ -146,7 +143,13 @@ pub fn import_csv(
     if has_header && !rows.is_empty() {
         let end_col = crate::dom_types::col_num_to_letters(start_col_idx + max_cols - 1);
         let end_row = start_row + rows.len() - 1;
-        let filter_range = format!("{}{}:{}{}", crate::dom_types::col_num_to_letters(start_col_idx), start_row, end_col, end_row);
+        let filter_range = format!(
+            "{}{}:{}{}",
+            crate::dom_types::col_num_to_letters(start_col_idx),
+            start_row,
+            end_col,
+            end_row
+        );
 
         // Add autoFilter element before </worksheet> or after sheetData
         let auto_filter_xml = format!("<autoFilter ref=\"{}\"/>", filter_range);
@@ -156,7 +159,9 @@ pub fn import_csv(
     }
 
     // Write back the modified XML
-    package.write_part_xml(part_path, &ws_xml).map_err(|e| e.to_string())?;
+    package
+        .write_part_xml(part_path, &ws_xml)
+        .map_err(|e| e.to_string())?;
 
     Ok(format!(
         "Imported {} rows x {} cols into /{} starting at {}",

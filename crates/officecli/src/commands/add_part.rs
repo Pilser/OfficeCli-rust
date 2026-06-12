@@ -25,7 +25,10 @@ pub fn handle_add_part(cmd: AddPartCommand, format: OutputFormat) -> Result<Stri
 
     let (rel_id, part_path) = handler.add_part(&cmd.parent, &cmd.part_type, None)?;
 
-    let message = format!("Created {} part: relId={} path={}", cmd.part_type, rel_id, part_path);
+    let message = format!(
+        "Created {} part: relId={} path={}",
+        cmd.part_type, rel_id, part_path
+    );
 
     match format {
         OutputFormat::Json => {
