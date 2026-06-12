@@ -5,6 +5,7 @@ pub mod formula_eval;
 pub mod handler;
 pub mod helpers;
 pub mod html_preview;
+pub mod import;
 pub mod mutations;
 pub mod navigation;
 pub mod query;

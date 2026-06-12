@@ -35,6 +35,11 @@ pub trait DocumentHandler: Send {
         Err(HandlerError::UnsupportedMode("svg".to_string()))
     }
 
+       /// View form fields (docx content controls and legacy form fields)
+       fn view_as_forms(&self) -> Result<String, HandlerError> {
+        Err(HandlerError::UnsupportedMode("forms".to_string()))
+    }
+
     // === Query Layer ===
     fn get(&self, path: &str, depth: usize) -> Result<DocumentNode, HandlerError>;
     fn query(&self, selector: &str) -> Result<Vec<DocumentNode>, HandlerError>;

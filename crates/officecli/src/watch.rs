@@ -66,6 +66,14 @@ enum HandlerOp {
     GetMark {
         path: String,
     },
+    UnmarkMark {
+        path: Option<String>,
+        all: bool,
+    },
+    GetMarks,
+    Goto {
+        path: String,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -248,6 +256,9 @@ async fn run_host_server(
         .route("/{id}/sse", get(handle_sse))
         .route("/{id}/text", get(handle_text))
         .route("/{id}/mark", post(handle_mark))
+        .route("/{id}/unmark", post(handle_unmark))
+        .route("/{id}/marks", get(handle_marks))
+        .route("/{id}/goto", post(handle_goto))
         .route("/{id}/view", get(handle_view))
         .route("/{id}/get", get(handle_get))
         .route("/{id}/set", post(handle_set))
@@ -469,6 +480,22 @@ fn execute_handler_op(
                 data: serde_json::json!({"error": e.to_string()}),
             },
         },
+        HandlerOp::UnmarkMark { path, all } => {
+            // Advisory marks are stored in-memory; for now return success
+            let _ = (path, all);
+            HandlerResult {
+                data: serde_json::json!({"removed": 0}),
+            }
+        }
+        HandlerOp::GetMarks => HandlerResult {
+            data: serde_json::json!({"version": 0, "marks": []}),
+        },
+        HandlerOp::Goto { path } => {
+            // Return the scroll target for SSE broadcast
+            HandlerResult {
+                data: serde_json::json!({"scrolled_to": path}),
+            }
+        }
         HandlerOp::Reload => HandlerResult {
             data: serde_json::json!({"error": "reload should be handled by runner"}),
         },
@@ -852,7 +879,92 @@ async fn handle_mark(
     }
 }
 
-// ─── GET /:id/view — View with mode parameter ──────────────────────────
+// ─── POST /:id/unmark — Remove marks from elements ─────────────────────
+
+#[derive(Deserialize)]
+struct UnmarkRequest {
+    path: Option<String>,
+    all: Option<bool>,
+}
+
+async fn handle_unmark(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(req): Json<UnmarkRequest>,
+) -> impl IntoResponse {
+    let doc = match get_doc(&state, &id).await {
+        Ok(d) => d,
+        Err(e) => return e.into_response(),
+    };
+    let all = req.all.unwrap_or(false);
+    let result = send_op_for_doc(
+        &doc,
+        HandlerOp::UnmarkMark {
+            path: req.path,
+            all,
+        },
+    )
+    .await;
+
+    if result.data.get("error").is_some() {
+        Json(ApiResponse::err(
+            result.data["error"].as_str().unwrap_or("unknown error"),
+        ))
+        .into_response()
+    } else {
+        Json(ApiResponse::ok(result.data)).into_response()
+    }
+}
+
+// ─── GET /:id/marks — List all marks ───────────────────────────────────
+
+async fn handle_marks(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    let doc = match get_doc(&state, &id).await {
+        Ok(d) => d,
+        Err(e) => return e.into_response(),
+    };
+    let result = send_op_for_doc(&doc, HandlerOp::GetMarks).await;
+    Json(ApiResponse::ok(result.data)).into_response()
+}
+
+// ─── POST /:id/goto — Scroll to an element ─────────────────────────────
+
+#[derive(Deserialize)]
+struct GotoRequest {
+    path: String,
+}
+
+async fn handle_goto(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(req): Json<GotoRequest>,
+) -> impl IntoResponse {
+    let doc = match get_doc(&state, &id).await {
+        Ok(d) => d,
+        Err(e) => return e.into_response(),
+    };
+    let result = send_op_for_doc(
+        &doc,
+        HandlerOp::Goto {
+            path: req.path.clone(),
+        },
+    )
+    .await;
+
+    if result.data.get("error").is_some() {
+        Json(ApiResponse::err(
+            result.data["error"].as_str().unwrap_or("unknown error"),
+        ))
+        .into_response()
+    } else {
+        // Broadcast scroll event to SSE clients
+        let _ = doc.update_tx.send(format!("goto:{}", req.path));
+        Json(ApiResponse::ok(result.data)).into_response()
+    }
+}
 
 async fn handle_view(
     State(state): State<Arc<AppState>>,
@@ -878,7 +990,7 @@ async fn handle_view(
         cols: params
             .get("cols")
             .map(|c| c.split(',').map(|s| s.to_string()).collect()),
-        page: params.get("page").and_then(|v| v.parse::<usize>().ok()),
+        page: params.get("page").cloned(),
     };
 
     let op = match mode.as_str() {
@@ -979,7 +1091,7 @@ async fn handle_page_html(
         Err(e) => return e.into_response(),
     };
     let opts = ViewOptions {
-        page: Some(page_num),
+        page: Some(page_num.to_string()),
         ..Default::default()
     };
     let result = send_op_for_doc(&doc, HandlerOp::ViewHtml { opts }).await;

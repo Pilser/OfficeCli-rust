@@ -15,7 +15,8 @@ pub struct ViewOptions {
     pub end_line: Option<usize>,
     pub max_lines: Option<usize>,
     pub cols: Option<Vec<String>>,
-    pub page: Option<usize>,
+    /// Page filter string (e.g. "1", "2-5", "1,3,5"). Parsed by each handler.
+    pub page: Option<String>,
 }
 
 /// Options for raw commands.

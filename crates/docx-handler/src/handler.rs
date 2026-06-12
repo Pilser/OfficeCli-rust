@@ -110,6 +110,11 @@ impl DocumentHandler for WordHandler {
         view_as_stats_json(&dom)
     }
 
+    fn view_as_forms(&self) -> Result<String, HandlerError> {
+        let dom = self.parse_dom()?;
+        crate::view::view_as_forms(&dom)
+    }
+
     fn get(&self, path: &str, depth: usize) -> Result<DocumentNode, HandlerError> {
         let dom = self.parse_dom()?;
 

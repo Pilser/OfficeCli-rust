@@ -319,3 +319,126 @@ fn apply_line_range(text: &str, opts: &ViewOptions) -> Result<String, HandlerErr
 
     Ok(limited.join("\n"))
 }
+
+/// View document form fields (content controls / SDT elements).
+/// Lists SDT elements with their type, name, alias, and current value.
+pub fn view_as_forms(dom: &WordDom) -> Result<String, HandlerError> {
+    let body = dom
+        .body()
+        .ok_or_else(|| HandlerError::OperationFailed("body element not found".to_string()))?;
+
+    let mut result = String::new();
+    let mut sdt_idx = 0;
+    let mut editable_count = 0;
+    let mut non_editable_count = 0;
+
+    let mut editable_fields = Vec::new();
+    let mut non_editable_fields = Vec::new();
+
+    for child in &body.children {
+        if child.element_type == WordElementType::Sdt {
+            sdt_idx += 1;
+            let path = format!("/body/sdt[{}]", sdt_idx);
+
+            // Extract SDT properties
+            let mut _sdt_name = String::new();
+            let mut sdt_alias = String::new();
+            let mut sdt_tag = String::new();
+            let is_editable = true; // default
+
+            // Check SdtPr for tag/alias/lock
+            for sdt_child in &child.children {
+                if sdt_child.element_type == WordElementType::SdtPr {
+                    // Parse properties from the XML attributes stored in the node
+                    // Look for name, alias, tag, lock
+                    for prop_child in &sdt_child.children {
+                        let prop_type = prop_child.element_type.to_path_name();
+                        match prop_type {
+                            "alias" => {
+                                sdt_alias = prop_child.paragraph_text();
+                            }
+                            "tag" => {
+                                sdt_tag = prop_child.paragraph_text();
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            // Extract current value from SdtContent
+            let mut sdt_value = String::new();
+            for sdt_child in &child.children {
+                if sdt_child.element_type == WordElementType::SdtContent {
+                    for content_child in &sdt_child.children {
+                        if content_child.element_type == WordElementType::Paragraph {
+                            if !sdt_value.is_empty() {
+                                sdt_value.push('\n');
+                            }
+                            sdt_value.push_str(&content_child.paragraph_text());
+                        }
+                    }
+                }
+            }
+
+            // Determine field type from tag/name
+            let field_type = if sdt_tag.contains("date") || sdt_alias.to_lowercase().contains("date") {
+                "date"
+            } else if sdt_tag.contains("dropdown") || sdt_alias.to_lowercase().contains("dropdown") {
+                "dropdown"
+            } else if sdt_tag.contains("checkbox") || sdt_alias.to_lowercase().contains("checkbox") {
+                "checkbox"
+            } else if sdt_tag.contains("combobox") || sdt_alias.to_lowercase().contains("combobox") {
+                "combobox"
+            } else if sdt_tag.contains("picture") || sdt_alias.to_lowercase().contains("picture") {
+                "picture"
+            } else {
+                "text"
+            };
+
+            let name = if !sdt_alias.is_empty() {
+                sdt_alias.clone()
+            } else if !sdt_tag.is_empty() {
+                sdt_tag.clone()
+            } else {
+                format!("sdt{}", sdt_idx)
+            };
+
+            let field_desc = format!(
+                "#{} {}  type={}  path={}  value=\"{}\"",
+                sdt_idx, name, field_type, path,
+                if sdt_value.len() > 60 {
+                    format!("{}...", &sdt_value[..60])
+                } else {
+                    sdt_value.clone()
+                }
+            );
+
+            if is_editable {
+                editable_count += 1;
+                editable_fields.push(field_desc);
+            } else {
+                non_editable_count += 1;
+                non_editable_fields.push(field_desc);
+            }
+        }
+    }
+
+    if editable_fields.is_empty() && non_editable_fields.is_empty() {
+        return Ok("No form fields or content controls found.".to_string());
+    }
+
+    result.push_str(&format!("Editable Fields ({}):\n", editable_count));
+    for f in &editable_fields {
+        result.push_str(&format!("  {}\n", f));
+    }
+
+    if !non_editable_fields.is_empty() {
+        result.push_str(&format!("\nNon-editable Fields ({}):\n", non_editable_count));
+        for f in &non_editable_fields {
+            result.push_str(&format!("  {}\n", f));
+        }
+    }
+
+    Ok(result.trim_end().to_string())
+}

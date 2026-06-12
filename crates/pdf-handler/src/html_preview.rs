@@ -406,19 +406,23 @@ pub fn view_as_html(reader: &PdfReader, opts: ViewOptions) -> Result<String, Han
         .unwrap_or("Document.pdf");
     let total_pages = reader.page_count();
 
-    if let Some(page_num) = opts.page {
-        if page_num == 0 || page_num > total_pages {
-            return Err(HandlerError::InvalidArgument(format!(
-                "invalid page number: {} (total pages: {})",
-                page_num, total_pages
-            )));
+    if let Some(page_filter) = &opts.page {
+        // Parse page filter: "1", "2-5", "1,3,5"
+        let first_tok = page_filter.split(',').next().unwrap_or("").trim();
+        if let Ok(page_num) = first_tok.parse::<usize>() {
+            if page_num == 0 || page_num > total_pages {
+                return Err(HandlerError::InvalidArgument(format!(
+                    "invalid page number: {} (total pages: {})",
+                    page_num, total_pages
+                )));
+            }
+            let (width, height, _, _) = get_page_dimensions(reader, page_num);
+            let inner_html = view_page_as_html(reader, page_num)?;
+            return Ok(format!(
+                "<div class=\"page\" data-path=\"/page[{}]\" style=\"position:relative; width:{:.1}pt; height:{:.1}pt; background:white; border-radius:4px; overflow:hidden;\">\n{}\n</div>\n",
+                page_num, width, height, inner_html
+            ));
         }
-        let (width, height, _, _) = get_page_dimensions(reader, page_num);
-        let inner_html = view_page_as_html(reader, page_num)?;
-        return Ok(format!(
-            "<div class=\"page\" data-path=\"/page[{}]\" style=\"position:relative; width:{:.1}pt; height:{:.1}pt; background:white; border-radius:4px; overflow:hidden;\">\n{}\n</div>\n",
-            page_num, width, height, inner_html
-        ));
     }
 
     let mut pages_html = String::new();

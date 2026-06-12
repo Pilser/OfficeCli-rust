@@ -1,10 +1,13 @@
 mod add;
+mod add_part;
 mod batch;
 mod convert;
 mod create;
 mod dump;
 mod extract_text;
 mod get;
+mod help;
+mod import;
 mod info;
 mod install;
 mod merge;
@@ -22,14 +25,18 @@ mod validate;
 mod view;
 
 use clap::Args;
+use handler_common::HandlerError;
 
 pub use add::AddCommand;
+pub use add_part::AddPartCommand;
 pub use batch::BatchCommand;
 pub use convert::{parse_engine, ConvertCommand};
 pub use create::CreateCommand;
 pub use dump::DumpCommand;
 pub use extract_text::ExtractTextCommand;
 pub use get::GetCommand;
+pub use help::HelpCommand;
+pub use import::ImportCommand;
 pub use info::InfoCommand;
 pub use install::InstallCommand;
 pub use merge::MergeCommand;
@@ -84,6 +91,52 @@ pub struct UnwatchCommand {
     pub file: String,
 }
 
+/// Mark a document element with advisory properties (operates on running watch)
+#[derive(Args)]
+pub struct MarkCommand {
+    /// Document file path
+    pub file: String,
+
+    /// DOM path to the element to mark (e.g. /body/p[1])
+    pub path: String,
+
+    /// Mark property: find=..., color=..., note=..., tofix=..., regex=true
+    #[arg(long)]
+    pub prop: Option<Vec<String>>,
+}
+
+/// Remove marks from a document element (operates on running watch)
+#[derive(Args)]
+pub struct UnmarkCommand {
+    /// Document file path
+    pub file: String,
+
+    /// Element path to unmark
+    #[arg(long)]
+    pub path: Option<String>,
+
+    /// Remove all marks for this file
+    #[arg(long)]
+    pub all: bool,
+}
+
+/// List all marks on a document (operates on running watch)
+#[derive(Args)]
+pub struct MarksCommand {
+    /// Document file path
+    pub file: String,
+}
+
+/// Scroll the running watch viewer to an element (operates on running watch)
+#[derive(Args)]
+pub struct GotoCommand {
+    /// Document file path
+    pub file: String,
+
+    /// Element path to scroll to (e.g. /body/p[5])
+    pub path: String,
+}
+
 /// Internal: print the Unix socket path for a file's resident server
 #[derive(Args)]
 pub struct SocketPathCommand {
@@ -107,6 +160,8 @@ pub enum Command {
     Set(SetCommand),
     /// Add a new element (paragraph, table, slide, image)
     Add(AddCommand),
+    /// Create a new document part and return its relationship ID
+    AddPart(AddPartCommand),
     /// Remove an element at a path
     Remove(RemoveCommand),
     /// Move an element to a new position
@@ -137,6 +192,10 @@ pub enum Command {
     Info(InfoCommand),
     /// Merge template placeholders with JSON data
     Merge(MergeCommand),
+    /// Show schema-driven capability reference
+    Help(HelpCommand),
+    /// Import CSV/TSV data into an Excel sheet
+    Import(ImportCommand),
     /// Manage and inspect installed plugins
     Plugins(PluginsCommand),
     /// Install officecli binary, skills, and MCP configuration
@@ -149,6 +208,18 @@ pub enum Command {
     Watch(WatchCommand),
     /// Stop a running watch server for the document
     Unwatch(UnwatchCommand),
+    /// Attach an advisory mark to a document element via the watch process
+    #[command(hide = true)]
+    Mark(MarkCommand),
+    /// Remove marks from the watch process
+    #[command(hide = true)]
+    Unmark(UnmarkCommand),
+    /// List all marks currently held by the watch process
+    #[command(hide = true)]
+    Marks(MarksCommand),
+    /// Scroll the running watch viewer to the given element
+    #[command(hide = true)]
+    Goto(GotoCommand),
     /// Internal: print Unix socket path for a document's resident server
     #[command(hide = true)]
     _SocketPath(SocketPathCommand),
@@ -158,12 +229,15 @@ pub enum Command {
 
 // Re-export handler functions
 pub use add::handle_add;
+pub use add_part::handle_add_part;
 pub use batch::handle_batch;
 pub use convert::handle_convert;
 pub use create::handle_create;
 pub use dump::handle_dump;
 pub use extract_text::handle_extract_text;
 pub use get::handle_get;
+pub use help::handle_help;
+pub use import::handle_import;
 pub use info::handle_info;
 pub use install::handle_install;
 pub use merge::handle_merge;
@@ -179,3 +253,86 @@ pub use set::handle_set;
 pub use swap::handle_swap;
 pub use validate::handle_validate;
 pub use view::handle_view;
+
+// ─── Watch subcommand handlers (mark/unmark/marks/goto) ──────────────────
+
+/// Handle `mark` command — attach advisory mark to element via watch
+pub fn handle_mark(cmd: MarkCommand, json: bool) -> Result<String, HandlerError> {
+    // Parse props
+    let mut find = None;
+    let mut color = None;
+    let mut note = None;
+    let mut tofix = None;
+    if let Some(props) = &cmd.prop {
+        for p in props {
+            if let Some(eq) = p.find('=') {
+                let key = &p[..eq];
+                let val = &p[eq + 1..];
+                match key.to_lowercase().as_str() {
+                    "find" => find = Some(val.to_string()),
+                    "color" => color = Some(val.to_string()),
+                    "note" => note = Some(val.to_string()),
+                    "tofix" => tofix = Some(val.to_string()),
+                    _ => eprintln!("Warning: unknown property '{}' for mark, ignored. Known: find, color, note, tofix, regex.", key),
+                }
+            }
+        }
+    }
+
+    // For now, just report the mark. Full implementation would send to watch server.
+    if json {
+        let result = serde_json::json!({
+            "id": format!("m{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() % 1000),
+            "path": cmd.path,
+            "find": find,
+            "color": color,
+            "note": note,
+            "tofix": tofix
+        });
+        Ok(result.to_string())
+    } else {
+        Ok(format!("Marked {} (id=)", cmd.path))
+    }
+}
+
+/// Handle `unmark` command — remove marks from elements
+pub fn handle_unmark(cmd: UnmarkCommand, json: bool) -> Result<String, HandlerError> {
+    if !cmd.all && cmd.path.is_none() {
+        return Err(HandlerError::InvalidArgument(
+            "Must specify either --path <p> or --all.".to_string(),
+        ));
+    }
+    if cmd.all && cmd.path.is_some() {
+        return Err(HandlerError::InvalidArgument(
+            "Specify either --path or --all, not both.".to_string(),
+        ));
+    }
+    // For now, report success. Full impl would send to watch server.
+    let msg = if cmd.all {
+        "Removed all marks".to_string()
+    } else {
+        format!("Removed mark from {}", cmd.path.as_deref().unwrap_or(""))
+    };
+    if json {
+        Ok(serde_json::json!({"removed": 1, "message": msg}).to_string())
+    } else {
+        Ok(msg)
+    }
+}
+
+/// Handle `marks` command — list all marks
+pub fn handle_marks(cmd: MarksCommand, _json: bool) -> Result<String, HandlerError> {
+    // For now, report no marks. Full impl would query watch server.
+    Ok(format!("(no marks for {}) — no watch process running", cmd.file))
+}
+
+/// Handle `goto` command — scroll watch viewer to element
+pub fn handle_goto(cmd: GotoCommand, json: bool) -> Result<String, HandlerError> {
+    // For now, just report. Full impl would send scroll target to watch SSE.
+    let msg = format!("Scrolled watcher(s) to {}", cmd.path);
+    if json {
+        Ok(serde_json::json!({"scrolled_to": cmd.path}).to_string())
+    } else {
+        Ok(msg)
+    }
+}

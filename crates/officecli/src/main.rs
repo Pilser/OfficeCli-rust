@@ -40,6 +40,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "officecli")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
+#[command(disable_help_subcommand = true)]
 #[command(about = "Create, view, query, and modify Office documents and PDFs")]
 #[command(after_help = "\
 EXAMPLES:
@@ -123,6 +124,7 @@ fn main() {
         commands::Command::Query(cmd) => commands::handle_query(cmd, format),
         commands::Command::Set(cmd) => commands::handle_set(cmd, format),
         commands::Command::Add(cmd) => commands::handle_add(cmd, format),
+        commands::Command::AddPart(cmd) => commands::handle_add_part(cmd, format),
         commands::Command::Remove(cmd) => commands::handle_remove(cmd, format),
         commands::Command::Move(cmd) => commands::handle_move(cmd, format),
         commands::Command::Swap(cmd) => commands::handle_swap(cmd, format),
@@ -138,12 +140,18 @@ fn main() {
         commands::Command::Batch(cmd) => commands::handle_batch(cmd, format),
         commands::Command::Info(cmd) => commands::handle_info(cmd, format),
         commands::Command::Merge(cmd) => commands::handle_merge(cmd, format),
+        commands::Command::Help(cmd) => commands::handle_help(cmd, cli.json),
+        commands::Command::Import(cmd) => commands::handle_import(cmd, format),
         commands::Command::Plugins(cmd) => commands::handle_plugins(cmd, format),
         commands::Command::Install(cmd) => commands::handle_install(cmd, format),
         commands::Command::Open(cmd) => handle_open(cmd),
         commands::Command::Close(cmd) => handle_close(cmd),
         commands::Command::Watch(cmd) => handle_watch(cmd),
         commands::Command::Unwatch(cmd) => handle_unwatch(cmd),
+        commands::Command::Mark(cmd) => commands::handle_mark(cmd, cli.json),
+        commands::Command::Unmark(cmd) => commands::handle_unmark(cmd, cli.json),
+        commands::Command::Marks(cmd) => commands::handle_marks(cmd, cli.json),
+        commands::Command::Goto(cmd) => commands::handle_goto(cmd, cli.json),
         commands::Command::Mcp(_) => handle_mcp(),
         commands::Command::_SocketPath(cmd) => handle_socket_path(cmd),
     };

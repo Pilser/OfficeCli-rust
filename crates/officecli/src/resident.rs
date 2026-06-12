@@ -453,8 +453,8 @@ fn view_opts_from_params(params: &HashMap<String, serde_json::Value>) -> ViewOpt
             .map(|c| c.split(',').map(|s| s.to_string()).collect()),
         page: params
             .get("page")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as usize),
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
     }
 }
 

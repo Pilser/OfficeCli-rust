@@ -164,6 +164,120 @@ fn capture_playwright(
     })
 }
 
+/// Capture an HTML file to a PDF file using headless browser.
+/// This mirrors the C# ExporterInvoker approach.
+pub fn capture_pdf(
+    html_path: &str,
+    out_path: &str,
+    width: u32,
+    height: u32,
+) -> Result<String, String> {
+    let (backend, browser_path) = find_browser().ok_or_else(|| {
+        "no_screenshot_backend: no headless browser found (tried playwright, chromium, chrome, edge, firefox)".to_string()
+    })?;
+
+    // Ensure output directory exists
+    if let Some(parent) = Path::new(out_path).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("failed to create output dir: {}", e))?;
+    }
+
+    let url = format!(
+        "file://{}",
+        Path::new(html_path)
+            .canonicalize()
+            .map_err(|e| format!("cannot resolve HTML path: {}", e))?
+            .display()
+    );
+
+    // Use Chromium/Chrome/Edge headless print-to-pdf
+    match backend.as_str() {
+        "playwright" => {
+            // Playwright doesn't have a direct PDF CLI, use its Chromium backend
+            // Fall through to chromium approach with --print-to-pdf
+            let pw_chromium = find_playwright_chromium();
+            if let Some(chrome_path) = pw_chromium {
+                return capture_pdf_chromium(&chrome_path, &url, out_path, width, height, "playwright/chromium");
+            }
+            // Fallback: try any chromium
+            capture_pdf_via_any_browser(&url, out_path, width, height)
+        }
+        _ => capture_pdf_chromium(&browser_path, &url, out_path, width, height, &backend),
+    }
+}
+
+fn capture_pdf_chromium(
+    browser: &Path,
+    url: &str,
+    out_path: &str,
+    width: u32,
+    height: u32,
+    _backend: &str,
+) -> Result<String, String> {
+    let output = Command::new(browser)
+        .args([
+            "--headless=new",
+            "--disable-gpu",
+            "--no-sandbox",
+            &format!("--window-size={},{}", width, height),
+            &format!("--print-to-pdf={}", out_path),
+            url,
+        ])
+        .output()
+        .map_err(|e| format!("failed to launch browser: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("browser PDF export error: {}", stderr));
+    }
+
+    if !Path::new(out_path).exists() {
+        return Err("PDF file was not created".to_string());
+    }
+
+    Ok(format!("{}", out_path))
+}
+
+fn capture_pdf_via_any_browser(
+    url: &str,
+    out_path: &str,
+    width: u32,
+    height: u32,
+) -> Result<String, String> {
+    // Try common browser paths
+    let candidates = [
+        which_binary("chromium"),
+        which_binary("chromium-browser"),
+        which_binary("chrome"),
+        which_binary("google-chrome"),
+    ];
+    for candidate in candidates.iter().flatten() {
+        if let Ok(result) = capture_pdf_chromium(candidate, url, out_path, width, height, "auto") {
+            return Ok(result);
+        }
+    }
+    Err("no headless browser available for PDF export".to_string())
+}
+
+/// Try to find the Chromium binary bundled with Playwright.
+fn find_playwright_chromium() -> Option<PathBuf> {
+    // Common Playwright browser install paths
+    let home = std::env::var("HOME").ok()?;
+    let pw_dir = PathBuf::from(home).join(".cache/ms-playwright");
+    if let Ok(entries) = std::fs::read_dir(&pw_dir) {
+        for entry in entries.flatten() {
+            let chrome_dir = entry.path().join("chrome-mac/Chromium.app/Contents/MacOS/Chromium");
+            if chrome_dir.exists() {
+                return Some(chrome_dir);
+            }
+            let chrome_dir = entry.path().join("chrome-linux/chrome");
+            if chrome_dir.exists() {
+                return Some(chrome_dir);
+            }
+        }
+    }
+    None
+}
+
 /// Simple `which` implementation — checks PATH for an executable.
 fn which_binary(name: &str) -> Result<PathBuf, ()> {
     // Check PATH
