@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use crate::add::add_element;
 use crate::dom_types::{WordDom, WordElementType, WordNode};
-use crate::mutations::{move_element, remove_element, set_properties};
+use crate::mutations::{move_element, remove_element, set_properties, swap_elements};
 use crate::navigation::{navigate_to_element, navigate_to_element_mut};
 use crate::query::query_elements;
 use crate::raw::read_raw;
@@ -365,6 +365,29 @@ impl DocumentHandler for WordHandler {
         *target_node = source_node;
         self.write_dom(&dom)?;
         Ok(new_path)
+    }
+
+    fn swap(&self, path1: &str, path2: &str) -> Result<(String, String), HandlerError> {
+        if !self.editable {
+            return Err(HandlerError::OperationFailed(
+                "document opened in read-only mode".to_string(),
+            ));
+        }
+        let mut dom = self.parse_dom()?;
+        let result = swap_elements(&mut dom, path1, path2)?;
+        self.write_dom(&dom)?;
+        Ok(result)
+    }
+
+    fn merge(&self, data: &HashMap<String, String>) -> Result<MergeResult, HandlerError> {
+        if !self.editable {
+            return Err(HandlerError::OperationFailed(
+                "document opened in read-only mode".to_string(),
+            ));
+        }
+        let mut pkg = self.package.borrow_mut();
+        let parts = template_merger::docx_merge_parts(&pkg);
+        template_merger::merge_ooxml_parts(&mut pkg, &parts, "w:t", data)
     }
 
     fn raw(&self, part_path: &str, opts: RawOptions) -> Result<String, HandlerError> {

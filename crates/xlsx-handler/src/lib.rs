@@ -1,5 +1,6 @@
 pub mod add;
 pub mod dom_types;
+pub mod formula;
 pub mod formula_eval;
 pub mod handler;
 pub mod helpers;

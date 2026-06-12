@@ -72,11 +72,14 @@ pub fn build_presentation(
         };
 
         let shapes = parse_slide_shapes(&slide_xml);
+        let (has_morph, morph_candidates) = detect_morph_transition(&slide_xml);
         slides.push(Slide {
             index: slide_index,
             part_path: target,
             slide_id: entry.id.clone(),
             shapes,
+            has_morph,
+            morph_candidates,
         });
     }
 
@@ -289,4 +292,55 @@ pub fn find_paragraph(shape: &Shape, index: usize) -> Option<&Paragraph> {
     } else {
         None
     }
+}
+
+/// Detect morph transition on a slide.
+/// Looks for <p14:morphPr> element in the slide XML transition section.
+/// Returns (has_morph, morph_candidates_count).
+fn detect_morph_transition(slide_xml: &str) -> (bool, usize) {
+    // Check if the slide XML contains a morph transition element.
+    // Morph transitions use the p14 namespace (http://schemas.microsoft.com/office/powerpoint/2010/main)
+    // and appear as <p14:morphPr> inside <p:transition>.
+    // Also check for <mc:AlternateContent> with morphPr fallback.
+
+    let has_morph = slide_xml.contains("morphPr")
+        && (slide_xml.contains("<p:transition") || slide_xml.contains("<p14:transition"));
+
+    if !has_morph {
+        return (false, 0);
+    }
+
+    // Count morph candidates: shapes that have matching names on adjacent slides.
+    // In a morph transition, shapes with the same name on consecutive slides
+    // are morph candidates. We count shapes with non-empty names as candidates.
+    let doc = match roxmltree::Document::parse(slide_xml) {
+        Ok(d) => d,
+        Err(_) => return (true, 0),
+    };
+
+    // Count shapes that could participate in morph (those with name attributes)
+    let mut candidates = 0;
+    if let Some(sp_tree) = doc
+        .descendants()
+        .find(|n| n.has_tag_name((NS_P, "spTree")))
+        .or_else(|| doc.descendants().find(|n| n.has_tag_name("spTree")))
+    {
+        for child in sp_tree.children() {
+            let is_sp = child.has_tag_name((NS_P, "sp")) || child.has_tag_name("sp");
+            let is_pic = child.has_tag_name((NS_P, "pic")) || child.has_tag_name("pic");
+            let is_grp = child.has_tag_name((NS_P, "grpSp")) || child.has_tag_name("grpSp");
+            if is_sp || is_pic || is_grp {
+                // Check for a cNvPr with a name (morph matches by name)
+                let has_name = child.descendants().any(|n| {
+                    (n.has_tag_name((NS_P, "cNvPr")) || n.has_tag_name("cNvPr"))
+                        && n.attribute("name").is_some()
+                });
+                if has_name {
+                    candidates += 1;
+                }
+            }
+        }
+    }
+
+    (true, candidates)
 }

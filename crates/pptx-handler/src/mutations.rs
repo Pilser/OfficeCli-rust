@@ -104,7 +104,6 @@ pub fn copy_slide(
 
 /// Reorder the sldIdLst in presentation.xml by moving an entry from source to target position.
 fn reorder_sld_id_list(xml: &str, source: usize, target: usize) -> Result<String, HandlerError> {
-    // Find all <p:sldId .../> entries
     let mut entries: Vec<(usize, String)> = Vec::new(); // (position, entry_xml)
     let mut search_from = 0;
 
@@ -233,6 +232,96 @@ fn remove_nth_sp(xml: &str, n: usize) -> String {
     }
 
     result
+}
+
+/// Swap two slides in the presentation.
+/// Reorders the <p:sldIdLst> in presentation.xml by exchanging entries at positions a and b.
+pub fn swap_slides(
+    package: &mut OxmlPackage,
+    path1: &str,
+    path2: &str,
+) -> Result<(String, String), HandlerError> {
+    let a = parse_slide_num(path1)?;
+    let b = parse_slide_num(path2)?;
+
+    if a == b {
+        return Err(HandlerError::InvalidArgument(format!(
+            "swap requires two different slides, both were {}",
+            a
+        )));
+    }
+
+    let pres_xml = package
+        .read_part_xml("ppt/presentation.xml")
+        .map_err(|e| HandlerError::OperationFailed(e.to_string()))?;
+
+    let modified = swap_sld_id_list_entries(&pres_xml, a, b)?;
+
+    package
+        .write_part_xml("ppt/presentation.xml", &modified)
+        .map_err(|e| HandlerError::OperationFailed(e.to_string()))?;
+
+    Ok((format!("/slide[{}]", a), format!("/slide[{}]", b)))
+}
+
+/// Swap two entries in the sldIdLst (1-based indices).
+fn swap_sld_id_list_entries(xml: &str, a: usize, b: usize) -> Result<String, HandlerError> {
+    // Collect all <p:sldId .../> entries
+    let mut entries: Vec<String> = Vec::new();
+    let mut search_from = 0;
+
+    while let Some(start) = xml[search_from..].find("<p:sldId") {
+        let abs_start = search_from + start;
+        let end = if let Some(pos) = xml[abs_start..].find("/>") {
+            abs_start + pos + 2
+        } else if let Some(pos) = xml[abs_start..].find("</p:sldId>") {
+            abs_start + pos + "</p:sldId>".len()
+        } else if let Some(pos) = xml[abs_start..].find('>') {
+            abs_start + pos + 1
+        } else {
+            xml.len()
+        };
+
+        entries.push(xml[abs_start..end].to_string());
+        search_from = end;
+    }
+
+    if a < 1 || a > entries.len() {
+        return Err(HandlerError::InvalidPath(format!(
+            "slide {} not found in sldIdLst",
+            a
+        )));
+    }
+    if b < 1 || b > entries.len() {
+        return Err(HandlerError::InvalidPath(format!(
+            "slide {} not found in sldIdLst",
+            b
+        )));
+    }
+
+    // Swap (1-based → 0-based)
+    entries.swap(a - 1, b - 1);
+
+    // Rebuild the XML
+    let sld_id_lst_start = xml
+        .find("<p:sldIdLst")
+        .ok_or_else(|| HandlerError::OperationFailed("no <p:sldIdLst> found".to_string()))?;
+    let sld_id_lst_tag_end = xml[sld_id_lst_start..]
+        .find('>')
+        .map(|pos| sld_id_lst_start + pos + 1)
+        .ok_or_else(|| HandlerError::OperationFailed("malformed <p:sldIdLst>".to_string()))?;
+    let sld_id_lst_end = xml
+        .find("</p:sldIdLst>")
+        .ok_or_else(|| HandlerError::OperationFailed("no </p:sldIdLst> found".to_string()))?;
+
+    let new_entries = entries.join("\n    ");
+    let mut result = xml[..sld_id_lst_tag_end].to_string();
+    result.push_str("\n    ");
+    result.push_str(&new_entries);
+    result.push_str("\n  ");
+    result.push_str(&xml[sld_id_lst_end..]);
+
+    Ok(result)
 }
 
 fn parse_slide_num(path: &str) -> Result<usize, HandlerError> {

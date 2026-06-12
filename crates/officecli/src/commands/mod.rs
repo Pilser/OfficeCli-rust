@@ -6,13 +6,18 @@ mod dump;
 mod extract_text;
 mod get;
 mod info;
+mod install;
+mod merge;
 mod move_element;
+mod plugins;
 mod query;
 mod raw;
 mod raw_set;
+mod refresh;
 mod remove;
 mod save;
 mod set;
+mod swap;
 mod validate;
 mod view;
 
@@ -26,13 +31,18 @@ pub use dump::DumpCommand;
 pub use extract_text::ExtractTextCommand;
 pub use get::GetCommand;
 pub use info::InfoCommand;
+pub use install::InstallCommand;
+pub use merge::MergeCommand;
 pub use move_element::MoveCommand;
+pub use plugins::PluginsCommand;
 pub use query::QueryCommand;
 pub use raw::RawCommand;
 pub use raw_set::RawSetCommand;
+pub use refresh::RefreshCommand;
 pub use remove::RemoveCommand;
 pub use save::SaveCommand;
 pub use set::SetCommand;
+pub use swap::SwapCommand;
 pub use validate::ValidateCommand;
 pub use view::ViewCommand;
 
@@ -74,6 +84,13 @@ pub struct UnwatchCommand {
     pub file: String,
 }
 
+/// Internal: print the Unix socket path for a file's resident server
+#[derive(Args)]
+pub struct SocketPathCommand {
+    /// Document file path
+    pub file: String,
+}
+
 /// Start an MCP stdio server for AI agent integration
 #[derive(Args)]
 pub struct McpCommand;
@@ -94,6 +111,10 @@ pub enum Command {
     Remove(RemoveCommand),
     /// Move an element to a new position
     Move(MoveCommand),
+    /// Swap two elements in the document
+    Swap(SwapCommand),
+    /// Refresh derived fields (TOC, cross-references)
+    Refresh(RefreshCommand),
     /// View raw XML/PDF content of a part
     Raw(RawCommand),
     /// Modify raw XML/PDF content
@@ -114,6 +135,12 @@ pub enum Command {
     Batch(BatchCommand),
     /// Show info about the tool or document topics
     Info(InfoCommand),
+    /// Merge template placeholders with JSON data
+    Merge(MergeCommand),
+    /// Manage and inspect installed plugins
+    Plugins(PluginsCommand),
+    /// Install officecli binary, skills, and MCP configuration
+    Install(InstallCommand),
     /// Open a document in resident mode (keeps handler in memory for fast subsequent commands)
     Open(OpenCommand),
     /// Close a document in resident mode (stops the background server)
@@ -122,6 +149,9 @@ pub enum Command {
     Watch(WatchCommand),
     /// Stop a running watch server for the document
     Unwatch(UnwatchCommand),
+    /// Internal: print Unix socket path for a document's resident server
+    #[command(hide = true)]
+    _SocketPath(SocketPathCommand),
     /// Start an MCP stdio server for AI agent integration
     Mcp(McpCommand),
 }
@@ -135,12 +165,17 @@ pub use dump::handle_dump;
 pub use extract_text::handle_extract_text;
 pub use get::handle_get;
 pub use info::handle_info;
+pub use install::handle_install;
+pub use merge::handle_merge;
 pub use move_element::handle_move;
+pub use plugins::handle_plugins;
 pub use query::handle_query;
 pub use raw::handle_raw;
 pub use raw_set::handle_raw_set;
+pub use refresh::handle_refresh;
 pub use remove::handle_remove;
 pub use save::handle_save;
 pub use set::handle_set;
+pub use swap::handle_swap;
 pub use validate::handle_validate;
 pub use view::handle_view;

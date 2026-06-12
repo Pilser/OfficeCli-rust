@@ -1,0 +1,9 @@
+[package]
+name = "template-merger"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+oxml = { path = "../oxml" }
+handler-common = { path = "../handler-common" }
+regex = "1"

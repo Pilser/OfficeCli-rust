@@ -488,6 +488,94 @@ pub fn move_element(
     Ok(new_path)
 }
 
+/// Swap two sibling elements in the Word DOM.
+/// Both paths must share the same parent element.
+pub fn swap_elements(
+    dom: &mut WordDom,
+    path1: &str,
+    path2: &str,
+) -> Result<(String, String), HandlerError> {
+    let segs1 = parse_path(path1)?;
+    let segs2 = parse_path(path2)?;
+    if segs1.is_empty() || segs2.is_empty() {
+        return Err(HandlerError::InvalidPath("empty path".to_string()));
+    }
+
+    // Both paths must share the same parent (all segments except the last)
+    if segs1.len() != segs2.len() {
+        return Err(HandlerError::InvalidArgument(
+            "swap requires both elements at the same nesting depth".to_string(),
+        ));
+    }
+    let parent_segs1 = &segs1[..segs1.len() - 1];
+    let parent_segs2 = &segs2[..segs2.len() - 1];
+    if !segments_eq(parent_segs1, parent_segs2) {
+        return Err(HandlerError::InvalidArgument(
+            "swap requires both elements to share the same parent".to_string(),
+        ));
+    }
+
+    // Extract the indices of the two elements within their parent
+    let idx1 = segs1
+        .last()
+        .and_then(|s| s.index)
+        .ok_or_else(|| HandlerError::InvalidPath(format!("path has no index: {}", path1)))?;
+    let idx2 = segs2
+        .last()
+        .and_then(|s| s.index)
+        .ok_or_else(|| HandlerError::InvalidPath(format!("path has no index: {}", path2)))?;
+
+    if idx1 == idx2 {
+        return Err(HandlerError::InvalidArgument(format!(
+            "swap requires two different elements, both were at index {}",
+            idx1
+        )));
+    }
+
+    // Navigate to the parent node
+    let parent_path = if parent_segs1.is_empty() {
+        "/body".to_string()
+    } else {
+        let mut p = String::new();
+        for seg in parent_segs1 {
+            p.push('/');
+            p.push_str(&seg.name);
+            if let Some(i) = seg.index {
+                p.push_str(&format!("[{}]", i));
+            }
+        }
+        p
+    };
+
+    let parent = navigate_to_element_mut(dom, &parent_path)?;
+
+    // Convert 1-based to 0-based
+    let i1 = idx1 - 1;
+    let i2 = idx2 - 1;
+    if i1 >= parent.children.len() || i2 >= parent.children.len() {
+        return Err(HandlerError::PathNotFound(
+            "swap index out of bounds".to_string(),
+        ));
+    }
+
+    parent.children.swap(i1, i2);
+
+    Ok((path1.to_string(), path2.to_string()))
+}
+
+/// Compare two PathSegment slices by name and index (since PathSegment doesn't derive PartialEq).
+fn segments_eq(a: &[handler_common::PathSegment], b: &[handler_common::PathSegment]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    for (sa, sb) in a.iter().zip(b.iter()) {
+        if sa.name != sb.name || sa.index != sb.index {
+            return false;
+        }
+    }
+    true
+}
+
 // ─── Bookmark Set Properties ──────────────────────────────────
 
 /// Set properties on a BookmarkStart element.

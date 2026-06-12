@@ -231,6 +231,72 @@ pub fn copy_cell(
     Ok(target_path_str)
 }
 
+/// Swap two cells' content (values, formulas, styles).
+pub fn swap_cells(
+    package: &mut OxmlPackage,
+    path1: &str,
+    path2: &str,
+) -> Result<(String, String), HandlerError> {
+    let pc1 = navigation::parse_path(path1)?;
+    let pc2 = navigation::parse_path(path2)?;
+
+    let sheet1 = pc1.sheet_name.ok_or_else(|| {
+        HandlerError::InvalidPath("swap path1 requires a sheet name".to_string())
+    })?;
+    let ref1 = pc1.cell_ref.ok_or_else(|| {
+        HandlerError::InvalidPath("swap path1 requires a cell reference".to_string())
+    })?;
+    let sheet2 = pc2.sheet_name.ok_or_else(|| {
+        HandlerError::InvalidPath("swap path2 requires a sheet name".to_string())
+    })?;
+    let ref2 = pc2.cell_ref.ok_or_else(|| {
+        HandlerError::InvalidPath("swap path2 requires a cell reference".to_string())
+    })?;
+
+    if sheet1 == sheet2 && ref1.row == ref2.row && ref1.col == ref2.col {
+        return Err(HandlerError::InvalidArgument(
+            "swap requires two different cells".to_string(),
+        ));
+    }
+
+    // Read both cells' content
+    let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
+
+    let get_cell_props = |sheet_name: &str, cell_ref: &CellRef| -> Result<HashMap<String, String>, HandlerError> {
+        let ws = model
+            .sheets
+            .iter()
+            .find(|s| s.name == sheet_name)
+            .ok_or_else(|| HandlerError::PathNotFound(format!("sheet '{}'", sheet_name)))?;
+        let cell = ws.cells.get(&(cell_ref.row, cell_ref.col));
+        let mut props = HashMap::new();
+        if let Some(c) = cell {
+            if let Some(v) = &c.raw_value {
+                props.insert("value".to_string(), v.clone());
+            }
+            if let Some(f) = &c.formula {
+                props.insert("formula".to_string(), f.clone());
+            }
+            if let Some(si) = c.style_index {
+                props.insert("style".to_string(), si.to_string());
+            }
+        }
+        Ok(props)
+    };
+
+    let props1 = get_cell_props(&sheet1, &ref1)?;
+    let props2 = get_cell_props(&sheet2, &ref2)?;
+
+    // Apply cell2's content to cell1 and vice versa
+    let path1_str = format!("/{}/{}", sheet1, ref1.to_string_ref());
+    let path2_str = format!("/{}/{}", sheet2, ref2.to_string_ref());
+
+    set_cell_properties(package, &path1_str, &props2)?;
+    set_cell_properties(package, &path2_str, &props1)?;
+
+    Ok((path1_str, path2_str))
+}
+
 /// Find the end position of an XML element (handles both self-closing and regular closing tags).
 fn find_element_end(xml: &str, start: usize, tag: &str) -> usize {
     // Check if self-closing: look for /> before >

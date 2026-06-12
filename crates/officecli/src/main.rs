@@ -29,6 +29,7 @@ mod resident {
         ))
     }
 }
+mod screenshot;
 mod watch;
 
 use clap::Parser;
@@ -124,6 +125,8 @@ fn main() {
         commands::Command::Add(cmd) => commands::handle_add(cmd, format),
         commands::Command::Remove(cmd) => commands::handle_remove(cmd, format),
         commands::Command::Move(cmd) => commands::handle_move(cmd, format),
+        commands::Command::Swap(cmd) => commands::handle_swap(cmd, format),
+        commands::Command::Refresh(cmd) => commands::handle_refresh(cmd, format),
         commands::Command::Raw(cmd) => commands::handle_raw(cmd, format),
         commands::Command::RawSet(cmd) => commands::handle_raw_set(cmd, format),
         commands::Command::Validate(cmd) => commands::handle_validate(cmd, format),
@@ -134,11 +137,15 @@ fn main() {
         commands::Command::Convert(cmd) => commands::handle_convert(cmd, format),
         commands::Command::Batch(cmd) => commands::handle_batch(cmd, format),
         commands::Command::Info(cmd) => commands::handle_info(cmd, format),
+        commands::Command::Merge(cmd) => commands::handle_merge(cmd, format),
+        commands::Command::Plugins(cmd) => commands::handle_plugins(cmd, format),
+        commands::Command::Install(cmd) => commands::handle_install(cmd, format),
         commands::Command::Open(cmd) => handle_open(cmd),
         commands::Command::Close(cmd) => handle_close(cmd),
         commands::Command::Watch(cmd) => handle_watch(cmd),
         commands::Command::Unwatch(cmd) => handle_unwatch(cmd),
         commands::Command::Mcp(_) => handle_mcp(),
+        commands::Command::_SocketPath(cmd) => handle_socket_path(cmd),
     };
 
     match result {
@@ -206,6 +213,11 @@ fn handle_mcp() -> Result<String, HandlerError> {
     mcp::run_server()
         .map(|_| "MCP server stopped".to_string())
         .map_err(|e| HandlerError::OperationFailed(e.to_string()))
+}
+
+fn handle_socket_path(cmd: commands::SocketPathCommand) -> Result<String, HandlerError> {
+    let sock = resident::socket_path_for_file(&cmd.file);
+    Ok(sock.to_string_lossy().to_string())
 }
 
 /// Open a document handler based on file extension.

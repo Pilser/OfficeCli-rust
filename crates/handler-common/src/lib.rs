@@ -10,7 +10,7 @@ pub mod selector;
 pub mod text_map;
 pub mod validation_error;
 
-pub use document_handler::{DocumentHandler, HandlerError};
+pub use document_handler::{DocumentHandler, HandlerError, MergeResult};
 pub use document_issue::{DocumentIssue, IssueSeverity};
 pub use document_node::DocumentNode;
 pub use insert_position::InsertPosition;

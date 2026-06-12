@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "officecli-sdk"
+version = "0.2.0"
+description = "Thin Python SDK for the officecli resident IPC — forwards commands to a running resident over Unix domain sockets, no per-command process spawn."
+readme = "README.md"
+requires-python = ">=3.8"
+license = "Apache-2.0"
+keywords = ["officecli", "office", "docx", "xlsx", "pptx", "ooxml"]
+dependencies = []
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+]
+
+[project.urls]
+Homepage = "https://officecli.ai"
+Repository = "https://github.com/RainLib/OfficeCli-rust"
+
+[tool.setuptools]
+py-modules = ["officecli"]

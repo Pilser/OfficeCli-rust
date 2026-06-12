@@ -339,7 +339,7 @@ fn resolve_display_value(
     }
 }
 
-/// Build the full workbook model from the package.
+/// Build the full workbook model from the package, including formula evaluation.
 pub fn build_workbook_model(package: &OxmlPackage) -> Result<WorkbookModel, String> {
     let shared_strings = parse_shared_strings(package);
     let sheet_info = parse_workbook(package)?;
@@ -356,8 +356,203 @@ pub fn build_workbook_model(package: &OxmlPackage) -> Result<WorkbookModel, Stri
         });
     }
 
-    Ok(WorkbookModel {
+    let mut model = WorkbookModel {
         sheets,
         shared_strings,
-    })
+        pivot_tables: Vec::new(),
+    };
+
+    // Evaluate formulas and populate display_value for formula cells
+    evaluate_formulas(&mut model);
+
+    // Discover pivot table definitions
+    model.pivot_tables = parse_pivot_tables(package);
+
+    Ok(model)
+}
+
+/// Evaluate all formula cells in the workbook and update their display_value.
+fn evaluate_formulas(model: &mut WorkbookModel) {
+    use crate::formula;
+
+    // Collect all formula cells (sheet_idx, (row, col), formula_text)
+    let formula_cells: Vec<(usize, (usize, usize), String)> = model
+        .sheets
+        .iter()
+        .flat_map(|ws| {
+            ws.cells
+                .iter()
+                .filter(|(_, c)| c.formula.is_some())
+                .map(|(key, c)| (ws.index - 1, *key, c.formula.clone().unwrap_or_default()))
+        })
+        .collect();
+
+    for (sheet_idx, key, formula_text) in formula_cells {
+        if sheet_idx >= model.sheets.len() {
+            continue;
+        }
+        // Strip the leading '=' if present
+        let expr = formula_text.strip_prefix('=').unwrap_or(&formula_text);
+        if let Some(result) = formula::evaluate(expr, model) {
+            if let Some(cell) = model.sheets[sheet_idx].cells.get_mut(&key) {
+                cell.display_value = result.as_string();
+            }
+        }
+    }
+}
+
+/// Parse all pivot table definitions from xl/pivotTables/*.xml parts.
+fn parse_pivot_tables(package: &OxmlPackage) -> Vec<PivotTableDef> {
+    let mut pivot_tables = Vec::new();
+
+    // Find all pivot table parts
+    let all_parts = package.list_parts();
+    let pivot_parts: Vec<String> = all_parts
+        .iter()
+        .filter(|p| p.starts_with("xl/pivotTables/") && p.ends_with(".xml"))
+        .map(|s| (*s).clone())
+        .collect();
+
+    for part_path in &pivot_parts {
+        let xml = match package.read_part_xml(part_path) {
+            Ok(x) => x,
+            Err(_) => continue,
+        };
+
+        let mut name = String::new();
+        let mut cache_id: Option<String> = None;
+        let mut field_count: usize = 0;
+
+        // Parse the pivotTable definition XML
+        let mut reader = Reader::from_str(&xml);
+        reader.config_mut().trim_text(true);
+
+        loop {
+            match reader.read_event() {
+                Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                    let local_name = e.local_name();
+                    let local_name_ref: &[u8] = local_name.as_ref();
+                    match local_name_ref {
+                        b"pivotTableDefinition" => {
+                            for attr in e.attributes().filter_map(|a| a.ok()) {
+                                let key = attr.key.as_ref();
+                                if key == b"name" {
+                                    name = String::from_utf8_lossy(attr.value.as_ref()).to_string();
+                                } else if key == b"cacheId" {
+                                    cache_id = Some(
+                                        String::from_utf8_lossy(attr.value.as_ref()).to_string(),
+                                    );
+                                }
+                            }
+                        }
+                        b"pivotFields" => {
+                            // Count pivotField children
+                            for attr in e.attributes().filter_map(|a| a.ok()) {
+                                if attr.key.as_ref() == b"count" {
+                                    field_count =
+                                        String::from_utf8_lossy(attr.value.as_ref())
+                                            .parse()
+                                            .unwrap_or(0);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Err(_) => break,
+                _ => {}
+            }
+        }
+
+        // Try to resolve the source range from the pivot cache definition
+        let source_range = cache_id.as_ref().and_then(|cid| {
+            resolve_pivot_cache_range(package, cid)
+        });
+
+        pivot_tables.push(PivotTableDef {
+            name,
+            cache_id,
+            source_range,
+            field_count,
+            part_path: part_path.clone(),
+        });
+    }
+
+    pivot_tables
+}
+
+/// Resolve the source range for a pivot table from its cache definition.
+/// Looks for the cache definition in xl/pivotCache/pivotCacheDefinition*.xml
+/// that matches the given cache ID.
+fn resolve_pivot_cache_range(package: &OxmlPackage, cache_id: &str) -> Option<String> {
+    // The cache ID is referenced from the pivot table definition.
+    // We need to find the pivotCacheDefinition that corresponds to this cache ID.
+    // The mapping is through workbook.xml relationships.
+
+    // Try to find the cache definition by looking at pivotCache parts
+    let all_parts = package.list_parts();
+    let cache_parts: Vec<String> = all_parts
+        .iter()
+        .filter(|p| {
+            p.starts_with("xl/pivotCache/") && p.contains("pivotCacheDefinition")
+        })
+        .map(|s| (*s).clone())
+        .collect();
+
+    for cache_part in &cache_parts {
+        let xml = package.read_part_xml(cache_part).ok()?;
+
+        // Check if this cache definition references the same cache ID
+        if !xml.contains(&format!("cacheId=\"{}\"", cache_id))
+            && !xml.contains(&format!("cacheId=\"{}\" ", cache_id))
+            && !xml.contains(&format!("cacheId=\"{}\">", cache_id))
+        {
+            // If we can't match by cacheId, try the first cache definition
+            // (many workbooks have only one)
+            if cache_parts.len() > 1 {
+                continue;
+            }
+        }
+
+        // Parse the cache definition to extract the source range
+        let mut reader = Reader::from_str(&xml);
+        reader.config_mut().trim_text(true);
+
+        loop {
+            match reader.read_event() {
+                Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                    let local_name = e.local_name();
+                    let local_name_ref: &[u8] = local_name.as_ref();
+                    if local_name_ref == b"cacheSource" {
+                        for attr in e.attributes().filter_map(|a| a.ok()) {
+                            if attr.key.as_ref() == b"type" {
+                                let val = String::from_utf8_lossy(attr.value.as_ref());
+                                if val != "worksheet" {
+                                    // Only handle worksheet data sources
+                                    return None;
+                                }
+                            }
+                        }
+                    }
+                    if local_name_ref == b"worksheetSource" {
+                        // worksheetSource has ref="Sheet1!A1:E100" or similar
+                        for attr in e.attributes().filter_map(|a| a.ok()) {
+                            let key = attr.key.as_ref();
+                            if key == b"ref" {
+                                return Some(
+                                    String::from_utf8_lossy(attr.value.as_ref()).to_string(),
+                                );
+                            }
+                        }
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Err(_) => break,
+                _ => {}
+            }
+        }
+    }
+
+    None
 }

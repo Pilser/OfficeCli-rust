@@ -36,10 +36,16 @@ pub fn view_as_outline(package: &oxml::OxmlPackage) -> Result<String, HandlerErr
 
     lines.push(format!("Presentation: {} slides", pres.slides.len()));
     for slide in &pres.slides {
+        let morph_tag = if slide.has_morph {
+            format!(" [morph: {} candidates]", slide.morph_candidates)
+        } else {
+            String::new()
+        };
         lines.push(format!(
-            "  slide[{}]: {} shapes",
+            "  slide[{}]: {} shapes{}",
             slide.index,
-            slide.shapes.len()
+            slide.shapes.len(),
+            morph_tag
         ));
         for (si, shape) in slide.shapes.iter().enumerate() {
             let shape_type = shape.placeholder_type.as_deref().unwrap_or("shape");
@@ -118,6 +124,11 @@ pub fn view_as_stats(package: &oxml::OxmlPackage) -> Result<String, HandlerError
     lines.push(format!("Paragraphs: {}", total_paragraphs));
     lines.push(format!("Characters: {}", total_chars));
 
+    let morph_count: usize = pres.slides.iter().filter(|s| s.has_morph).count();
+    if morph_count > 0 {
+        lines.push(format!("Morph transitions: {}", morph_count));
+    }
+
     Ok(lines.join("\n"))
 }
 
@@ -174,6 +185,8 @@ pub fn view_as_outline_json(
             "path": format!("/slide[{}]", slide.index),
             "slide_id": slide.slide_id,
             "shape_count": slide.shapes.len(),
+            "has_morph": slide.has_morph,
+            "morph_candidates": slide.morph_candidates,
             "shapes": shapes,
         }));
     }
@@ -203,6 +216,7 @@ pub fn view_as_stats_json(package: &oxml::OxmlPackage) -> Result<serde_json::Val
         "shapes": total_shapes,
         "paragraphs": total_paragraphs,
         "characters": total_chars,
+        "morph_transitions": pres.slides.iter().filter(|s| s.has_morph).count(),
     }))
 }
 

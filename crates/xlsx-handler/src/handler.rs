@@ -215,6 +215,27 @@ impl DocumentHandler for ExcelHandler {
         mutations::copy_cell(&mut pkg, source, target_parent)
     }
 
+    fn swap(&self, path1: &str, path2: &str) -> Result<(String, String), HandlerError> {
+        if !self.editable {
+            return Err(HandlerError::OperationFailed(
+                "package opened in read-only mode".to_string(),
+            ));
+        }
+        let mut pkg = self.package.borrow_mut();
+        mutations::swap_cells(&mut pkg, path1, path2)
+    }
+
+    fn merge(&self, data: &HashMap<String, String>) -> Result<MergeResult, HandlerError> {
+        if !self.editable {
+            return Err(HandlerError::OperationFailed(
+                "package opened in read-only mode".to_string(),
+            ));
+        }
+        let mut pkg = self.package.borrow_mut();
+        let parts = template_merger::xlsx_merge_parts(&pkg);
+        template_merger::merge_ooxml_parts(&mut pkg, &parts, "t", data)
+    }
+
     fn raw(&self, part_path: &str, _opts: RawOptions) -> Result<String, HandlerError> {
         let pkg = self.package.borrow();
         pkg.read_part_xml(part_path)

@@ -56,6 +56,10 @@ pub struct Slide {
     pub slide_id: String,
     /// Shapes on this slide (in document order)
     pub shapes: Vec<Shape>,
+    /// Whether this slide has a morph transition
+    pub has_morph: bool,
+    /// Number of morph candidate shapes (shapes with matching names on adjacent slides)
+    pub morph_candidates: usize,
 }
 
 /// The parsed presentation model.

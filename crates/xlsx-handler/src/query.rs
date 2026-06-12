@@ -41,6 +41,19 @@ pub fn query_cells(
                 }
             }
         }
+    } else if selector == "pivot" {
+        // All pivot tables
+        for pt in &model.pivot_tables {
+            let path = format!("/pivot/\"{}\"", pt.name);
+            let mut node = DocumentNode::new(&path, "pivot-table");
+            node = node.with_text(pt.name.clone());
+            let range_info = pt.source_range.as_deref().unwrap_or("unknown");
+            node = node.with_preview(format!(
+                "\"{}\" — {} fields, source: {}",
+                pt.name, pt.field_count, range_info
+            ));
+            results.push(node);
+        }
     } else if let Some(type_name) = selector.strip_prefix("type=") {
         // Type selector
         let target_type = match type_name {

@@ -65,6 +65,18 @@ pub trait DocumentHandler: Send {
         position: InsertPosition,
     ) -> Result<String, HandlerError>;
 
+    /// Swap two elements identified by DOM paths. Returns the resolved
+    /// (left, right) paths after swap. Default impl reports unsupported.
+    fn swap(&self, _path1: &str, _path2: &str) -> Result<(String, String), HandlerError> {
+        Err(HandlerError::UnsupportedMode("swap".to_string()))
+    }
+
+    /// Merge template placeholders ({{key}}) with key-value data.
+    /// Returns (replaced_count, unresolved_count).
+    fn merge(&self, _data: &HashMap<String, String>) -> Result<MergeResult, HandlerError> {
+        Err(HandlerError::UnsupportedMode("merge".to_string()))
+    }
+
     // === Raw Layer ===
     fn raw(&self, part_path: &str, opts: RawOptions) -> Result<String, HandlerError>;
     fn raw_set(
@@ -90,6 +102,12 @@ pub trait DocumentHandler: Send {
 
     // === **NEW**: Text Offset Mapping ===
     fn extract_text_with_offsets(&self) -> Result<TextOffsetMap, HandlerError>;
+}
+
+/// Result of a template merge operation.
+pub struct MergeResult {
+    pub replaced_count: usize,
+    pub unresolved_count: usize,
 }
 
 /// Handler error type.

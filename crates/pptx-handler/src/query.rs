@@ -48,6 +48,23 @@ pub fn query_elements(
                 }
             }
         }
+        "morph" => {
+            for slide in &pres.slides {
+                if slide.has_morph {
+                    let path = format!("/slide[{}]", slide.index);
+                    let mut node = DocumentNode::new(&path, "morph-transition");
+                    node = node.with_text(&format!(
+                        "morph transition, {} candidates",
+                        slide.morph_candidates
+                    ));
+                    node = node.with_preview(format!(
+                        "slide {} has morph transition with {} morph candidates",
+                        slide.index, slide.morph_candidates
+                    ));
+                    results.push(node);
+                }
+            }
+        }
         other => {
             return Err(HandlerError::InvalidArgument(format!(
                 "unsupported selector type: {}",

@@ -93,11 +93,9 @@ fn format_sheet_as_grid(ws: &Worksheet, opts: &ViewOptions) -> String {
             let w = col_widths.get(col).unwrap_or(&6);
             let cell = ws.cells.get(&(row, *col));
             let display = cell.map(|c| c.display_value.as_str()).unwrap_or("");
-            let formula_prefix = cell.and_then(|c| c.formula.as_ref()).map(|_| "=");
-            let value_str = match formula_prefix {
-                Some(_) => format!("={}", display),
-                None => display.to_string(),
-            };
+            // For formula cells, display_value already contains the evaluated result
+            // so we show it directly — the formula is visible in annotated view
+            let value_str = display.to_string();
             // Truncate if too long
             let truncated = if value_str.len() > *w - 2 {
                 format!("{}…", &value_str[..w - 3])
@@ -138,6 +136,24 @@ pub fn view_as_outline(package: &OxmlPackage) -> Result<String, HandlerError> {
             ws.max_row,
             ws.max_col
         ));
+    }
+
+    if !model.pivot_tables.is_empty() {
+        output.push_str(&format!(
+            "  Pivot tables: {}\n",
+            model.pivot_tables.len()
+        ));
+        for pt in &model.pivot_tables {
+            let range_info = pt
+                .source_range
+                .as_ref()
+                .map(|r| format!(", source: {}", r))
+                .unwrap_or_default();
+            output.push_str(&format!(
+                "    \"{}\" ({} fields){}\n",
+                pt.name, pt.field_count, range_info
+            ));
+        }
     }
 
     Ok(output)
@@ -233,7 +249,7 @@ pub fn view_as_stats(package: &OxmlPackage) -> Result<String, HandlerError> {
         .map(|ws| format!("{}: {}R x {}C", ws.name, ws.max_row, ws.max_col))
         .collect::<Vec<_>>();
 
-    Ok(format!(
+    let mut stats = format!(
         "Format: xlsx\n\
          Sheets: {}\n\
          Total cells: {}\n\
@@ -245,7 +261,13 @@ pub fn view_as_stats(package: &OxmlPackage) -> Result<String, HandlerError> {
         total_formulas,
         model.shared_strings.len(),
         max_dimensions.join("\n  "),
-    ))
+    );
+
+    if !model.pivot_tables.is_empty() {
+        stats.push_str(&format!("Pivot tables: {}\n", model.pivot_tables.len()));
+    }
+
+    Ok(stats)
 }
 
 /// ViewAsStats JSON.
@@ -266,6 +288,7 @@ pub fn view_as_stats_json(package: &OxmlPackage) -> Result<serde_json::Value, Ha
         "totalCells": total_cells,
         "totalFormulas": total_formulas,
         "sharedStringCount": model.shared_strings.len(),
+        "pivotTableCount": model.pivot_tables.len(),
     }))
 }
 

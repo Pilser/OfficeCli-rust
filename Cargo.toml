@@ -8,6 +8,7 @@ members = [
     "crates/pptx-handler",
     "crates/pdf-handler",
     "crates/handler-common",
+    "crates/template-merger",
 ]
 
 [workspace.package]

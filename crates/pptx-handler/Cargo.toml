@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 oxml = { path = "../oxml" }
 handler-common = { path = "../handler-common" }
+template-merger = { path = "../template-merger" }
 quick-xml = { workspace = true }
 roxmltree = { workspace = true }
 thiserror = { workspace = true }

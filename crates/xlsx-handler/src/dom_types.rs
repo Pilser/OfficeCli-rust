@@ -136,6 +136,23 @@ pub struct WorkbookModel {
     pub sheets: Vec<Worksheet>,
     /// Shared string table (index -> string)
     pub shared_strings: Vec<String>,
+    /// Pivot table definitions found in xl/pivotTables/
+    pub pivot_tables: Vec<PivotTableDef>,
+}
+
+/// A pivot table definition extracted from xl/pivotTables/*.xml.
+#[derive(Debug, Clone)]
+pub struct PivotTableDef {
+    /// Pivot table name from the definition XML
+    pub name: String,
+    /// Cache ID referencing the pivot cache definition
+    pub cache_id: Option<String>,
+    /// Source range from the cache definition (e.g. "Sheet1!A1:E100")
+    pub source_range: Option<String>,
+    /// Number of fields (columns) in the pivot table
+    pub field_count: usize,
+    /// Part path within the ZIP (e.g. "xl/pivotTables/pivotTable1.xml")
+    pub part_path: String,
 }
 
 #[cfg(test)]

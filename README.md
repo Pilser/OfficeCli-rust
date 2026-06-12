@@ -289,13 +289,15 @@ This Rust port is **API-compatible in spirit** (same command names, path syntax,
 
 | Feature | Upstream (C#) | This repo (Rust) |
 | ------- | ------------- | ---------------- |
-| Template `merge` (`{{key}}`) | ✅ | 🔜 |
-| `view screenshot` (PNG) | ✅ | 🔜 |
-| `swap`, `refresh`, `plugins` | ✅ | 🔜 |
-| `officecli install` self-setup | ✅ | Use `install.sh` / `install.ps1` |
-| Formula engine (150+ functions) | ✅ | Partial |
-| Pivot tables, morph transitions, 3D models | ✅ | Partial / growing |
-| Python SDK (`officecli-sdk`) | ✅ | 🔜 |
+| Template `merge` (`{{key}}`) | ✅ | ✅ |
+| `view screenshot` (PNG) | ✅ | ✅ (headless Chrome/Edge/Firefox) |
+| `swap`, `refresh`, `plugins` | ✅ | ✅ |
+| `officecli install` self-setup | ✅ | ✅ (binary + skills + MCP) |
+| Formula engine (150+ functions) | ✅ | ✅ (80+ functions) |
+| Pivot tables (listing) | ✅ | ✅ (listing + source range) |
+| Morph transitions (reporting) | ✅ | ✅ (detection + candidate count) |
+| 3D models | ✅ | ✅ (HTML preview) |
+| Python SDK (`officecli-sdk`) | ✅ | ✅ (Unix domain socket IPC) |
 | AionUi GUI integration | ✅ | N/A (upstream ecosystem) |
 | Wiki & 4000+ commits of polish | ✅ | Early stage |
 
@@ -306,7 +308,7 @@ Track upstream for the full command reference and wiki: [iOfficeAI/OfficeCLI Wik
 | Command        | Description                                                                   |
 | -------------- | ----------------------------------------------------------------------------- |
 | `create`       | Create a blank `.docx`, `.xlsx`, `.pptx`, or `.pdf`                           |
-| `view`         | View content (`text`, `annotated`, `outline`, `stats`, `issues`, `html`, `svg`) |
+| `view`         | View content (`text`, `annotated`, `outline`, `stats`, `issues`, `html`, `svg`, `screenshot`) |
 | `get`          | Get element and children (`--depth N`, `--json`)                                |
 | `query`        | CSS-like element query                                                        |
 | `set`          | Modify element properties                                                     |
@@ -324,7 +326,12 @@ Track upstream for the full command reference and wiki: [iOfficeAI/OfficeCLI Wik
 | `watch`        | Live HTML preview with auto-refresh                                           |
 | `unwatch`      | Stop a running watch server                                                   |
 | `open`         | Start resident mode (Unix)                                                    |
-| `close`        | Save and close resident mode                                                  |
+| `close`        | Save and close resident mode                                                   |
+| `swap`         | Swap two elements (paragraphs, slides, cells)                                  |
+| `merge`        | Merge template placeholders (`{{key}}`) with JSON data                        |
+| `refresh`      | Refresh derived fields (TOC, cross-references)                                 |
+| `plugins`      | List, inspect, and lint installed plugins (`list`, `info`, `lint`)              |
+| `install`      | Install binary, skills, and MCP configuration (`--dry-run`, `--prefix`)        |
 | `info`         | Show info about the tool or document topics                                   |
 | `mcp`          | Start MCP server for AI tool integration                                      |
 
