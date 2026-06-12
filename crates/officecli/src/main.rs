@@ -28,6 +28,13 @@ mod resident {
             "Resident mode is not supported on this platform"
         ))
     }
+    pub fn socket_path_for_file(_file: &str) -> std::path::PathBuf {
+        // Resident mode is not available on this platform; return a placeholder.
+        std::path::PathBuf::from(format!(
+            "{}\\officecli\\resident\\unsupported.sock",
+            std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string())
+        ))
+    }
 }
 mod screenshot;
 mod watch;
