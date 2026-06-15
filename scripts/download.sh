@@ -3,8 +3,8 @@
 #
 # Usage:
 #   ./scripts/download.sh                  # current platform, latest release
-#   ./scripts/download.sh v0.1.1           # current platform, specific tag
-#   ./scripts/download.sh v0.1.1 all       # all published platforms
+#   ./scripts/download.sh v0.1.2           # current platform, specific tag
+#   ./scripts/download.sh v0.1.2 all       # all published platforms
 #   ./scripts/download.sh latest mac-arm64 # one platform alias
 #
 # Platform aliases:

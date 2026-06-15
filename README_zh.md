@@ -136,7 +136,7 @@ irm https://raw.githubusercontent.com/RainLib/OfficeCli-rust/main/install.ps1 | 
 指定版本安装：
 
 ```bash
-OFFICECLI_VERSION=v0.1.1 curl -fsSL https://raw.githubusercontent.com/RainLib/OfficeCli-rust/main/install.sh | bash
+OFFICECLI_VERSION=v0.1.2 curl -fsSL https://raw.githubusercontent.com/RainLib/OfficeCli-rust/main/install.sh | bash
 ```
 
 **手动下载** [GitHub Releases](https://github.com/RainLib/OfficeCli-rust/releases)：
@@ -156,10 +156,10 @@ OFFICECLI_VERSION=v0.1.1 curl -fsSL https://raw.githubusercontent.com/RainLib/Of
 ./scripts/download.sh
 
 # 指定版本，下载全部平台
-./scripts/download.sh v0.1.1 all
+./scripts/download.sh v0.1.2 all
 
 # GitHub CLI
-gh release download v0.1.1 --repo RainLib/OfficeCli-rust --pattern 'officecli-*'
+gh release download v0.1.2 --repo RainLib/OfficeCli-rust --pattern 'officecli-*'
 ```
 
 > **发布说明：** 推送 `v*` tag 后 CI 会构建二进制并上传到 **Draft** Release。请先在 [Releases](https://github.com/RainLib/OfficeCli-rust/releases) 页面 Publish，`latest` 下载链接才会生效。请将 tag 推送到 `github` 远程（`git push github v0.1.2`），而非仅推送到内网 `origin`。
@@ -385,7 +385,7 @@ cargo build --release --target x86_64-pc-windows-msvc
 
 ```bash
 make dist          # 构建并复制到 dist/，含 SHA256
-make download VERSION=v0.1.1 PLATFORM=all  # 下载发布版二进制
+make download VERSION=v0.1.2 PLATFORM=all  # 下载发布版二进制
 make smoke         # 快速冒烟测试
 ```
 

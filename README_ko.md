@@ -136,7 +136,7 @@ irm https://raw.githubusercontent.com/RainLib/OfficeCli-rust/main/install.ps1 | 
 특정 버전 지정:
 
 ```bash
-OFFICECLI_VERSION=v0.1.1 curl -fsSL https://raw.githubusercontent.com/RainLib/OfficeCli-rust/main/install.sh | bash
+OFFICECLI_VERSION=v0.1.2 curl -fsSL https://raw.githubusercontent.com/RainLib/OfficeCli-rust/main/install.sh | bash
 ```
 
 **수동 다운로드** [GitHub Releases](https://github.com/RainLib/OfficeCli-rust/releases):
@@ -153,8 +153,8 @@ OFFICECLI_VERSION=v0.1.1 curl -fsSL https://raw.githubusercontent.com/RainLib/Of
 
 ```bash
 ./scripts/download.sh
-./scripts/download.sh v0.1.1 all
-gh release download v0.1.1 --repo RainLib/OfficeCli-rust --pattern 'officecli-*'
+./scripts/download.sh v0.1.2 all
+gh release download v0.1.2 --repo RainLib/OfficeCli-rust --pattern 'officecli-*'
 ```
 
 > **릴리스 참고:** `v*` 태그 푸시 시 CI가 바이너리를 **Draft** Release에 업로드합니다. [Releases](https://github.com/RainLib/OfficeCli-rust/releases)에서 Publish 후 `latest` URL을 사용하세요. 태그는 `github` 리모트에 푸시하세요 (`git push github v0.1.2`).
@@ -326,7 +326,7 @@ cargo build --release
 
 ```bash
 make dist
-make download VERSION=v0.1.1 PLATFORM=all
+make download VERSION=v0.1.2 PLATFORM=all
 make smoke
 ```
 

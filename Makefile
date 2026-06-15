@@ -67,7 +67,7 @@ install-check:  ## Show which officecli binary is active in PATH
 	fi
 
 # ── Distribution ───────────────────────────────────────────────────────
-download:       ## Download release binary from GitHub (VERSION=v0.1.1 PLATFORM=all)
+download:       ## Download release binary from GitHub (VERSION=v0.1.2 PLATFORM=all)
 	@chmod +x scripts/download.sh
 	@./scripts/download.sh $(or $(VERSION),latest) $(or $(PLATFORM),auto)
 

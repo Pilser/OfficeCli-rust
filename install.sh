@@ -5,7 +5,7 @@ REPO="RainLib/OfficeCli-rust"
 BINARY_NAME="officecli"
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/$REPO/main"
 
-# Optional: pin a release tag, e.g. OFFICECLI_VERSION=v0.1.1
+# Optional: pin a release tag, e.g. OFFICECLI_VERSION=v0.1.2
 # Default "latest" uses the newest published (non-draft) GitHub Release.
 OFFICECLI_VERSION="${OFFICECLI_VERSION:-latest}"
 if [ "$OFFICECLI_VERSION" = "latest" ]; then
@@ -94,7 +94,7 @@ if curl -fsSL --max-time 300 "$RELEASE_BASE/$ASSET" -o "/tmp/$BINARY_NAME"; then
 else
     echo "Download failed."
     echo "Tip: releases/latest/download only works for published (non-draft) releases."
-    echo "Try a specific version: OFFICECLI_VERSION=v0.1.1 curl -fsSL ... | bash"
+    echo "Try a specific version: OFFICECLI_VERSION=v0.1.2 curl -fsSL ... | bash"
 fi
 
 # Step 2: Fallback to local files

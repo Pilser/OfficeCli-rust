@@ -136,7 +136,7 @@ irm https://raw.githubusercontent.com/RainLib/OfficeCli-rust/main/install.ps1 | 
 特定バージョンを指定：
 
 ```bash
-OFFICECLI_VERSION=v0.1.1 curl -fsSL https://raw.githubusercontent.com/RainLib/OfficeCli-rust/main/install.sh | bash
+OFFICECLI_VERSION=v0.1.2 curl -fsSL https://raw.githubusercontent.com/RainLib/OfficeCli-rust/main/install.sh | bash
 ```
 
 **手動ダウンロード** [GitHub Releases](https://github.com/RainLib/OfficeCli-rust/releases)：
@@ -153,8 +153,8 @@ OFFICECLI_VERSION=v0.1.1 curl -fsSL https://raw.githubusercontent.com/RainLib/Of
 
 ```bash
 ./scripts/download.sh
-./scripts/download.sh v0.1.1 all
-gh release download v0.1.1 --repo RainLib/OfficeCli-rust --pattern 'officecli-*'
+./scripts/download.sh v0.1.2 all
+gh release download v0.1.2 --repo RainLib/OfficeCli-rust --pattern 'officecli-*'
 ```
 
 > **リリース注意：** `v*` タグのプッシュで CI がバイナリを **Draft** Release にアップロードします。[Releases](https://github.com/RainLib/OfficeCli-rust/releases) で Publish してから `latest` URL を使用してください。タグは `github` リモート（`git push github v0.1.2`）にプッシュしてください。
@@ -334,7 +334,7 @@ cargo build --release
 
 ```bash
 make dist
-make download VERSION=v0.1.1 PLATFORM=all
+make download VERSION=v0.1.2 PLATFORM=all
 make smoke
 ```
 

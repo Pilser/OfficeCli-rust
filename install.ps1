@@ -2,7 +2,7 @@ $repo = "RainLib/OfficeCli-rust"
 $binary = "officecli.exe"
 $githubRawBase = "https://raw.githubusercontent.com/$repo/main"
 
-# Optional: pin a release tag, e.g. $env:OFFICECLI_VERSION = "v0.1.1"
+# Optional: pin a release tag, e.g. $env:OFFICECLI_VERSION = "v0.1.2"
 $version = if ($env:OFFICECLI_VERSION) { $env:OFFICECLI_VERSION } else { "latest" }
 if ($version -eq "latest") {
     $releaseBase = "https://github.com/$repo/releases/latest/download"
@@ -59,7 +59,7 @@ try {
 } catch {
     Write-Host "Download failed."
     Write-Host "Tip: releases/latest/download only works for published (non-draft) releases."
-    Write-Host "Try: `$env:OFFICECLI_VERSION='v0.1.1'; irm https://raw.githubusercontent.com/$repo/main/install.ps1 | iex"
+    Write-Host "Try: `$env:OFFICECLI_VERSION='v0.1.2'; irm https://raw.githubusercontent.com/$repo/main/install.ps1 | iex"
 }
 
 # Step 2: Fallback to local files

@@ -136,7 +136,7 @@ irm https://raw.githubusercontent.com/RainLib/OfficeCli-rust/main/install.ps1 | 
 Pin a specific release:
 
 ```bash
-OFFICECLI_VERSION=v0.1.1 curl -fsSL https://raw.githubusercontent.com/RainLib/OfficeCli-rust/main/install.sh | bash
+OFFICECLI_VERSION=v0.1.2 curl -fsSL https://raw.githubusercontent.com/RainLib/OfficeCli-rust/main/install.sh | bash
 ```
 
 **Manual download** from [GitHub Releases](https://github.com/RainLib/OfficeCli-rust/releases):
@@ -156,10 +156,10 @@ OFFICECLI_VERSION=v0.1.1 curl -fsSL https://raw.githubusercontent.com/RainLib/Of
 ./scripts/download.sh
 
 # Specific version, all platforms
-./scripts/download.sh v0.1.1 all
+./scripts/download.sh v0.1.2 all
 
 # GitHub CLI
-gh release download v0.1.1 --repo RainLib/OfficeCli-rust --pattern 'officecli-*'
+gh release download v0.1.2 --repo RainLib/OfficeCli-rust --pattern 'officecli-*'
 ```
 
 > **Release note:** CI builds binaries on every `v*` tag push and uploads them to a **draft** GitHub Release. Publish the draft on the [Releases](https://github.com/RainLib/OfficeCli-rust/releases) page before `latest` download URLs work. Push tags to the `github` remote (`git push github v0.1.2`), not only the internal `origin` remote.
@@ -387,7 +387,7 @@ Local distribution:
 
 ```bash
 make dist          # build + copy to dist/ with SHA256
-make download VERSION=v0.1.1 PLATFORM=all  # fetch release binaries
+make download VERSION=v0.1.2 PLATFORM=all  # fetch release binaries
 make smoke         # quick sanity check
 ```
 
