@@ -25,7 +25,19 @@ mod validate;
 mod view;
 
 use clap::Args;
-use handler_common::HandlerError;
+use handler_common::{DocumentHandler, HandlerError};
+
+/// Build a JSON value of the handler's current text+offset map.
+///
+/// Used by mutating commands (`set`, `add`, `batch`) to return the freshly
+/// re-extracted `TextOffsetMap` so callers can re-address elements after a
+/// range edit changed the underlying node structure.
+pub fn offset_map_value(handler: &dyn DocumentHandler) -> Option<serde_json::Value> {
+    handler
+        .extract_text_with_offsets()
+        .ok()
+        .and_then(|m| serde_json::to_value(m).ok())
+}
 
 pub use add::AddCommand;
 pub use add_part::AddPartCommand;

@@ -46,6 +46,11 @@ pub struct SetCommand {
     /// Properties to set (key=value pairs, e.g. "text=hello" "style=Heading1")
     #[arg(num_args = 0..)]
     pub properties: Vec<String>,
+
+    /// Emit the refreshed text+offset map after the edit (JSON output only).
+    /// Use this after range edits to re-address elements whose node structure changed.
+    #[arg(long)]
+    pub emit_map: bool,
 }
 
 pub fn handle_set(cmd: SetCommand, format: OutputFormat) -> Result<String, HandlerError> {
@@ -95,6 +100,12 @@ pub fn handle_set(cmd: SetCommand, format: OutputFormat) -> Result<String, Handl
     let unsupported = handler.set(&path_str, &properties)?;
     handler.save()?;
 
+    let offset_map = if cmd.emit_map {
+        super::offset_map_value(handler.as_ref())
+    } else {
+        None
+    };
+
     match format {
         OutputFormat::Text => {
             if unsupported.is_empty() {
@@ -103,10 +114,15 @@ pub fn handle_set(cmd: SetCommand, format: OutputFormat) -> Result<String, Handl
                 Ok(format!("OK (unsupported: {})", unsupported.join(", ")))
             }
         }
-        OutputFormat::Json => Ok(serde_json::json!({
-            "result": "OK",
-            "unsupported": unsupported
-        })
-        .to_string()),
+        OutputFormat::Json => {
+            let mut out = serde_json::json!({
+                "result": "OK",
+                "unsupported": unsupported
+            });
+            if let Some(map) = offset_map {
+                out["offset_map"] = map;
+            }
+            Ok(out.to_string())
+        }
     }
 }

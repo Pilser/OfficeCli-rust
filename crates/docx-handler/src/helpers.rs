@@ -72,6 +72,23 @@ pub fn split_run_at_offset(run: &WordNode, offset: usize) -> (Option<WordNode>, 
     (Some(left_run), Some(right_run))
 }
 
+/// Build a new run carrying `text`, inheriting the source run's rPr (so the
+/// replacement keeps the original formatting unless overridden later).
+pub fn build_run_with_text(source_run: &WordNode, text: &str) -> WordNode {
+    let mut children = Vec::new();
+    if let Some(rpr) = source_run.run_properties() {
+        children.push(rpr.clone());
+    }
+    let mut t = WordNode::new(WordElementType::Text).with_text(text);
+    if text.starts_with(' ') || text.ends_with(' ') {
+        t.attributes
+            .insert("xml:space".to_string(), "preserve".to_string());
+        t.preserve_space = true;
+    }
+    children.push(t);
+    WordNode::new(WordElementType::Run).with_children(children)
+}
+
 /// Find the run and offset within a paragraph that corresponds to a global text offset.
 /// Returns (run_index_0based, offset_within_run_text).
 pub fn find_run_at_offset(

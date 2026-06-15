@@ -543,7 +543,13 @@ fn apply_docx_range_highlights(
 
     let mut format_props = properties.clone();
     format_props.remove("range_paths");
-    if !format_props.contains_key("bgColor")
+    // Range text replacement: when `text` is present, the selected region's text
+    // is replaced. Color/highlight (and other rPr) still apply to the new run.
+    let new_text = format_props.remove("text");
+    // Only force the default yellow highlight for pure formatting (no text
+    // replacement) and when no explicit background/highlight was requested.
+    if new_text.is_none()
+        && !format_props.contains_key("bgColor")
         && !format_props.contains_key("highlight")
         && !format_props.contains_key("bg")
     {
@@ -577,6 +583,16 @@ fn apply_docx_range_highlights(
         let total_text_len = global_start;
         let target_start = seg.start.unwrap_or(0);
         let target_end = seg.end.unwrap_or(total_text_len);
+
+        // For text replacement, only the first overlapping run receives the new
+        // text; the selected portions of subsequent runs are removed so the new
+        // text appears exactly once across the whole selection.
+        let first_overlap_path = runs_with_spans
+            .iter()
+            .find(|(_p, r_start, r_end, _len)| {
+                (*r_start).max(target_start) < (*r_end).min(target_end)
+            })
+            .map(|(p, _, _, _)| p.clone());
 
         // 3. Process runs in reverse order to keep index paths stable
         for (path, r_start, r_end, _r_len) in runs_with_spans.into_iter().rev() {
@@ -615,14 +631,27 @@ fn apply_docx_range_highlights(
                     right = rg;
                 }
 
-                // Apply format to mid run
+                // Build the replacement run list for this run.
                 let mut inserted_runs = Vec::new();
                 if let Some(l) = left {
                     inserted_runs.push(l);
                 }
-                if let Some(mut m) = mid {
-                    merge_run_properties(&mut m, &format_props);
-                    inserted_runs.push(m);
+                match &new_text {
+                    Some(nt) => {
+                        // Text replacement: insert the new text only on the first
+                        // overlapping run; drop the selected mid of all others.
+                        if first_overlap_path.as_ref() == Some(&path) {
+                            let mut new_run = crate::helpers::build_run_with_text(&run, nt);
+                            merge_run_properties(&mut new_run, &format_props);
+                            inserted_runs.push(new_run);
+                        }
+                    }
+                    None => {
+                        if let Some(mut m) = mid {
+                            merge_run_properties(&mut m, &format_props);
+                            inserted_runs.push(m);
+                        }
+                    }
                 }
                 if let Some(rg) = right {
                     inserted_runs.push(rg);
@@ -636,7 +665,27 @@ fn apply_docx_range_highlights(
     for key in properties.keys() {
         if !matches!(
             key.as_str(),
-            "range_paths" | "bgColor" | "highlight" | "bg" | "color" | "fontColor"
+            "range_paths"
+                | "text"
+                | "bgColor"
+                | "highlight"
+                | "bg"
+                | "color"
+                | "fontColor"
+                | "bold"
+                | "b"
+                | "italic"
+                | "i"
+                | "underline"
+                | "u"
+                | "strike"
+                | "strikeout"
+                | "font"
+                | "fontFamily"
+                | "size"
+                | "fontSize"
+                | "shading"
+                | "shd"
         ) {
             unsupported.push(key.clone());
         }

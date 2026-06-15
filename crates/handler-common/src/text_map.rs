@@ -34,6 +34,12 @@ pub struct OffsetSpan {
     /// Element type: "run", "paragraph-separator", "paragraph-break",
     /// "cell", "shape", "text-block", etc.
     pub element_type: String,
+    /// Optional stable identifier for the owning element (e.g. a DOCX paragraph
+    /// `paraId`). Unlike `path` (which uses positional 1-based indexes that shift
+    /// when runs are split or content is inserted/removed), this ID survives
+    /// structural changes, so callers can re-anchor after an edit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     /// Optional bounding box (PDF text blocks)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bbox: Option<BBoxSpan>,
@@ -111,6 +117,31 @@ impl TextOffsetMap {
         self.push_span_with_metadata(text, path, element_type, None, None);
     }
 
+    /// Add a span with a stable element identifier (e.g. DOCX `paraId`).
+    pub fn push_span_with_id(
+        &mut self,
+        text: &str,
+        path: &str,
+        element_type: &str,
+        id: Option<String>,
+    ) {
+        let start = self.full_text.chars().count();
+        self.full_text.push_str(text);
+        let end = self.full_text.chars().count();
+        self.spans.push(OffsetSpan {
+            start,
+            end,
+            path: path.to_string(),
+            text: text.to_string(),
+            element_type: element_type.to_string(),
+            id,
+            bbox: None,
+            style: None,
+        });
+        self.meta.total_chars = self.full_text.chars().count();
+        self.meta.total_spans = self.spans.len();
+    }
+
     /// Add a span with optional bbox and style metadata.
     pub fn push_span_with_metadata(
         &mut self,
@@ -129,6 +160,7 @@ impl TextOffsetMap {
             path: path.to_string(),
             text: text.to_string(),
             element_type: element_type.to_string(),
+            id: None,
             bbox,
             style,
         });

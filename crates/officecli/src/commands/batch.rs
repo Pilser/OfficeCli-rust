@@ -1,5 +1,5 @@
 use clap::Args;
-use handler_common::{HandlerError, InsertPosition, OutputFormat};
+use handler_common::{HandlerError, InsertPosition, OffsetSpan, OutputFormat, TextOffsetMap};
 use std::collections::HashMap;
 
 /// Execute multiple commands from a batch file
@@ -8,7 +8,24 @@ pub struct BatchCommand {
     pub file: String,
     /// JSON string containing an array of operations
     pub batch_json: String,
+
+    /// Emit the refreshed text+offset map after the batch (and per op) in JSON output.
+    #[arg(long)]
+    pub emit_map: bool,
 }
+
+/// Per-paragraph (or per-element) ledger of applied text-length edits.
+///
+/// Each entry is `(orig_start, orig_end, delta)` in the document's ORIGINAL
+/// coordinate system (the map the caller fetched before the batch). Range
+/// offsets of later ops — also expressed in original coordinates — are shifted
+/// by the sum of deltas of earlier edits that lie before them, so a batch of
+/// range edits stays correct without the caller re-fetching the map mid-batch.
+type EditLedger = HashMap<String, Vec<(usize, usize, i64)>>;
+
+/// Original-coordinate ranges `(element_path, start, end)` touched by an op,
+/// used to record deltas after a text replacement.
+type RangeOriginals = Vec<(String, usize, usize)>;
 
 pub fn handle_batch(cmd: BatchCommand, format: OutputFormat) -> Result<String, HandlerError> {
     let handler = crate::open_handler(&cmd.file, true)?;
@@ -17,9 +34,23 @@ pub fn handle_batch(cmd: BatchCommand, format: OutputFormat) -> Result<String, H
         .map_err(|e| HandlerError::InvalidArgument(format!("invalid batch JSON: {}", e)))?;
 
     let mut results = Vec::new();
+    let mut per_op_maps: Vec<Option<serde_json::Value>> = Vec::new();
+    let mut ledger: EditLedger = HashMap::new();
+
+    // Snapshot before any mutation — used to build old→new path migration records.
+    let baseline_map = if cmd.emit_map {
+        handler.extract_text_with_offsets().ok()
+    } else {
+        None
+    };
 
     for op in ops {
-        let result = execute_batch_op(&*handler, &op);
+        let result = execute_batch_op(&*handler, &op, &mut ledger);
+        if cmd.emit_map {
+            // Re-extract after every op so callers can re-address against the
+            // structure produced by this specific step.
+            per_op_maps.push(super::offset_map_value(handler.as_ref()));
+        }
         results.push(BatchResult {
             op: op.command.clone(),
             result,
@@ -35,7 +66,36 @@ pub fn handle_batch(cmd: BatchCommand, format: OutputFormat) -> Result<String, H
     }
 
     let output = if format == OutputFormat::Json {
-        serde_json::to_string_pretty(&results).map_err(|e| HandlerError::JsonError(e))?
+        if cmd.emit_map {
+            let per_op: Vec<serde_json::Value> = results
+                .iter()
+                .zip(per_op_maps)
+                .map(|(r, map)| {
+                    serde_json::json!({
+                        "op": r.op,
+                        "result": match &r.result {
+                            Ok(v) => serde_json::json!({ "ok": v }),
+                            Err(e) => serde_json::json!({ "error": e }),
+                        },
+                        "offset_map": map,
+                    })
+                })
+                .collect();
+            let final_map = handler.extract_text_with_offsets().ok();
+            let path_migrations = match (&baseline_map, &final_map) {
+                (Some(before), Some(after)) => compute_path_migrations(before, after, &ledger),
+                _ => Vec::new(),
+            };
+            let final_map_json = final_map.and_then(|m| serde_json::to_value(m).ok());
+            serde_json::to_string_pretty(&serde_json::json!({
+                "results": per_op,
+                "final_map": final_map_json,
+                "path_migrations": path_migrations,
+            }))
+            .map_err(HandlerError::JsonError)?
+        } else {
+            serde_json::to_string_pretty(&results).map_err(HandlerError::JsonError)?
+        }
     } else {
         results
             .iter()
@@ -48,6 +108,257 @@ pub fn handle_batch(cmd: BatchCommand, format: OutputFormat) -> Result<String, H
     };
 
     Ok(output)
+}
+
+/// Shift an original-coordinate offset by the deltas of edits that end at or
+/// before it on the same element.
+fn shift_offset(edits: Option<&Vec<(usize, usize, i64)>>, p: usize) -> usize {
+    match edits {
+        Some(es) => {
+            let acc: i64 = es
+                .iter()
+                .filter(|(_s, e, _d)| *e <= p)
+                .map(|(_s, _e, d)| *d)
+                .sum();
+            (p as i64 + acc).max(0) as usize
+        }
+        None => p,
+    }
+}
+
+/// Rebuild a `range_paths` string with offsets remapped through the ledger.
+/// Returns the remapped string plus the list of `(element_path, orig_start,
+/// orig_end)` ranges (only those with both bounds) so the caller can record
+/// new deltas once it knows the replacement text length.
+fn remap_range_paths(rp: &str, ledger: &EditLedger) -> Result<(String, RangeOriginals), String> {
+    let segments = handler_common::parse_range_paths(rp)?;
+    let mut tokens = Vec::new();
+    let mut originals = Vec::new();
+
+    for seg in &segments {
+        let edits = ledger.get(&seg.path);
+        let new_start = seg.start.map(|s| shift_offset(edits, s));
+        let new_end = seg.end.map(|e| shift_offset(edits, e));
+
+        if let (Some(s), Some(e)) = (seg.start, seg.end) {
+            originals.push((seg.path.clone(), s, e));
+        }
+
+        if new_start.is_some() || new_end.is_some() {
+            tokens.push(format!(
+                "{}[{}..{}]",
+                seg.path,
+                new_start.map(|v| v.to_string()).unwrap_or_default(),
+                new_end.map(|v| v.to_string()).unwrap_or_default()
+            ));
+        } else {
+            tokens.push(seg.path.clone());
+        }
+    }
+
+    Ok((tokens.join(","), originals))
+}
+
+/// Record text-length deltas for a completed range text replacement so later
+/// ops on the same element get their offsets shifted correctly.
+fn record_text_deltas(ledger: &mut EditLedger, originals: &RangeOriginals, new_len: usize) {
+    for (path, s, e) in originals {
+        let delta = new_len as i64 - (*e as i64 - *s as i64);
+        if delta != 0 {
+            ledger
+                .entry(path.clone())
+                .or_default()
+                .push((*s, *e, delta));
+        }
+    }
+}
+
+/// One side of a path migration (before or after a batch).
+#[derive(Debug, serde::Serialize)]
+struct MigrationSide {
+    path: String,
+    global_start: usize,
+    global_end: usize,
+    text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stable_id: Option<String>,
+}
+
+/// Old path → new path mapping for IR layer bookkeeping after range edits.
+#[derive(Debug, serde::Serialize)]
+struct PathMigration {
+    /// `unchanged` | `path_changed` | `split` | `removed`
+    kind: &'static str,
+    before: MigrationSide,
+    after: Vec<MigrationSide>,
+}
+
+/// Derive the range-owning element path from a run path, e.g.
+/// `/body/p[1]/r[2]` → `/body/p[1]`.
+fn parent_element_path(run_path: &str) -> Option<String> {
+    run_path.rfind("/r[").map(|idx| run_path[..idx].to_string())
+}
+
+/// Global start offset of the first run span under an element path.
+fn element_global_start(map: &TextOffsetMap, element_path: &str) -> Option<usize> {
+    map.spans
+        .iter()
+        .filter(|s| s.element_type == "run" && s.path.starts_with(element_path))
+        .map(|s| s.start)
+        .min()
+}
+
+/// Find final-map run spans whose global range overlaps `[start, end)`.
+fn overlapping_run_spans(map: &TextOffsetMap, start: usize, end: usize) -> Vec<&OffsetSpan> {
+    map.spans
+        .iter()
+        .filter(|s| s.element_type == "run" && s.start < end && s.end > start)
+        .collect()
+}
+
+fn to_migration_side(span: &OffsetSpan) -> MigrationSide {
+    MigrationSide {
+        path: span.path.clone(),
+        global_start: span.start,
+        global_end: span.end,
+        text: span.text.clone(),
+        stable_id: span.id.clone(),
+    }
+}
+
+/// Compare pre-batch and post-batch maps and emit path migration records.
+///
+/// Coordinates in `ledger` are paragraph-local (as used in `range_paths`); global
+/// offsets in baseline spans are converted through the ledger before lookup.
+fn compute_path_migrations(
+    baseline: &TextOffsetMap,
+    final_map: &TextOffsetMap,
+    ledger: &EditLedger,
+) -> Vec<PathMigration> {
+    let mut migrations = Vec::new();
+
+    for span in baseline
+        .spans
+        .iter()
+        .filter(|s| s.element_type == "run" && !s.text.is_empty())
+    {
+        let Some(element_path) = parent_element_path(&span.path) else {
+            continue;
+        };
+        let Some(base_elem_start) = element_global_start(baseline, &element_path) else {
+            continue;
+        };
+
+        let local_start = span.start.saturating_sub(base_elem_start);
+        let local_end = span.end.saturating_sub(base_elem_start);
+        let edits = ledger.get(&element_path);
+
+        let new_local_start = shift_offset(edits, local_start);
+        let new_local_end = shift_offset(edits, local_end);
+
+        let final_elem_start =
+            element_global_start(final_map, &element_path).unwrap_or(base_elem_start);
+        let new_global_start = final_elem_start + new_local_start;
+        let new_global_end = final_elem_start + new_local_end;
+
+        let after_spans = overlapping_run_spans(final_map, new_global_start, new_global_end);
+
+        let kind = if after_spans.is_empty() {
+            "removed"
+        } else if after_spans.len() > 1 {
+            "split"
+        } else if after_spans[0].path != span.path || after_spans[0].text != span.text {
+            "path_changed"
+        } else {
+            "unchanged"
+        };
+
+        if kind == "unchanged" {
+            continue;
+        }
+
+        migrations.push(PathMigration {
+            kind,
+            before: to_migration_side(span),
+            after: after_spans.iter().map(|s| to_migration_side(s)).collect(),
+        });
+    }
+
+    migrations
+}
+
+#[cfg(test)]
+mod path_migration_tests {
+    use super::*;
+    use handler_common::{OffsetSpan, TextOffsetMap};
+
+    #[test]
+    fn shift_offset_applies_cumulative_delta() {
+        let mut ledger: EditLedger = HashMap::new();
+        ledger
+            .entry("/body/p[1]".to_string())
+            .or_default()
+            .push((6, 11, -4)); // "brave"(5) -> "X"(1)
+        assert_eq!(shift_offset(ledger.get("/body/p[1]"), 16), 12);
+    }
+
+    #[test]
+    fn detect_split_migration() {
+        let mut before = TextOffsetMap::empty("docx");
+        before.spans.push(OffsetSpan {
+            start: 0,
+            end: 17,
+            path: "/body/p[1]/r[1]".into(),
+            text: "Hello brave new world".into(),
+            element_type: "run".into(),
+            id: Some("p1".into()),
+            bbox: None,
+            style: None,
+        });
+        let mut after = TextOffsetMap::empty("docx");
+        after.spans.push(OffsetSpan {
+            start: 0,
+            end: 6,
+            path: "/body/p[1]/r[1]".into(),
+            text: "Hello ".into(),
+            element_type: "run".into(),
+            id: Some("p1".into()),
+            bbox: None,
+            style: None,
+        });
+        after.spans.push(OffsetSpan {
+            start: 6,
+            end: 7,
+            path: "/body/p[1]/r[2]".into(),
+            text: "X".into(),
+            element_type: "run".into(),
+            id: Some("p1".into()),
+            bbox: None,
+            style: None,
+        });
+        after.spans.push(OffsetSpan {
+            start: 7,
+            end: 17,
+            path: "/body/p[1]/r[3]".into(),
+            text: " new world".into(),
+            element_type: "run".into(),
+            id: Some("p1".into()),
+            bbox: None,
+            style: None,
+        });
+
+        let mut ledger: EditLedger = HashMap::new();
+        ledger
+            .entry("/body/p[1]".to_string())
+            .or_default()
+            .push((6, 11, -4));
+
+        let m = compute_path_migrations(&before, &after, &ledger);
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].kind, "split");
+        assert_eq!(m[0].before.path, "/body/p[1]/r[1]");
+        assert_eq!(m[0].after.len(), 3);
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -66,13 +377,45 @@ struct BatchResult {
 fn execute_batch_op(
     handler: &dyn handler_common::DocumentHandler,
     op: &BatchOp,
+    ledger: &mut EditLedger,
 ) -> Result<String, String> {
     match op.command.as_str() {
         "set" => {
             let path = op.params.get("path").and_then(|v| v.as_str()).unwrap_or("");
-            let properties = string_map(&op.params, "properties")
+            let mut properties = string_map(&op.params, "properties")
                 .or_else(|| string_map(&op.params, "props"))
                 .unwrap_or_default();
+
+            // Range offsets are expressed in original coordinates; remap them
+            // through the ledger so earlier text edits in this batch are honored.
+            let rp_opt = properties.get("range_paths").cloned().or_else(|| {
+                op.params
+                    .get("range_paths")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            });
+
+            if let Some(rp) = rp_opt {
+                let (remapped, originals) = remap_range_paths(&rp, ledger)?;
+                properties.insert("range_paths".to_string(), remapped);
+                let result = handler.set(path, &properties);
+                if result.is_ok() {
+                    if let Some(new_text) = properties.get("text") {
+                        record_text_deltas(ledger, &originals, new_text.chars().count());
+                    }
+                }
+                return match result {
+                    Ok(unsupported) => {
+                        if unsupported.is_empty() {
+                            Ok("OK".to_string())
+                        } else {
+                            Ok(format!("OK (unsupported: {})", unsupported.join(", ")))
+                        }
+                    }
+                    Err(e) => Err(e.to_string()),
+                };
+            }
+
             match handler.set(path, &properties) {
                 Ok(unsupported) => {
                     if unsupported.is_empty() {
@@ -101,7 +444,10 @@ fn execute_batch_op(
                 .or_else(|| string_map(&op.params, "props"))
                 .unwrap_or_default();
             if let Some(rp) = op.params.get("range_paths").and_then(|v| v.as_str()) {
-                properties.insert("range_paths".to_string(), rp.to_string());
+                // Bookmarks do not change text length, but their offsets still
+                // need remapping if earlier ops shifted the paragraph text.
+                let (remapped, _originals) = remap_range_paths(rp, ledger)?;
+                properties.insert("range_paths".to_string(), remapped);
             }
             let wrap = op.params.get("wrap").and_then(|v| v.as_str());
             match handler.add(parent, element_type, position, &properties, wrap) {

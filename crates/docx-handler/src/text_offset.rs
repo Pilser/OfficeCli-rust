@@ -19,13 +19,17 @@ pub fn extract_text_with_offsets(dom: &WordDom) -> Result<TextOffsetMap, Handler
             WordElementType::Paragraph => {
                 para_idx += 1;
                 let para_path = format!("/body/p[{}]", para_idx);
+                // Stable anchor: the paragraph's w14:paraId survives run splits and
+                // index shifts, so callers can re-locate the paragraph after edits.
+                let para_id = child.attributes.get("paraId").cloned();
 
                 if para_idx > 1 {
                     // Add paragraph separator (newline) between paragraphs
-                    map.push_span(
+                    map.push_span_with_id(
                         "\n",
                         &format!("/body/p[{}]/break", para_idx),
                         "paragraph-break",
+                        para_id.clone(),
                     );
                 }
 
@@ -37,7 +41,7 @@ pub fn extract_text_with_offsets(dom: &WordDom) -> Result<TextOffsetMap, Handler
                         let run_path = format!("{}/r[{}]", para_path, run_idx);
                         let run_text = extract_run_text(p_child);
                         if !run_text.is_empty() {
-                            map.push_span(&run_text, &run_path, "run");
+                            map.push_span_with_id(&run_text, &run_path, "run", para_id.clone());
                         }
                     } else if p_child.element_type == WordElementType::Hyperlink {
                         // Hyperlinks contain runs; treat them as nested
@@ -53,7 +57,12 @@ pub fn extract_text_with_offsets(dom: &WordDom) -> Result<TextOffsetMap, Handler
                                 );
                                 let run_text = extract_run_text(hl_child);
                                 if !run_text.is_empty() {
-                                    map.push_span(&run_text, &hl_path, "run");
+                                    map.push_span_with_id(
+                                        &run_text,
+                                        &hl_path,
+                                        "run",
+                                        para_id.clone(),
+                                    );
                                 }
                             }
                         }
@@ -63,7 +72,7 @@ pub fn extract_text_with_offsets(dom: &WordDom) -> Result<TextOffsetMap, Handler
                 // If paragraph has no text, still add an empty span for navigation
                 let para_text = child.paragraph_text();
                 if para_text.is_empty() && run_idx == 0 {
-                    map.push_span("", &para_path, "paragraph");
+                    map.push_span_with_id("", &para_path, "paragraph", para_id.clone());
                 }
             }
             WordElementType::Table => {

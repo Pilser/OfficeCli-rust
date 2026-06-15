@@ -32,6 +32,10 @@ pub struct AddCommand {
     /// Syntax: /path[start..end],/path[start..end] (same as set --range-paths)
     #[arg(long)]
     pub range_paths: Option<String>,
+
+    /// Emit the refreshed text+offset map after the edit (JSON output only).
+    #[arg(long)]
+    pub emit_map: bool,
 }
 
 pub fn handle_add(cmd: AddCommand, format: OutputFormat) -> Result<String, HandlerError> {
@@ -54,9 +58,21 @@ pub fn handle_add(cmd: AddCommand, format: OutputFormat) -> Result<String, Handl
     )?;
     handler.save()?;
 
+    let offset_map = if cmd.emit_map {
+        super::offset_map_value(handler.as_ref())
+    } else {
+        None
+    };
+
     match format {
         OutputFormat::Text => Ok(format!("Created: {}", new_path)),
-        OutputFormat::Json => Ok(serde_json::json!({"path": new_path}).to_string()),
+        OutputFormat::Json => {
+            let mut out = serde_json::json!({ "path": new_path });
+            if let Some(map) = offset_map {
+                out["offset_map"] = map;
+            }
+            Ok(out.to_string())
+        }
     }
 }
 

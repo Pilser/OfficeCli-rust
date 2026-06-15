@@ -165,11 +165,24 @@ fn execute_request(handler: &dyn DocumentHandler, req: &IpcRequest) -> IpcRespon
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             let properties = string_map_from_params(&req.params, "properties");
+            let emit_map = req
+                .params
+                .get("emit_map")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             match handler.set(path, &properties) {
-                Ok(unsupported) => IpcResponse::ok(serde_json::json!({
-                    "result": "OK",
-                    "unsupported": unsupported
-                })),
+                Ok(unsupported) => {
+                    let mut out = serde_json::json!({
+                        "result": "OK",
+                        "unsupported": unsupported
+                    });
+                    if emit_map {
+                        if let Ok(map) = handler.extract_text_with_offsets() {
+                            out["offset_map"] = serde_json::to_value(map).unwrap_or_default();
+                        }
+                    }
+                    IpcResponse::ok(out)
+                }
                 Err(e) => IpcResponse::err(e.to_string()),
             }
         }
@@ -186,8 +199,21 @@ fn execute_request(handler: &dyn DocumentHandler, req: &IpcRequest) -> IpcRespon
                 .unwrap_or("");
             let position = parse_insert_position(&req.params);
             let properties = string_map_from_params(&req.params, "properties");
+            let emit_map = req
+                .params
+                .get("emit_map")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             match handler.add(parent, element_type, position, &properties, None) {
-                Ok(new_path) => IpcResponse::ok(serde_json::json!({"path": new_path})),
+                Ok(new_path) => {
+                    let mut out = serde_json::json!({ "path": new_path });
+                    if emit_map {
+                        if let Ok(map) = handler.extract_text_with_offsets() {
+                            out["offset_map"] = serde_json::to_value(map).unwrap_or_default();
+                        }
+                    }
+                    IpcResponse::ok(out)
+                }
                 Err(e) => IpcResponse::err(e.to_string()),
             }
         }
