@@ -172,9 +172,11 @@ fn convert_via_libreoffice(
 
     // soffice --convert-to writes to --outdir, using the input filename stem + target ext
     // We need to handle the case where --output specifies a different filename
-    let output_dir = output_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
+    let output_dir = match output_path.parent() {
+        Some(p) if p.as_os_str().is_empty() => std::path::Path::new("."),
+        Some(p) => p,
+        None => std::path::Path::new("."),
+    };
 
     // Ensure output directory exists
     if !output_dir.exists() {
@@ -185,15 +187,30 @@ fn convert_via_libreoffice(
 
     let output_dir_str = output_dir.to_string_lossy().to_string();
 
-    let status = std::process::Command::new(&soffice)
-        .arg("--headless")
-        .arg("--convert-to")
+    // Determine input extension for PDF-specific filter
+    let input_ext = std::path::Path::new(input_file)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+
+    let mut cmd = std::process::Command::new(&soffice);
+    cmd.arg("--headless");
+
+    // PDF requires writer_pdf_import filter, otherwise soffice silently fails
+    if input_ext == "pdf" {
+        cmd.arg("--infilter=writer_pdf_import");
+    }
+
+    cmd.arg("--convert-to")
         .arg(target_ext)
         .arg("--outdir")
         .arg(&output_dir_str)
         .arg(input_file)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let status = cmd
         .status()
         .map_err(|e| HandlerError::OperationFailed(format!("failed to run soffice: {}", e)))?;
 
