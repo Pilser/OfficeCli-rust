@@ -40,7 +40,7 @@ pub fn handle_create(
     Ok(result)
 }
 
-fn create_blank_docx(path: &str) -> Result<String, HandlerError> {
+pub(crate) fn create_blank_docx(path: &str) -> Result<String, HandlerError> {
     use oxml::OxmlPackage;
 
     // Minimal blank docx: word/document.xml with empty body
@@ -75,7 +75,7 @@ fn create_blank_docx(path: &str) -> Result<String, HandlerError> {
     Ok(format!("Created blank Word document: {}", path))
 }
 
-fn create_blank_xlsx(path: &str) -> Result<String, HandlerError> {
+pub(crate) fn create_blank_xlsx(path: &str) -> Result<String, HandlerError> {
     use oxml::OxmlPackage;
 
     let workbook_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -88,7 +88,7 @@ fn create_blank_xlsx(path: &str) -> Result<String, HandlerError> {
 
     let sheet_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <sheetData/>
+  <sheetData></sheetData>
 </worksheet>"#;
 
     let content_types = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -139,7 +139,7 @@ fn create_blank_xlsx(path: &str) -> Result<String, HandlerError> {
     Ok(format!("Created blank Excel workbook: {}", path))
 }
 
-fn create_blank_pptx(path: &str) -> Result<String, HandlerError> {
+pub(crate) fn create_blank_pptx(path: &str) -> Result<String, HandlerError> {
     use oxml::OxmlPackage;
 
     let presentation_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -195,7 +195,7 @@ fn create_blank_pptx(path: &str) -> Result<String, HandlerError> {
     Ok(format!("Created blank PowerPoint presentation: {}", path))
 }
 
-fn create_blank_pdf(path: &str) -> Result<String, HandlerError> {
+pub(crate) fn create_blank_pdf(path: &str) -> Result<String, HandlerError> {
     use lopdf::{dictionary, Document, Object, Stream};
 
     let mut doc = Document::with_version("1.4");

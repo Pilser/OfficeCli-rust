@@ -5,6 +5,10 @@ use handler_common::{HandlerError, InsertPosition, PathRangeSegment};
 use std::collections::HashMap;
 
 /// Add a new element at the given parent path.
+/// Expanded element vocabulary matching C# WordHandler.Add:
+/// paragraph/p, run/r, table/tbl, row/tr, cell/tc, bookmark,
+/// hyperlink, image/drawing, field/fldSimple, break/br, tab, sectionBreak,
+/// footnote, endnote, sdt/contentControl
 pub fn add_element(
     dom: &mut WordDom,
     parent: &str,
@@ -18,13 +22,24 @@ pub fn add_element(
     match resolved_type {
         AddType::Paragraph => add_paragraph(dom, parent, position, properties),
         AddType::Run => add_run(dom, parent, position, properties),
-        AddType::Table => add_table(dom, parent, position),
-        AddType::TableRow => add_table_row(dom, parent, position),
+        AddType::Table => add_table(dom, parent, position, properties),
+        AddType::TableRow => add_table_row(dom, parent, position, properties),
         AddType::TableCell => add_table_cell(dom, parent, position, properties),
         AddType::Bookmark => add_bookmark(dom, parent, position, properties, wrap),
+        AddType::Hyperlink => add_hyperlink(dom, parent, position, properties),
+        AddType::Image => add_image(dom, parent, position, properties),
+        AddType::Field => add_field(dom, parent, position, properties),
+        AddType::Break => add_break(dom, parent, position, properties),
+        AddType::Tab => add_tab(dom, parent, position, properties),
+        AddType::SectionBreak => add_section_break(dom, parent, position, properties),
+        AddType::FootnoteRef => add_footnote_reference(dom, parent, position, properties),
+        AddType::EndnoteRef => add_endnote_reference(dom, parent, position, properties),
+        AddType::Sdt => add_sdt_block(dom, parent, position, properties),
+        AddType::SdtRun => add_sdt_run(dom, parent, position, properties),
     }
 }
 
+#[derive(Debug, Clone)]
 enum AddType {
     Paragraph,
     Run,
@@ -32,6 +47,16 @@ enum AddType {
     TableRow,
     TableCell,
     Bookmark,
+    Hyperlink,
+    Image,
+    Field,
+    Break,
+    Tab,
+    SectionBreak,
+    FootnoteRef,
+    EndnoteRef,
+    Sdt,
+    SdtRun,
 }
 
 fn resolve_add_type(name: &str) -> Result<AddType, HandlerError> {
@@ -41,9 +66,19 @@ fn resolve_add_type(name: &str) -> Result<AddType, HandlerError> {
         "tbl" | "table" => Ok(AddType::Table),
         "tr" | "row" => Ok(AddType::TableRow),
         "tc" | "cell" => Ok(AddType::TableCell),
-        "bookmark" | "bookmarkstart" => Ok(AddType::Bookmark),
+        "bookmark" | "bookmarkStart" | "bookmarkstart" => Ok(AddType::Bookmark),
+        "hyperlink" | "link" => Ok(AddType::Hyperlink),
+        "image" | "drawing" | "picture" => Ok(AddType::Image),
+        "field" | "fldSimple" | "fldsimple" => Ok(AddType::Field),
+        "break" | "br" => Ok(AddType::Break),
+        "tab" => Ok(AddType::Tab),
+        "sectionBreak" | "sectionbreak" => Ok(AddType::SectionBreak),
+        "footnote" | "footnoteReference" | "footnoteRef" => Ok(AddType::FootnoteRef),
+        "endnote" | "endnoteReference" | "endnoteRef" => Ok(AddType::EndnoteRef),
+        "sdt" | "contentControl" | "sdtBlock" => Ok(AddType::Sdt),
+        "sdtRun" | "inlineSdt" => Ok(AddType::SdtRun),
         other => Err(HandlerError::UnsupportedType(format!(
-            "cannot add element type: {}",
+            "cannot add element type: '{}' (supported: paragraph/p, run/r, table/tbl, row/tr, cell/tc, bookmark, hyperlink, image, field, break, tab, sectionBreak, footnote, endnote, sdt)",
             other
         ))),
     }
@@ -1565,6 +1600,7 @@ fn add_table(
     dom: &mut WordDom,
     parent: &str,
     position: InsertPosition,
+    properties: &HashMap<String, String>,
 ) -> Result<String, HandlerError> {
     let segments = parse_path(parent)?;
     let first_seg = segments.first().ok_or_else(|| {
@@ -1577,11 +1613,93 @@ fn add_table(
         ));
     }
 
-    let tbl_pr = WordNode::new(WordElementType::TableProperties);
-    let cell = WordNode::new(WordElementType::TableCell)
-        .with_children(vec![WordNode::new(WordElementType::Paragraph)]);
-    let row = WordNode::new(WordElementType::TableRow).with_children(vec![cell]);
-    let table = WordNode::new(WordElementType::Table).with_children(vec![tbl_pr, row]);
+    // Parse cols/rows properties (default 1 col x 1 row if not specified)
+    let cols: usize = properties
+        .get("cols")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+    let rows: usize = properties
+        .get("rows")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+
+    // Build table properties (supports style, width, border, etc.)
+    let tbl_pr = if !properties.is_empty() {
+        let mut pr = WordNode::new(WordElementType::TableProperties);
+        let mut children = Vec::new();
+
+        if let Some(style) = properties
+            .get("style")
+            .or_else(|| properties.get("tblStyle"))
+        {
+            children.push(
+                WordNode::new(WordElementType::Unknown("tblStyle".to_string()))
+                    .with_attribute("val", style.as_str()),
+            );
+        }
+        if let Some(width) = properties.get("width") {
+            children.push(
+                WordNode::new(WordElementType::Unknown("tblW".to_string()))
+                    .with_attribute("w", width.as_str())
+                    .with_attribute("type", "dxa"),
+            );
+        }
+        if let Some(border) = properties.get("border") {
+            children.push(crate::mutations::build_table_borders(border));
+        }
+        if let Some(shading) = properties.get("shading").or_else(|| properties.get("shd")) {
+            children.push(crate::mutations::build_shd_node(shading));
+        }
+        if let Some(alignment) = properties.get("alignment").or_else(|| properties.get("jc")) {
+            children.push(
+                WordNode::new(WordElementType::Unknown("jc".to_string()))
+                    .with_attribute("val", alignment.as_str()),
+            );
+        }
+
+        pr.children = children;
+        pr
+    } else {
+        WordNode::new(WordElementType::TableProperties)
+    };
+
+    // Build table grid
+    let mut rows_nodes = Vec::new();
+    for _ in 0..rows {
+        let mut cells = Vec::new();
+        for col_idx in 0..cols {
+            let text = properties.get(&format!("r{}c{}", col_idx + 1, 1)).cloned();
+            let mut cell = WordNode::new(WordElementType::TableCell);
+            if let Some(text) = text {
+                let para = WordNode::new(WordElementType::Paragraph)
+                    .with_children(vec![WordNode::new(WordElementType::Run).with_children(
+                        vec![WordNode::new(WordElementType::Text).with_text(text)],
+                    )]);
+                cell.children.push(para);
+            } else {
+                cell.children
+                    .push(WordNode::new(WordElementType::Paragraph));
+            }
+            cells.push(cell);
+        }
+        rows_nodes.push(WordNode::new(WordElementType::TableRow).with_children(cells));
+    }
+
+    let mut table = WordNode::new(WordElementType::Table);
+    table.children.push(tbl_pr);
+    // Add tblGrid if multiple columns
+    if cols > 1 {
+        let mut grid = WordNode::new(WordElementType::Unknown("tblGrid".to_string()));
+        for _ in 0..cols {
+            grid.children.push(WordNode::new(WordElementType::Unknown(
+                "gridCol".to_string(),
+            )));
+        }
+        table.children.push(grid);
+    }
+    for row in rows_nodes {
+        table.children.push(row);
+    }
 
     let body_idx = dom
         .root
@@ -1627,7 +1745,8 @@ fn add_table(
 fn add_table_row(
     dom: &mut WordDom,
     parent: &str,
-    position: InsertPosition,
+    _position: InsertPosition,
+    _properties: &HashMap<String, String>,
 ) -> Result<String, HandlerError> {
     // First check table structure (immutable)
     let col_count = {
@@ -1665,7 +1784,7 @@ fn add_table_row(
         .map(|(i, _)| i)
         .collect();
 
-    let insert_idx = resolve_insert_index_simple(&position, existing_rows.len());
+    let insert_idx = resolve_insert_index_simple(&InsertPosition::Append, existing_rows.len());
 
     match insert_idx {
         Some(idx) => {
@@ -1749,4 +1868,439 @@ fn resolve_insert_index_simple(position: &InsertPosition, _child_count: usize) -
             None
         }
     }
+}
+
+// ─── New Element Types ─────────────────────────────────────────────────
+
+/// Add a hyperlink to a paragraph or body. Properties: text, url/target, tooltip
+fn add_hyperlink(
+    dom: &mut WordDom,
+    parent: &str,
+    _position: InsertPosition,
+    properties: &HashMap<String, String>,
+) -> Result<String, HandlerError> {
+    // Hyperlinks must be added to a paragraph (run-level)
+    let text = properties.get("text").cloned().unwrap_or_default();
+    let url = properties
+        .get("url")
+        .or_else(|| properties.get("target"))
+        .or_else(|| properties.get("link"))
+        .ok_or_else(|| {
+            HandlerError::InvalidArgument(
+                "hyperlink requires 'url' or 'target' property".to_string(),
+            )
+        })?;
+    let tooltip = properties.get("tooltip");
+
+    let mut link = WordNode::new(WordElementType::Hyperlink);
+    link.attributes.insert("r:id".to_string(), url.clone());
+    if let Some(tt) = tooltip {
+        link.attributes.insert("tooltip".to_string(), tt.clone());
+    }
+
+    // Build the run with text
+    let run = make_run_with_text(
+        &text,
+        &properties
+            .iter()
+            .filter(|(k, _)| {
+                matches!(
+                    k.as_str(),
+                    "bold" | "italic" | "underline" | "color" | "font" | "size"
+                )
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+    );
+    link.children.push(run);
+
+    let parent_node = navigate_to_element_mut(dom, parent)?;
+    parent_node.children.push(link);
+
+    let link_count = parent_node
+        .children
+        .iter()
+        .filter(|c| c.element_type == WordElementType::Hyperlink)
+        .count();
+
+    Ok(format!("{}/hyperlink[{}]", parent, link_count))
+}
+
+/// Add an image (drawing element) to a paragraph.
+/// Properties: src/path, width, height, alt
+fn add_image(
+    dom: &mut WordDom,
+    parent: &str,
+    _position: InsertPosition,
+    properties: &HashMap<String, String>,
+) -> Result<String, HandlerError> {
+    let _src = properties
+        .get("src")
+        .or_else(|| properties.get("path"))
+        .ok_or_else(|| {
+            HandlerError::InvalidArgument(
+                "image requires 'src' or 'path' property pointing to image file".to_string(),
+            )
+        })?;
+
+    // NOTE: Full image embedding requires modifying the OOXML package parts,
+    // which our DOM model doesn't fully support yet. We create a placeholder
+    // drawing element that can be customized via raw-set.
+    let width = properties
+        .get("width")
+        .cloned()
+        .unwrap_or_else(|| "500000".to_string()); // EMU default
+    let height = properties
+        .get("height")
+        .cloned()
+        .unwrap_or_else(|| "500000".to_string());
+
+    let mut drawing = WordNode::new(WordElementType::Drawing);
+    let mut inline = WordNode::new(WordElementType::InlineImage);
+    inline.attributes.insert("cx".to_string(), width);
+    inline.attributes.insert("cy".to_string(), height);
+    drawing.children.push(inline);
+
+    let parent_node = navigate_to_element_mut(dom, parent)?;
+    parent_node.children.push(drawing);
+
+    Ok(format!(
+        "{}/drawing[{}]",
+        parent,
+        parent_node
+            .children
+            .iter()
+            .filter(|c| c.element_type == WordElementType::Drawing)
+            .count()
+    ))
+}
+
+/// Add a field (fldSimple). Properties: type/fieldType, instruction, name, value, format
+fn add_field(
+    dom: &mut WordDom,
+    parent: &str,
+    _position: InsertPosition,
+    properties: &HashMap<String, String>,
+) -> Result<String, HandlerError> {
+    let instruction = properties
+        .get("instruction")
+        .or_else(|| properties.get("instr"))
+        .or_else(|| properties.get("type"))
+        .cloned()
+        .unwrap_or_else(|| "PAGE".to_string());
+
+    let value = properties
+        .get("value")
+        .or_else(|| properties.get("result"))
+        .cloned()
+        .unwrap_or_default();
+
+    let mut field = WordNode::new(WordElementType::FieldSimple);
+    field
+        .attributes
+        .insert("instr".to_string(), format!(" {} ", instruction));
+    field.text_content = Some(value);
+
+    let parent_node = navigate_to_element_mut(dom, parent)?;
+    parent_node.children.push(field);
+
+    Ok(format!(
+        "{}/fldSimple[{}]",
+        parent,
+        parent_node
+            .children
+            .iter()
+            .filter(|c| c.element_type == WordElementType::FieldSimple)
+            .count()
+    ))
+}
+
+/// Add a break element (line or page break). Properties: type (line/page)
+fn add_break(
+    dom: &mut WordDom,
+    parent: &str,
+    _position: InsertPosition,
+    properties: &HashMap<String, String>,
+) -> Result<String, HandlerError> {
+    let break_type = properties
+        .get("type")
+        .cloned()
+        .unwrap_or_else(|| "line".to_string());
+
+    let mut br = WordNode::new(WordElementType::Break);
+    if break_type == "page" {
+        br.attributes.insert("type".to_string(), "page".to_string());
+    } else if break_type == "column" {
+        br.attributes
+            .insert("type".to_string(), "column".to_string());
+    }
+
+    // Breaks go inside a run
+    let mut run = WordNode::new(WordElementType::Run);
+    run.children.push(br);
+
+    let parent_node = navigate_to_element_mut(dom, parent)?;
+    parent_node.children.push(run);
+
+    Ok(format!(
+        "{}/r[{}]",
+        parent,
+        parent_node
+            .children
+            .iter()
+            .filter(|c| c.element_type == WordElementType::Run)
+            .count()
+    ))
+}
+
+/// Add a tab element (inside a run).
+fn add_tab(
+    dom: &mut WordDom,
+    parent: &str,
+    _position: InsertPosition,
+    _properties: &HashMap<String, String>,
+) -> Result<String, HandlerError> {
+    let tab = WordNode::new(WordElementType::Tab);
+    let mut run = WordNode::new(WordElementType::Run);
+    run.children.push(tab);
+
+    let parent_node = navigate_to_element_mut(dom, parent)?;
+    parent_node.children.push(run);
+
+    Ok(format!(
+        "{}/r[{}]",
+        parent,
+        parent_node
+            .children
+            .iter()
+            .filter(|c| c.element_type == WordElementType::Run)
+            .count()
+    ))
+}
+
+/// Add a section break. Properties: orientation, pageWidth, pageHeight, margins
+fn add_section_break(
+    dom: &mut WordDom,
+    _parent: &str,
+    _position: InsertPosition,
+    properties: &HashMap<String, String>,
+) -> Result<String, HandlerError> {
+    let mut sect_pr = WordNode::new(WordElementType::SectionProperties);
+
+    // Page size (pgSz)
+    let page_width = properties
+        .get("pageWidth")
+        .cloned()
+        .unwrap_or_else(|| "12240".to_string());
+    let page_height = properties
+        .get("pageHeight")
+        .cloned()
+        .unwrap_or_else(|| "15840".to_string());
+
+    let mut pg_sz = WordNode::new(WordElementType::Unknown("pgSz".to_string()))
+        .with_attribute("w", page_width.as_str())
+        .with_attribute("h", page_height.as_str());
+
+    if let Some(orient) = properties.get("orientation") {
+        pg_sz
+            .attributes
+            .insert("orient".to_string(), orient.clone());
+    }
+    sect_pr.children.push(pg_sz);
+
+    // Page margins (pgMar)
+    let m_left = properties
+        .get("marginLeft")
+        .cloned()
+        .unwrap_or_else(|| "1440".to_string());
+    let m_right = properties
+        .get("marginRight")
+        .cloned()
+        .unwrap_or_else(|| "1440".to_string());
+    let m_top = properties
+        .get("marginTop")
+        .cloned()
+        .unwrap_or_else(|| "1440".to_string());
+    let m_bottom = properties
+        .get("marginBottom")
+        .cloned()
+        .unwrap_or_else(|| "1440".to_string());
+    let pg_mar = WordNode::new(WordElementType::Unknown("pgMar".to_string()))
+        .with_attribute("left", m_left.as_str())
+        .with_attribute("right", m_right.as_str())
+        .with_attribute("top", m_top.as_str())
+        .with_attribute("bottom", m_bottom.as_str());
+    sect_pr.children.push(pg_mar);
+
+    // Add sectPr to body
+    let body_idx = dom
+        .root
+        .children
+        .iter()
+        .position(|c| c.element_type == WordElementType::Body)
+        .ok_or_else(|| HandlerError::OperationFailed("body not found".to_string()))?;
+    dom.root.children[body_idx].children.push(sect_pr);
+
+    Ok("/body/sectPr".to_string())
+}
+
+/// Add a footnote reference (inside a run).
+fn add_footnote_reference(
+    dom: &mut WordDom,
+    parent: &str,
+    _position: InsertPosition,
+    _properties: &HashMap<String, String>,
+) -> Result<String, HandlerError> {
+    let fn_ref = WordNode::new(WordElementType::FootnoteReference);
+    let mut run = WordNode::new(WordElementType::Run);
+    run.children.push(fn_ref);
+
+    let parent_node = navigate_to_element_mut(dom, parent)?;
+    parent_node.children.push(run);
+
+    Ok(format!(
+        "{}/r[{}]",
+        parent,
+        parent_node
+            .children
+            .iter()
+            .filter(|c| c.element_type == WordElementType::Run)
+            .count()
+    ))
+}
+
+/// Add an endnote reference (inside a run).
+fn add_endnote_reference(
+    dom: &mut WordDom,
+    parent: &str,
+    _position: InsertPosition,
+    _properties: &HashMap<String, String>,
+) -> Result<String, HandlerError> {
+    let en_ref = WordNode::new(WordElementType::EndnoteReference);
+    let mut run = WordNode::new(WordElementType::Run);
+    run.children.push(en_ref);
+
+    let parent_node = navigate_to_element_mut(dom, parent)?;
+    parent_node.children.push(run);
+
+    Ok(format!(
+        "{}/r[{}]",
+        parent,
+        parent_node
+            .children
+            .iter()
+            .filter(|c| c.element_type == WordElementType::Run)
+            .count()
+    ))
+}
+
+/// Add a block-level SDT (Structured Document Tag / Content Control).
+/// Properties: alias/name, tag, lock, text, type
+fn add_sdt_block(
+    dom: &mut WordDom,
+    parent: &str,
+    _position: InsertPosition,
+    properties: &HashMap<String, String>,
+) -> Result<String, HandlerError> {
+    let mut sdt = WordNode::new(WordElementType::Sdt);
+
+    // Build sdtPr (properties)
+    let mut sdt_pr = WordNode::new(WordElementType::SdtPr);
+    if let Some(alias) = properties.get("alias").or_else(|| properties.get("name")) {
+        sdt_pr.children.push(
+            WordNode::new(WordElementType::Unknown("alias".to_string()))
+                .with_attribute("val", alias.as_str()),
+        );
+    }
+    if let Some(tag) = properties.get("tag") {
+        sdt_pr.children.push(
+            WordNode::new(WordElementType::Unknown("tag".to_string()))
+                .with_attribute("val", tag.as_str()),
+        );
+    }
+    if let Some(lock) = properties.get("lock") {
+        sdt_pr.children.push(
+            WordNode::new(WordElementType::Unknown("lock".to_string()))
+                .with_attribute("val", lock.as_str()),
+        );
+    }
+    // Default to plain text type
+    if let Some(sdt_type) = properties.get("type") {
+        sdt_pr
+            .children
+            .push(WordNode::new(WordElementType::Unknown(sdt_type.clone())));
+    }
+    sdt.children.push(sdt_pr);
+
+    // Build sdtContent
+    let mut content = WordNode::new(WordElementType::SdtContent);
+    if let Some(text) = properties.get("text") {
+        let para = WordNode::new(WordElementType::Paragraph)
+            .with_children(vec![WordNode::new(WordElementType::Run).with_children(
+                vec![WordNode::new(WordElementType::Text).with_text(text)],
+            )]);
+        content.children.push(para);
+    } else {
+        content
+            .children
+            .push(WordNode::new(WordElementType::Paragraph));
+    }
+    sdt.children.push(content);
+
+    // SDTs can be added to body
+    let parent_node = navigate_to_element_mut(dom, parent)?;
+    parent_node.children.push(sdt);
+
+    Ok(format!(
+        "{}/sdt[{}]",
+        parent,
+        parent_node
+            .children
+            .iter()
+            .filter(|c| c.element_type == WordElementType::Sdt)
+            .count()
+    ))
+}
+
+/// Add an inline SDT (run-level content control).
+fn add_sdt_run(
+    dom: &mut WordDom,
+    parent: &str,
+    _position: InsertPosition,
+    properties: &HashMap<String, String>,
+) -> Result<String, HandlerError> {
+    let mut sdt = WordNode::new(WordElementType::Sdt);
+
+    let mut sdt_pr = WordNode::new(WordElementType::SdtPr);
+    sdt_pr
+        .children
+        .push(WordNode::new(WordElementType::Unknown("text".to_string())));
+    if let Some(tag) = properties.get("tag") {
+        sdt_pr.children.push(
+            WordNode::new(WordElementType::Unknown("tag".to_string()))
+                .with_attribute("val", tag.as_str()),
+        );
+    }
+    sdt.children.push(sdt_pr);
+
+    let mut content = WordNode::new(WordElementType::SdtContent);
+    if let Some(text) = properties.get("text") {
+        let run = WordNode::new(WordElementType::Run)
+            .with_children(vec![WordNode::new(WordElementType::Text).with_text(text)]);
+        content.children.push(run);
+    }
+    sdt.children.push(content);
+
+    let parent_node = navigate_to_element_mut(dom, parent)?;
+    parent_node.children.push(sdt);
+
+    Ok(format!(
+        "{}/sdt[{}]",
+        parent,
+        parent_node
+            .children
+            .iter()
+            .filter(|c| c.element_type == WordElementType::Sdt)
+            .count()
+    ))
 }

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use crate::add::add_element;
 use crate::dom_types::{WordDom, WordElementType, WordNode};
-use crate::mutations::{move_element, remove_element, set_properties, swap_elements};
+use crate::mutations::{self, move_element, remove_element, set_properties, swap_elements};
 use crate::navigation::{navigate_to_element, navigate_to_element_mut};
 use crate::query::query_elements;
 use crate::raw::read_raw;
@@ -107,7 +107,30 @@ impl DocumentHandler for WordHandler {
 
     fn view_as_stats_json(&self) -> Result<serde_json::Value, HandlerError> {
         let dom = self.parse_dom()?;
-        view_as_stats_json(&dom)
+        let mut stats = view_as_stats_json(&dom)?;
+        // Merge docProps/app.xml extended properties so `view --mode stats --json`
+        // surfaces Template / Manager / Company / Application / etc. alongside
+        // the body counts. See handler_common::extended_properties.
+        let package = self.package.borrow();
+        if let Ok(app_xml) = package.read_part_bytes("docProps/app.xml") {
+            let mut node = DocumentNode::new("/", "root");
+            handler_common::extended_properties::populate_extended_properties(
+                Some(app_xml.as_slice()),
+                &mut node,
+            );
+            if let serde_json::Value::Object(ref mut map) = stats {
+                if !node.format.is_empty() {
+                    let mut extended = serde_json::Map::new();
+                    for (k, v) in node.format.iter() {
+                        if let Some(val) = v {
+                            extended.insert(k.clone(), val.clone());
+                        }
+                    }
+                    map.insert("extended".into(), serde_json::Value::Object(extended));
+                }
+            }
+        }
+        Ok(stats)
     }
 
     fn view_as_forms(&self) -> Result<String, HandlerError> {
@@ -283,6 +306,56 @@ impl DocumentHandler for WordHandler {
                 "document opened in read-only mode".to_string(),
             ));
         }
+        // Find/replace on the whole document is a legitimate "/" target; everything
+        // else requires a scoped path.
+        if !properties.contains_key("find") {
+            handler_common::ensure_scoped(path, "set")?;
+        }
+
+        // Part-aware routing: /styles, comments, footnotes, endnotes live in
+        // separate parts (word/styles.xml, comments.xml, footnotes.xml,
+        // endnotes.xml). These need raw-package access, not the WordDom.
+        let path_lc = path.trim().to_lowercase();
+        if path_lc.starts_with("/styles") {
+            return mutations::set_style_on_part(&mut self.package.borrow_mut(), path, properties);
+        }
+        if path_lc.starts_with("/docdefaults") {
+            return mutations::set_doc_defaults_on_part(
+                &mut self.package.borrow_mut(),
+                properties,
+            );
+        }
+        if path_lc.starts_with("/settings") {
+            return mutations::set_settings_on_part(
+                &mut self.package.borrow_mut(),
+                properties,
+            );
+        }
+        if path_lc.starts_with("/comments") || path_lc.contains("/comment[") {
+            return mutations::set_comment_on_part(
+                &mut self.package.borrow_mut(),
+                "word/comments.xml",
+                path,
+                properties,
+            );
+        }
+        if path_lc.starts_with("/footnotes") {
+            return mutations::set_footnote_endnote_on_part(
+                &mut self.package.borrow_mut(),
+                "word/footnotes.xml",
+                path,
+                properties,
+            );
+        }
+        if path_lc.starts_with("/endnotes") {
+            return mutations::set_footnote_endnote_on_part(
+                &mut self.package.borrow_mut(),
+                "word/endnotes.xml",
+                path,
+                properties,
+            );
+        }
+
         let mut dom = self.parse_dom()?;
         let result = if let Some(range_paths_str) = properties.get("range_paths") {
             let segments = handler_common::parse_range_paths(range_paths_str).map_err(|e| {
@@ -309,6 +382,23 @@ impl DocumentHandler for WordHandler {
                 "document opened in read-only mode".to_string(),
             ));
         }
+        // Image requires part-aware work (word/media + rels + Content Types).
+        // Route before WordDom parsing so we can wire the OOXML package.
+        if matches!(element_type, "image" | "drawing" | "picture" | "img") {
+            return mutations::add_image_part_aware(
+                &mut self.package.borrow_mut(),
+                parent,
+                properties,
+            );
+        }
+        // Charts likewise need word/charts/chartN.xml + rels + Content Types.
+        if matches!(element_type, "chart" | "chartSpace") {
+            return mutations::add_chart_part_aware(
+                &mut self.package.borrow_mut(),
+                parent,
+                properties,
+            );
+        }
         let mut dom = self.parse_dom()?;
         let new_path = add_element(&mut dom, parent, element_type, position, properties, wrap)?;
         self.write_dom(&dom)?;
@@ -321,6 +411,7 @@ impl DocumentHandler for WordHandler {
                 "document opened in read-only mode".to_string(),
             ));
         }
+        handler_common::ensure_scoped(path, "remove")?;
         let mut dom = self.parse_dom()?;
         let result = remove_element(&mut dom, path)?;
         self.write_dom(&dom)?;
@@ -432,9 +523,26 @@ impl DocumentHandler for WordHandler {
     }
 
     fn validate(&self) -> Result<Vec<ValidationError>, HandlerError> {
-        let dom = self.parse_dom()?;
+        let pkg = self.package.borrow();
         let mut errors = Vec::new();
-        if dom.body().is_none() {
+
+        // Required part: word/document.xml
+        if !pkg.has_part(DOCUMENT_PART) {
+            errors.push(ValidationError {
+                error_type: "missing-part".to_string(),
+                description: "required main document part".to_string(),
+                path: None,
+                part: Some(DOCUMENT_PART.to_string()),
+            });
+            return Ok(errors);
+        }
+
+        let document = pkg
+            .read_part_xml(DOCUMENT_PART)
+            .map_err(|e| HandlerError::OperationFailed(format!("read document.xml: {}", e)))?;
+
+        // Structural: must have <w:body>
+        if !document.contains("<w:body") {
             errors.push(ValidationError {
                 error_type: "structure".to_string(),
                 description: "document.xml missing w:body element".to_string(),
@@ -442,6 +550,44 @@ impl DocumentHandler for WordHandler {
                 part: Some(DOCUMENT_PART.to_string()),
             });
         }
+
+        // Build a set of declared style IDs so we can flag dangling pStyle refs.
+        let declared_styles = pkg
+            .read_part_xml("word/styles.xml")
+            .map(|xml| extract_style_ids(&xml))
+            .unwrap_or_default();
+
+        // Walk document.xml looking for pStyle val=... and dangling rels.
+        for (style_id, byte_offset) in extract_pstyle_refs(&document) {
+            if !declared_styles.contains(style_id.as_str()) {
+                errors.push(ValidationError {
+                    error_type: "dangling-reference".to_string(),
+                    description: format!("paragraph references unknown style '{}'", style_id),
+                    path: Some(format!("word/document.xml#offset{}", byte_offset)),
+                    part: Some(DOCUMENT_PART.to_string()),
+                });
+            }
+        }
+
+        // Hyperlink r:id and image r:embed — verify each resolves in
+        // word/_rels/document.xml.rels.
+        let rels_xml = pkg
+            .read_part_xml("word/_rels/document.xml.rels")
+            .unwrap_or_else(|_| "<Relationships/>".to_string());
+        let declared_rel_ids = extract_rel_ids(&rels_xml);
+
+        for rid in extract_unresolved_rids(&document, &declared_rel_ids) {
+            errors.push(ValidationError {
+                error_type: "dangling-reference".to_string(),
+                description: format!(
+                    "document.xml references relationship '{}' not present in document.xml.rels",
+                    rid
+                ),
+                path: Some(format!("word/document.xml#rId={}", rid)),
+                part: Some("word/_rels/document.xml.rels".to_string()),
+            });
+        }
+
         Ok(errors)
     }
 
@@ -933,4 +1079,99 @@ fn build_children_nodes(node: &WordNode, parent_path: &str, depth: usize) -> Vec
     }
 
     children
+}
+
+// ─── validate() helpers ────────────────────────────────────────────────
+
+/// Pull every <w:style w:styleId="..."/> ID out of word/styles.xml so we
+/// can flag dangling pStyle references.
+fn extract_style_ids(styles_xml: &str) -> std::collections::HashSet<String> {
+    let mut ids = std::collections::HashSet::new();
+    let bytes = styles_xml.as_bytes();
+    let mut cursor = 0;
+    while let Some(rel) = find_byte_substring(bytes, b"<w:style ", cursor) {
+        let after = &styles_xml[rel..];
+        if let Some(id_attr_start) = after.find("w:styleId=\"") {
+            let val_start = rel + id_attr_start + "w:styleId=\"".len();
+            if let Some(end_rel) = styles_xml[val_start..].find('"') {
+                ids.insert(styles_xml[val_start..val_start + end_rel].to_string());
+            }
+        }
+        cursor = rel + 1;
+    }
+    ids
+}
+
+/// Find all `<w:pStyle w:val="..."/>` references in document.xml, returning
+/// (style_id, byte_offset_of_pStyle_tag) tuples.
+fn extract_pstyle_refs(document_xml: &str) -> Vec<(String, usize)> {
+    let mut refs = Vec::new();
+    let bytes = document_xml.as_bytes();
+    let mut cursor = 0;
+    while let Some(rel) = find_byte_substring(bytes, b"<w:pStyle ", cursor) {
+        let after = &document_xml[rel..];
+        if let Some(attr_start) = after.find("w:val=\"") {
+            let val_start = rel + attr_start + "w:val=\"".len();
+            if let Some(end_rel) = document_xml[val_start..].find('"') {
+                refs.push((
+                    document_xml[val_start..val_start + end_rel].to_string(),
+                    rel,
+                ));
+            }
+        }
+        cursor = rel + 1;
+    }
+    refs
+}
+
+/// Extract every <Relationship Id="..."/> from a .rels part.
+fn extract_rel_ids(rels_xml: &str) -> std::collections::HashSet<String> {
+    let mut ids = std::collections::HashSet::new();
+    let bytes = rels_xml.as_bytes();
+    let mut cursor = 0;
+    while let Some(rel) = find_byte_substring(bytes, b"Id=\"", cursor) {
+        let val_start = rel + "Id=\"".len();
+        if let Some(end_rel) = rels_xml[val_start..].find('"') {
+            ids.insert(rels_xml[val_start..val_start + end_rel].to_string());
+        }
+        cursor = rel + 1;
+    }
+    ids
+}
+
+/// Walk document.xml and find every `r:id="..."` / `r:embed="..."` /
+/// `r:link="..."` reference, returning the ones not present in `declared`.
+fn extract_unresolved_rids(
+    document_xml: &str,
+    declared: &std::collections::HashSet<String>,
+) -> Vec<String> {
+    let mut unresolved = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let needles: &[&[u8]] = &[b"r:id=\"", b"r:embed=\"", b"r:link=\""];
+    for needle in needles {
+        let bytes = document_xml.as_bytes();
+        let mut cursor = 0;
+        while let Some(rel) = find_byte_substring(bytes, needle, cursor) {
+            let val_start = rel + needle.len();
+            if let Some(end_rel) = document_xml[val_start..].find('"') {
+                let rid = &document_xml[val_start..val_start + end_rel];
+                if !declared.contains(rid) && !seen.contains(rid) {
+                    seen.insert(rid.to_string());
+                    unresolved.push(rid.to_string());
+                }
+            }
+            cursor = rel + 1;
+        }
+    }
+    unresolved
+}
+
+fn find_byte_substring(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
+    if from >= haystack.len() {
+        return None;
+    }
+    haystack[from..]
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .map(|p| p + from)
 }

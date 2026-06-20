@@ -271,6 +271,32 @@ impl DocumentHandler for PdfHandler {
 
         let mut unsupported = Vec::new();
 
+        // Find/replace: when `find` is present, scan all text and apply replacements.
+        if let Some((find, replace, opts)) =
+            handler_common::find_replace::extract_find_replace_props(properties)
+        {
+            let mut reader = self.reader.borrow_mut();
+            let total = if path == "/" || path.is_empty() {
+                crate::modifier::apply_find_replace_all_pages(
+                    reader.document_mut(),
+                    &find,
+                    &replace,
+                    &opts,
+                )?
+            } else if let Ok(page_num) = PdfNavigator::page_number_from_path(path) {
+                crate::modifier::apply_find_replace_on_page(
+                    reader.document_mut(),
+                    page_num,
+                    &find,
+                    &replace,
+                    &opts,
+                )?
+            } else {
+                0
+            };
+            return Ok(vec![format!("replaced={}", total)]);
+        }
+
         // Check if global range paths highlit is requested
         if let Some(range_paths_str) = properties.get("range_paths") {
             let segments = handler_common::parse_range_paths(range_paths_str).map_err(|e| {
@@ -436,13 +462,64 @@ impl DocumentHandler for PdfHandler {
         _parent: &str,
         element_type: &str,
         _position: InsertPosition,
-        _properties: &HashMap<String, String>,
+        properties: &HashMap<String, String>,
         _wrap: Option<&str>,
     ) -> Result<String, HandlerError> {
-        Err(HandlerError::UnsupportedType(format!(
-            "PDF does not support adding {}",
-            element_type
-        )))
+        if !self.editable {
+            return Err(HandlerError::SaveError(
+                "PDF opened in read-only mode".to_string(),
+            ));
+        }
+        match element_type {
+            "page" => {
+                let (w, h) = parse_page_dimensions(properties);
+                let mut reader = self.reader.borrow_mut();
+                let total =
+                    crate::modifier::add_page_with_size(reader.document_mut(), w as f32, h as f32)?;
+                reader.recount_pages();
+                Ok(format!("/page[{}]", total))
+            }
+            "text" | "text-block" => {
+                // Add text at (x, y) on a page. Parent should be /page[N].
+                let parent = _parent.to_string();
+                let page_num = page_num_from_parent(&parent)?;
+                let text = properties
+                    .get("text")
+                    .or_else(|| properties.get("content"))
+                    .map(|s| s.as_str())
+                    .ok_or_else(|| {
+                        HandlerError::InvalidArgument("text property required".to_string())
+                    })?;
+                let x = properties
+                    .get("x")
+                    .and_then(|s| s.parse::<f32>().ok())
+                    .unwrap_or(72.0);
+                let y = properties
+                    .get("y")
+                    .and_then(|s| s.parse::<f32>().ok())
+                    .unwrap_or(720.0);
+                let font = properties.get("font").map(|s| s.as_str());
+                let size = properties
+                    .get("size")
+                    .and_then(|s| s.parse::<f32>().ok())
+                    .unwrap_or(12.0);
+                let mut reader = self.reader.borrow_mut();
+                crate::modifier::add_text_block(
+                    reader.document_mut(),
+                    page_num,
+                    text,
+                    x,
+                    y,
+                    font,
+                    size,
+                )?;
+                Ok(format!("/page[{}]/text", page_num))
+            }
+            other => Err(HandlerError::UnsupportedType(format!(
+                "PDF does not support adding {}",
+                other
+            ))),
+        }
     }
 
     fn remove(&self, path: &str) -> Result<Option<String>, HandlerError> {
@@ -467,24 +544,52 @@ impl DocumentHandler for PdfHandler {
 
     fn move_element(
         &self,
-        _source: &str,
+        source: &str,
         _target_parent: Option<&str>,
-        _position: InsertPosition,
+        position: InsertPosition,
     ) -> Result<String, HandlerError> {
-        Err(HandlerError::UnsupportedMode(
-            "PDF does not support moving elements".to_string(),
-        ))
+        if !self.editable {
+            return Err(HandlerError::SaveError(
+                "PDF opened in read-only mode".to_string(),
+            ));
+        }
+        let from =
+            PdfNavigator::page_number_from_path(source).map_err(HandlerError::InvalidPath)?;
+        // For PDF, the destination is conveyed as a numeric position or as
+        // `after:/page[N]` / `before:/page[N]`.
+        let to = pdf_position_to_target_index(position, _target_parent)?;
+        let mut reader = self.reader.borrow_mut();
+        let moved_to = crate::modifier::move_page(reader.document_mut(), from, to)?;
+        reader.recount_pages();
+        Ok(format!("/page[{}]", moved_to))
     }
 
     fn copy_from(
         &self,
-        _source: &str,
+        source: &str,
         _target_parent: &str,
         _position: InsertPosition,
     ) -> Result<String, HandlerError> {
-        Err(HandlerError::UnsupportedMode(
-            "PDF does not support copying elements".to_string(),
-        ))
+        if !self.editable {
+            return Err(HandlerError::SaveError(
+                "PDF opened in read-only mode".to_string(),
+            ));
+        }
+        let src_page =
+            PdfNavigator::page_number_from_path(source).map_err(HandlerError::InvalidPath)?;
+
+        // Open the source as a separate lopdf Document. We need a fresh load of
+        // the file because the in-memory handler state can't serve as both
+        // source and target for lopdf::copy_page_from.
+        let src_path = self.reader.borrow().file_path().to_string();
+        let source_doc = lopdf::Document::load(&src_path)
+            .map_err(|e| HandlerError::OperationFailed(format!("reload source for copy: {}", e)))?;
+
+        let mut reader = self.reader.borrow_mut();
+        let new_page =
+            crate::modifier::copy_page_from(reader.document_mut(), &source_doc, src_page)?;
+        reader.recount_pages();
+        Ok(format!("/page[{}]", new_page))
     }
 
     fn raw(&self, part_path: &str, _opts: RawOptions) -> Result<String, HandlerError> {
@@ -743,5 +848,62 @@ fn format_pdf_color(color: &PdfColor) -> String {
             let b = (((1.0 - y) * (1.0 - k)) * 255.0).round() as u8;
             format!("#{:02X}{:02X}{:02X}", r, g, b)
         }
+    }
+}
+
+/// Parse page dimensions from add-page properties. Accepts width/height as
+/// points (PDF user units). Defaults to US Letter (612x792).
+fn parse_page_dimensions(props: &HashMap<String, String>) -> (i64, i64) {
+    let w = props
+        .get("width")
+        .and_then(|s| s.parse::<f64>().ok())
+        .or_else(|| props.get("page-width").and_then(|s| s.parse::<f64>().ok()))
+        .unwrap_or(612.0);
+    let h = props
+        .get("height")
+        .and_then(|s| s.parse::<f64>().ok())
+        .or_else(|| props.get("page-height").and_then(|s| s.parse::<f64>().ok()))
+        .unwrap_or(792.0);
+
+    // Accept size=letter | a4 | legal.
+    if let Some(preset) = props.get("size").map(|s| s.as_str()) {
+        let (pw, ph) = match preset.to_ascii_lowercase().as_str() {
+            "letter" => (612.0, 792.0),
+            "legal" => (612.0, 1008.0),
+            "a4" => (595.28, 841.89),
+            "a3" => (841.89, 1190.55),
+            _ => (w, h),
+        };
+        return (pw.round() as i64, ph.round() as i64);
+    }
+    (w.round() as i64, h.round() as i64)
+}
+
+/// Resolve a parent path like `/page[N]` to a 1-based page number.
+fn page_num_from_parent(parent: &str) -> Result<usize, HandlerError> {
+    PdfNavigator::page_number_from_path(parent).map_err(HandlerError::InvalidPath)
+}
+
+/// Translate an InsertPosition + optional target_parent into a 1-based target
+/// page index for `modifier::move_page`.
+fn pdf_position_to_target_index(
+    position: InsertPosition,
+    _target_parent: Option<&str>,
+) -> Result<usize, HandlerError> {
+    match position {
+        InsertPosition::AtIndex(idx) => Ok(idx + 1),
+        InsertPosition::AfterElement(anchor) => {
+            let n =
+                PdfNavigator::page_number_from_path(&anchor).map_err(HandlerError::InvalidPath)?;
+            Ok(n + 1)
+        }
+        InsertPosition::BeforeElement(anchor) => {
+            let n =
+                PdfNavigator::page_number_from_path(&anchor).map_err(HandlerError::InvalidPath)?;
+            Ok(n)
+        }
+        InsertPosition::Append => Err(HandlerError::InvalidArgument(
+            "PDF move requires --position (index or after:/before:)".to_string(),
+        )),
     }
 }

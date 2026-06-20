@@ -363,13 +363,14 @@ fn write_content_to_page(
         stream.content = content.to_vec();
         // Re-compress with FlateDecode so the saved PDF stays compact
         // and the /Filter + /Length are consistent.
-        if stream.compress().is_err() {
-            // Fallback: if compression fails, keep uncompressed but
-            // update Length to match the raw content.
-            stream
-                .dict
-                .set("Length", lopdf::Object::Integer(content.len() as i64));
-        }
+        let _ = stream.compress();
+        // lopdf's compress() may leave a stale /Length when content shrank,
+        // which corrupts subsequent loads (the parser reads past the real
+        // end of the stream). Always rewrite Length to match actual bytes.
+        let current_len = stream.content.len();
+        stream
+            .dict
+            .set("Length", lopdf::Object::Integer(current_len as i64));
     }
 
     // Clear subsequent streams to prevent duplicate content rendering and viewer corruption
@@ -492,10 +493,616 @@ pub fn replace_page_content(
     Ok(())
 }
 
+/// Apply find/replace across all text in a page content stream.
+///
+/// Walks the content stream line by line. For each `... Tj` line, decodes the
+/// text operand (literal `(...)` or hex `<...>`), applies the find/replace
+/// against the decoded string, and re-encodes using the original string form.
+/// TJ arrays are handled element-by-element in the same way.
+///
+/// Returns the total number of replacements applied. Pages without matching
+/// text return zero.
+pub fn apply_find_replace_on_page(
+    doc: &mut LopdfDocument,
+    page_num: usize,
+    find: &str,
+    replace: &str,
+    opts: &handler_common::FindReplaceOptions,
+) -> Result<usize, HandlerError> {
+    let pages = doc.get_pages();
+    let page_id = pages
+        .get(&(page_num as u32))
+        .ok_or_else(|| HandlerError::PathNotFound(format!("page {}", page_num)))?;
+
+    let content = doc
+        .get_page_content(*page_id)
+        .map_err(|e| HandlerError::OperationFailed(format!("page content read: {}", e)))?;
+    let content_str = String::from_utf8_lossy(&content);
+
+    let mut total = 0usize;
+    let mut out = String::with_capacity(content_str.len());
+    for line in content_str.lines() {
+        let trimmed = line.trim_end();
+        if trimmed.ends_with(" Tj") {
+            let (rewritten, count) = rewrite_tj_line(trimmed, find, replace, opts);
+            out.push_str(&rewritten);
+            out.push('\n');
+            total += count;
+        } else if trimmed.ends_with(" TJ") {
+            let (rewritten, count) = rewrite_tj_array_line(trimmed, find, replace, opts);
+            out.push_str(&rewritten);
+            out.push('\n');
+            total += count;
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+
+    if total > 0 {
+        write_content_to_page(doc, *page_id, out.as_bytes())?;
+    }
+    Ok(total)
+}
+
+/// Apply find/replace to all pages in the document. Returns the total count.
+pub fn apply_find_replace_all_pages(
+    doc: &mut LopdfDocument,
+    find: &str,
+    replace: &str,
+    opts: &handler_common::FindReplaceOptions,
+) -> Result<usize, HandlerError> {
+    let page_count = doc
+        .get_pages()
+        .keys()
+        .map(|n| *n as usize)
+        .max()
+        .unwrap_or(0);
+    let mut total = 0usize;
+    for page in 1..=page_count {
+        total += apply_find_replace_on_page(doc, page, find, replace, opts).unwrap_or(0);
+    }
+    Ok(total)
+}
+
+/// Rewrite a single `operand Tj` line. Returns (new line, replacement count).
+fn rewrite_tj_line(
+    line: &str,
+    find: &str,
+    replace: &str,
+    opts: &handler_common::FindReplaceOptions,
+) -> (String, usize) {
+    use handler_common::find_replace::replace_in_string;
+
+    // Strip trailing " Tj"
+    let body = &line[..line.len() - 3].trim_end();
+    let leading_ws_len = line.len() - line.trim_start().len();
+    let leading_ws = &line[..leading_ws_len];
+
+    let operand = body.trim();
+    if let Some(decoded) = decode_pdf_string_operand(operand) {
+        let (new_text, count) = replace_in_string(&decoded, find, replace, opts);
+        if count > 0 {
+            let new_operand = encode_pdf_string_operand_preserve_form(operand, &new_text);
+            return (format!("{}{} Tj", leading_ws, new_operand), count);
+        }
+    }
+    (line.to_string(), 0)
+}
+
+/// Rewrite a `[(...) ... (-N) ...] TJ` line element by element.
+fn rewrite_tj_array_line(
+    line: &str,
+    find: &str,
+    replace: &str,
+    opts: &handler_common::FindReplaceOptions,
+) -> (String, usize) {
+    use handler_common::find_replace::replace_in_string;
+
+    let leading_ws_len = line.len() - line.trim_start().len();
+    let leading_ws = &line[..leading_ws_len];
+    let trimmed = line.trim();
+
+    // Must end with " TJ" and start with '['
+    if !trimmed.ends_with(" TJ") || !trimmed.starts_with('[') {
+        return (line.to_string(), 0);
+    }
+    let array_body = &trimmed[1..trimmed.len() - 3].trim_end();
+
+    let mut total = 0usize;
+    let mut rebuilt = String::with_capacity(array_body.len());
+    rebuilt.push('[');
+
+    let bytes = array_body.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        // Skip whitespace
+        if c.is_whitespace() {
+            rebuilt.push(c);
+            i += 1;
+            continue;
+        }
+        // Numeric element (kerning): copy verbatim
+        if c == '-' || c.is_ascii_digit() || c == '+' {
+            let start = i;
+            i += 1;
+            while i < bytes.len() && (bytes[i] as char).is_ascii_digit() {
+                i += 1;
+            }
+            rebuilt.push_str(&array_body[start..i]);
+            continue;
+        }
+        // String element: literal (...) or hex <...>
+        if c == '(' || c == '<' {
+            let start = i;
+            let (end_idx, element) = match c {
+                '(' => {
+                    let mut depth = 1;
+                    let mut j = i + 1;
+                    while j < bytes.len() && depth > 0 {
+                        let bc = bytes[j] as char;
+                        if bc == '(' && (j == 0 || bytes[j - 1] as char != '\\') {
+                            depth += 1;
+                        } else if bc == ')' && (j == 0 || bytes[j - 1] as char != '\\') {
+                            depth -= 1;
+                        }
+                        j += 1;
+                    }
+                    (j, &array_body[start..j])
+                }
+                '<' => {
+                    let mut j = i + 1;
+                    while j < bytes.len() && bytes[j] as char != '>' {
+                        j += 1;
+                    }
+                    (j + 1, &array_body[start..j + 1])
+                }
+                _ => unreachable!(),
+            };
+            if let Some(decoded) = decode_pdf_string_operand(element) {
+                let (new_text, count) = replace_in_string(&decoded, find, replace, opts);
+                total += count;
+                if count > 0 {
+                    rebuilt.push_str(&encode_pdf_string_operand_preserve_form(element, &new_text));
+                } else {
+                    rebuilt.push_str(element);
+                }
+            } else {
+                rebuilt.push_str(element);
+            }
+            i = end_idx;
+            continue;
+        }
+        // Anything else: copy verbatim
+        rebuilt.push(c);
+        i += 1;
+    }
+    rebuilt.push(']');
+
+    if total > 0 {
+        (format!("{}{} TJ", leading_ws, rebuilt), total)
+    } else {
+        (line.to_string(), 0)
+    }
+}
+
+/// Decode a single Tj operand string: `(...)` or `<...>` form.
+/// Returns None if the operand form is unrecognized.
+fn decode_pdf_string_operand(operand: &str) -> Option<String> {
+    let s = operand.trim();
+    if s.starts_with('(') && s.ends_with(')') {
+        Some(decode_literal_pdf_string(&s[1..s.len() - 1]))
+    } else if s.starts_with('<') && s.ends_with('>') {
+        let hex = &s[1..s.len() - 1];
+        Some(decode_hex_pdf_string(hex))
+    } else {
+        None
+    }
+}
+
+/// Re-encode text using the same form as `original_operand`.
+fn encode_pdf_string_operand_preserve_form(original_operand: &str, text: &str) -> String {
+    let s = original_operand.trim();
+    if s.starts_with('<') {
+        encode_hex_pdf_string(text)
+    } else {
+        crate::content_stream::encode_pdf_string(text)
+    }
+}
+
+fn decode_literal_pdf_string(body: &str) -> String {
+    let bytes = body.as_bytes();
+    let mut out = String::with_capacity(body.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        if c == '\\' && i + 1 < bytes.len() {
+            let next = bytes[i + 1] as char;
+            match next {
+                '(' => {
+                    out.push('(');
+                    i += 2;
+                }
+                ')' => {
+                    out.push(')');
+                    i += 2;
+                }
+                '\\' => {
+                    out.push('\\');
+                    i += 2;
+                }
+                'n' => {
+                    out.push('\n');
+                    i += 2;
+                }
+                'r' => {
+                    out.push('\r');
+                    i += 2;
+                }
+                't' => {
+                    out.push('\t');
+                    i += 2;
+                }
+                d if d.is_ascii_digit() => {
+                    // Up to 3 octal digits
+                    let mut j = i + 1;
+                    let mut val = 0u32;
+                    while j < bytes.len() && (bytes[j] as char).is_ascii_digit() && j - i < 4 {
+                        val = val * 8 + (bytes[j] - b'0') as u32;
+                        j += 1;
+                    }
+                    if let Some(ch) = std::char::from_u32(val & 0xFF) {
+                        out.push(ch);
+                    }
+                    i = j;
+                }
+                _ => {
+                    out.push(next);
+                    i += 2;
+                }
+            }
+        } else {
+            out.push(c);
+            i += 1;
+        }
+    }
+    out
+}
+
+fn decode_hex_pdf_string(hex: &str) -> String {
+    let cleaned: String = hex.chars().filter(|c| !c.is_whitespace()).collect();
+    let mut bytes = Vec::with_capacity(cleaned.len() / 2 + 1);
+    let mut chars = cleaned.chars();
+    while let Some(h) = chars.next() {
+        if let Some(l) = chars.next() {
+            if let Ok(byte) = u8::from_str_radix(&format!("{}{}", h, l), 16) {
+                bytes.push(byte);
+            }
+        }
+    }
+    String::from_utf8_lossy(&bytes).to_string()
+}
+
+fn encode_hex_pdf_string(text: &str) -> String {
+    let mut hex = String::with_capacity(text.len() * 2 + 2);
+    hex.push('<');
+    for byte in text.bytes() {
+        hex.push_str(&format!("{:02X}", byte));
+    }
+    hex.push('>');
+    hex
+}
+
 /// Delete a page from the PDF document.
 pub fn delete_page(doc: &mut LopdfDocument, page_num: usize) -> Result<(), HandlerError> {
     doc.delete_pages(&[page_num as u32]);
     Ok(())
+}
+
+/// Append a blank page to the document. The new page inherits the page size
+/// of the last existing page (or letter 612×792 if the document is empty).
+/// Returns the 1-based number of the new page.
+pub fn add_blank_page(doc: &mut LopdfDocument) -> Result<usize, HandlerError> {
+    let (w, h) = last_page_size(doc).unwrap_or((612.0, 792.0));
+    add_page_with_size(doc, w, h)
+}
+
+/// Add a page with explicit dimensions (in points). Returns the new page number.
+pub fn add_page_with_size(
+    doc: &mut LopdfDocument,
+    width: f32,
+    height: f32,
+) -> Result<usize, HandlerError> {
+    use lopdf::{Dictionary, Object};
+
+    // Build an empty content stream so the page renders cleanly.
+    let content_stream = lopdf::Stream::new(Dictionary::new(), Vec::new());
+    let content_id = doc.add_object(content_stream);
+
+    // Build the page dictionary: empty Resources, MediaBox, reference to content.
+    let mut page_dict = Dictionary::new();
+    page_dict.set("Type", Object::Name(b"Page".to_vec()));
+    page_dict.set(
+        "MediaBox",
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(width as i64),
+            Object::Integer(height as i64),
+        ]),
+    );
+    page_dict.set("Contents", Object::Reference(content_id));
+
+    // Clone Resources from the last page if present so fonts/procsets carry over.
+    if let Some(last_res) = last_page_resources(doc) {
+        page_dict.set("Resources", last_res);
+    } else {
+        let mut res = Dictionary::new();
+        res.set("ProcSet", Object::Array(vec![]));
+        page_dict.set("Resources", Object::Dictionary(res));
+    }
+
+    let page_id = doc.add_object(Object::Dictionary(page_dict));
+
+    // Hook the new page into /Kids of the Pages tree.
+    if let Ok(pages_id) = doc
+        .catalog()
+        .and_then(|d| d.get(b"Pages"))
+        .and_then(Object::as_reference)
+    {
+        if let Ok(pages_obj) = doc.get_object_mut(pages_id) {
+            if let Ok(pages_dict) = pages_obj.as_dict_mut() {
+                if let Ok(Object::Array(kids)) = pages_dict.get_mut(b"Kids") {
+                    let new_count = kids.len() as i64 + 1;
+                    kids.push(Object::Reference(page_id));
+                    pages_dict.set("Count", Object::Integer(new_count));
+                }
+            }
+        }
+    }
+
+    Ok(doc.get_pages().len())
+}
+
+/// Add text to a page's content stream as a single BT/ET block at `(x, y)`
+/// using font `font_name` (PDF font resource name like `/F1`) and the given
+/// point size. If `font_name` is missing, the first page font is used.
+pub fn add_text_block(
+    doc: &mut LopdfDocument,
+    page_num: usize,
+    text: &str,
+    x: f32,
+    y: f32,
+    font_name: Option<&str>,
+    size: f32,
+) -> Result<(), HandlerError> {
+    let pages = doc.get_pages();
+    let page_id = pages
+        .get(&(page_num as u32))
+        .ok_or_else(|| HandlerError::PathNotFound(format!("page {}", page_num)))?;
+
+    let content = doc
+        .get_page_content(*page_id)
+        .map_err(|e| HandlerError::OperationFailed(format!("page content read: {}", e)))?;
+    let content_str = String::from_utf8_lossy(&content);
+
+    // Resolve a font name: caller > first page font > fallback /F1.
+    let font = font_name
+        .map(|s| s.trim_start_matches('/').to_string())
+        .or_else(|| first_page_font_name(doc, *page_id))
+        .unwrap_or_else(|| "F1".to_string());
+
+    // Build the new BT/ET block. We escape literal-string special chars here so
+    // consumers can use parentheses and backslashes safely.
+    let escaped = escape_pdf_literal(text);
+    let block = format!(
+        "\nBT\n/{font} {size} Tf\n{x:.2} {y:.2} Td\n({escaped}) Tj\nET\n",
+        font = font,
+        size = size,
+        x = x,
+        y = y,
+        escaped = escaped
+    );
+
+    let mut new_content = String::with_capacity(content_str.len() + block.len());
+    new_content.push_str(&content_str);
+    new_content.push_str(&block);
+
+    write_content_to_page(doc, *page_id, new_content.as_bytes())?;
+    Ok(())
+}
+
+/// Reorder pages: move the page at `from` to position `to`. 1-based indices,
+/// `to` may be in [1, page_count + 1]. After the move, all pages are
+/// re-numbered to reflect the new order.
+pub fn move_page(doc: &mut LopdfDocument, from: usize, to: usize) -> Result<usize, HandlerError> {
+    use lopdf::Object;
+    let total = doc.get_pages().len();
+    if from == 0 || from > total {
+        return Err(HandlerError::InvalidPath(format!(
+            "page {} out of range (1..={})",
+            from, total
+        )));
+    }
+    if to == 0 || to > total + 1 {
+        return Err(HandlerError::InvalidArgument(format!(
+            "target position {} out of range (1..={})",
+            to,
+            total + 1
+        )));
+    }
+    if from == to || from + 1 == to {
+        return Ok(to.min(total));
+    }
+
+    // Operate on the /Kids array of the catalog's Pages node.
+    let pages_id = doc
+        .catalog()
+        .and_then(|d| d.get(b"Pages"))
+        .and_then(Object::as_reference)
+        .or(Err(HandlerError::OperationFailed(
+            "could not locate catalog Pages".to_string(),
+        )))?;
+
+    if let Ok(pages_obj) = doc.get_object_mut(pages_id) {
+        if let Ok(pages_dict) = pages_obj.as_dict_mut() {
+            if let Ok(Object::Array(kids)) = pages_dict.get_mut(b"Kids") {
+                let item_idx = from - 1;
+                let removed = kids.remove(item_idx);
+                // If to > from, removal shifted indices down by one.
+                let insert_at = if to > from { to - 2 } else { to - 1 };
+                let insert_at = insert_at.min(kids.len());
+                kids.insert(insert_at, removed);
+                return Ok(to.min(total));
+            }
+        }
+    }
+    Err(HandlerError::OperationFailed(
+        "could not reorder /Kids array".to_string(),
+    ))
+}
+
+/// Copy a page from `source_doc` into `target_doc`, appending at the end.
+/// Returns the page number of the new page in the target.
+pub fn copy_page_from(
+    target_doc: &mut LopdfDocument,
+    source_doc: &LopdfDocument,
+    source_page_num: usize,
+) -> Result<usize, HandlerError> {
+    use lopdf::{Dictionary, Object};
+
+    let src_pages = source_doc.get_pages();
+    let src_page_id = src_pages
+        .get(&(source_page_num as u32))
+        .ok_or_else(|| HandlerError::PathNotFound(format!("source page {}", source_page_num)))?;
+
+    let content = source_doc
+        .get_page_content(*src_page_id)
+        .map_err(|e| HandlerError::OperationFailed(format!("source page content: {}", e)))?;
+
+    let (w, h) = page_size(source_doc, *src_page_id).unwrap_or((612.0, 792.0));
+
+    // Build a new content stream object in the target.
+    let content_stream = lopdf::Stream::new(Dictionary::new(), content);
+    let content_id = target_doc.add_object(content_stream);
+
+    // Page dictionary — copy MediaBox and Resources from source.
+    let mut page_dict = Dictionary::new();
+    page_dict.set("Type", Object::Name(b"Page".to_vec()));
+    page_dict.set(
+        "MediaBox",
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(w as i64),
+            Object::Integer(h as i64),
+        ]),
+    );
+    page_dict.set("Contents", Object::Reference(content_id));
+
+    // Clone Resources dictionary from the source page if available.
+    if let Ok(res_dict) = source_doc
+        .get_page_resources(*src_page_id)
+        .map(|(dict, _)| dict.cloned().unwrap_or_default())
+    {
+        page_dict.set("Resources", Object::Dictionary(res_dict));
+    } else {
+        let mut res = Dictionary::new();
+        res.set("ProcSet", Object::Array(vec![]));
+        page_dict.set("Resources", Object::Dictionary(res));
+    }
+
+    let page_id = target_doc.add_object(Object::Dictionary(page_dict));
+
+    // Append to /Kids of the target's Pages tree.
+    if let Ok(pages_id) = target_doc
+        .catalog()
+        .and_then(|d| d.get(b"Pages"))
+        .and_then(Object::as_reference)
+    {
+        if let Ok(pages_obj) = target_doc.get_object_mut(pages_id) {
+            if let Ok(pages_dict) = pages_obj.as_dict_mut() {
+                if let Ok(Object::Array(kids)) = pages_dict.get_mut(b"Kids") {
+                    let new_count = kids.len() as i64 + 1;
+                    kids.push(Object::Reference(page_id));
+                    pages_dict.set("Count", Object::Integer(new_count));
+                }
+            }
+        }
+    }
+
+    Ok(target_doc.get_pages().len())
+}
+
+/// Return the size of the last page in the document, or None if empty.
+fn last_page_size(doc: &LopdfDocument) -> Option<(f32, f32)> {
+    let pages = doc.get_pages();
+    let max_n = pages.keys().copied().max()?;
+    let id = pages.get(&max_n)?;
+    page_size(doc, *id)
+}
+
+/// Return the Resources dictionary of the last page, if any.
+fn last_page_resources(doc: &LopdfDocument) -> Option<lopdf::Dictionary> {
+    let pages = doc.get_pages();
+    let max_n = pages.keys().copied().max()?;
+    let id = pages.get(&max_n)?;
+    doc.get_page_resources(*id)
+        .ok()
+        .and_then(|(d, _)| d.cloned())
+}
+
+/// Read a page's MediaBox to extract (width, height). Falls back to None on
+/// parse failure.
+fn page_size(doc: &LopdfDocument, page_id: ObjectId) -> Option<(f32, f32)> {
+    let page = doc.get_object(page_id).ok()?.as_dict().ok()?;
+    let mbox = page.get(b"MediaBox").ok()?;
+    let mbox_obj = if let Ok(r) = mbox.as_reference() {
+        doc.get_object(r).ok()?
+    } else {
+        mbox
+    };
+    let arr = mbox_obj.as_array().ok()?;
+    if arr.len() < 4 {
+        return None;
+    }
+    let w = arr.get(2).and_then(|o| {
+        o.as_float()
+            .ok()
+            .or_else(|| o.as_i64().ok().map(|i| i as f32))
+    })?;
+    let h = arr.get(3).and_then(|o| {
+        o.as_float()
+            .ok()
+            .or_else(|| o.as_i64().ok().map(|i| i as f32))
+    })?;
+    Some((w, h))
+}
+
+/// Find the first font resource name on a page (e.g. "F1").
+/// Returns None if no fonts are defined for the page.
+fn first_page_font_name(doc: &LopdfDocument, page_id: ObjectId) -> Option<String> {
+    let fonts = doc.get_page_fonts(page_id).ok()?;
+    fonts
+        .keys()
+        .next()
+        .map(|bytes| String::from_utf8_lossy(bytes).to_string())
+}
+
+/// Escape a literal PDF string body — only the three chars that terminate
+/// or escape inside `(...)` operands: ( ) and \.
+fn escape_pdf_literal(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 4);
+    for c in text.chars() {
+        match c {
+            '(' => out.push_str("\\("),
+            ')' => out.push_str("\\)"),
+            '\\' => out.push_str("\\\\"),
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// Parse a text block path like /page[N]/text[M] into (page_num, text_index).

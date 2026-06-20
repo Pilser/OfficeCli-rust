@@ -216,12 +216,39 @@ fn handle_watch(cmd: commands::WatchCommand) -> Result<String, HandlerError> {
 }
 
 fn handle_unwatch(cmd: commands::UnwatchCommand) -> Result<String, HandlerError> {
-    // Currently the watch server blocks until Ctrl+C. Unwatch is a placeholder
-    // that could send a shutdown signal in a future implementation.
-    Ok(format!(
-        "Unwatch not yet supported for: {} — use Ctrl+C to stop the watch server",
-        cmd.file
-    ))
+    let port = cmd.port.unwrap_or(crate::watch::DEFAULT_PORT);
+    let addr = format!("127.0.0.1:{}", port);
+    let mut stream = std::net::TcpStream::connect_timeout(
+        &addr
+            .parse()
+            .map_err(|e| HandlerError::OperationFailed(format!("invalid address: {}", e)))?,
+        std::time::Duration::from_secs(3),
+    )
+    .map_err(|e| {
+        HandlerError::OperationFailed(format!(
+            "no watch server listening on port {}: {}. Start it with `officecli watch {}`.",
+            port, e, cmd.file
+        ))
+    })?;
+
+    use std::io::{Read, Write};
+    let request = "POST /shutdown HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|e| HandlerError::OperationFailed(format!("write: {}", e)))?;
+    let mut buf = [0u8; 256];
+    let n = stream
+        .read(&mut buf)
+        .map_err(|e| HandlerError::OperationFailed(format!("read: {}", e)))?;
+    let head = String::from_utf8_lossy(&buf[..n]);
+    let status_line = head.lines().next().unwrap_or("(no response)");
+    if !status_line.contains("200") && !status_line.contains("204") {
+        return Err(HandlerError::OperationFailed(format!(
+            "watch server returned: {}",
+            status_line
+        )));
+    }
+    Ok(format!("Watch server on port {} shutting down", port))
 }
 
 fn handle_mcp() -> Result<String, HandlerError> {
@@ -236,7 +263,7 @@ fn handle_socket_path(cmd: commands::SocketPathCommand) -> Result<String, Handle
 }
 
 /// Open a document handler based on file extension.
-fn open_handler(file: &str, editable: bool) -> Result<Box<dyn DocumentHandler>, HandlerError> {
+pub(crate) fn open_handler(file: &str, editable: bool) -> Result<Box<dyn DocumentHandler>, HandlerError> {
     let path = PathBuf::from(file);
     let ext = path
         .extension()
@@ -261,9 +288,17 @@ fn open_handler(file: &str, editable: bool) -> Result<Box<dyn DocumentHandler>, 
             let handler = pdf_handler::PdfHandler::open(file, editable)?;
             Ok(Box::new(handler))
         }
-        other => Err(HandlerError::OpenError(format!(
-            "unsupported format: {}",
-            other
-        ))),
+        other => {
+            // Last-resort: any installed format-handler plugin that owns
+            // this extension (e.g. .hwpx). See plugins/plugin-protocol.md §2.3.
+            if commands::resolve_format_handler(other).is_some() {
+                let proxy = commands::FormatHandlerProxy::open(file)?;
+                return Ok(Box::new(proxy));
+            }
+            Err(HandlerError::OpenError(format!(
+                "unsupported format: {}",
+                other
+            )))
+        }
     }
 }

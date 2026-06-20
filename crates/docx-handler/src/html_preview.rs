@@ -53,8 +53,6 @@ struct DocxStyle {
     based_on: Option<String>,
     is_default_paragraph: bool,
     font_ascii: Option<String>,
-    #[allow(dead_code)]
-    font_east_asia: Option<String>,
     size_pt: Option<f64>,
     color: Option<String>,
     bold: Option<bool>,
@@ -272,7 +270,6 @@ fn parse_styles(package: &OxmlPackage) -> (HashMap<String, DocxStyle>, DocDefaul
                         .map(|s| s.to_string());
 
                     let mut font_ascii = None;
-                    let mut font_east_asia = None;
                     let mut size_pt = None;
                     let mut color = None;
                     let mut bold = None;
@@ -285,10 +282,6 @@ fn parse_styles(package: &OxmlPackage) -> (HashMap<String, DocxStyle>, DocDefaul
                             font_ascii = rf
                                 .attribute((W_NS, "ascii"))
                                 .or_else(|| rf.attribute("w:ascii"))
-                                .map(|s| s.to_string());
-                            font_east_asia = rf
-                                .attribute((W_NS, "eastAsia"))
-                                .or_else(|| rf.attribute("w:eastAsia"))
                                 .map(|s| s.to_string());
                         }
                         if let Some(sz) = r_pr.children().find(|n| n.has_tag_name("sz")) {
@@ -413,7 +406,6 @@ fn parse_styles(package: &OxmlPackage) -> (HashMap<String, DocxStyle>, DocDefaul
                             based_on,
                             is_default_paragraph,
                             font_ascii,
-                            font_east_asia,
                             size_pt,
                             color,
                             bold,

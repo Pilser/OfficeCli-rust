@@ -24,12 +24,11 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, watch as tokio_watch, Mutex};
 use tower_http::cors::CorsLayer;
 
-const DEFAULT_PORT: u16 = 26315;
+pub const DEFAULT_PORT: u16 = 26315;
 
 // ─── Handler operation requests (sent to the blocking thread) ──────────
 
 #[derive(Debug)]
-#[allow(dead_code)]
 enum HandlerOp {
     ViewText {
         opts: ViewOptions,
@@ -63,14 +62,6 @@ enum HandlerOp {
     Remove {
         path: String,
     },
-    GetMark {
-        path: String,
-    },
-    UnmarkMark {
-        path: Option<String>,
-        all: bool,
-    },
-    GetMarks,
     Goto {
         path: String,
     },
@@ -104,14 +95,52 @@ impl Drop for ActiveDocument {
 struct AppState {
     _port: u16,
     registry: Arc<Mutex<HashMap<String, Arc<ActiveDocument>>>>,
+    shutdown_tx: tokio::sync::watch::Sender<bool>,
+    marks: Arc<Mutex<HashMap<String, Vec<MarkEntry>>>>,
+}
+
+/// One advisory mark attached to a DOM path. `find`, `color`, `note`,
+/// `tofix`, `regex` are the recognized CLI props; anything else is ignored
+/// (and surfaces a warning on the CLI side, not here).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarkEntry {
+    #[serde(default)]
+    pub id: String,
+    pub path: String,
+    #[serde(default)]
+    pub find: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub note: Option<String>,
+    #[serde(default)]
+    pub tofix: Option<String>,
+    #[serde(default)]
+    pub regex: bool,
+}
+
+impl MarkEntry {
+    /// Stable-ish id: file path + millisecond tick, base36'd. Good enough for
+    /// advisory UI labels; collisions just get deduped on unmark.
+    fn new(path: &str) -> Self {
+        let ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let id = format!("m{:x}", ms % 0xFFFFF);
+        Self {
+            id,
+            path: path.to_string(),
+            find: None,
+            color: None,
+            note: None,
+            tofix: None,
+            regex: false,
+        }
+    }
 }
 
 // ─── JSON request/response types ───────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-struct MarkRequest {
-    path: String,
-}
 
 #[derive(Debug, Deserialize)]
 struct SetRequest {
@@ -238,9 +267,12 @@ async fn run_host_server(
     initial_file: &str,
 ) -> Result<(), anyhow::Error> {
     let registry = Arc::new(Mutex::new(HashMap::<String, Arc<ActiveDocument>>::new()));
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let state = Arc::new(AppState {
         _port: port,
         registry: registry.clone(),
+        shutdown_tx: shutdown_tx.clone(),
+        marks: Arc::new(Mutex::new(HashMap::new())),
     });
 
     register_document(&state, initial_id, initial_file)
@@ -250,6 +282,7 @@ async fn run_host_server(
     let app = Router::new()
         .route("/", get(handle_landing))
         .route("/ping", get(handle_ping))
+        .route("/shutdown", post(handle_shutdown))
         .route("/register", post(handle_register))
         .route("/{id}", get(handle_redirect_slash))
         .route("/{id}/", get(handle_index))
@@ -262,6 +295,9 @@ async fn run_host_server(
         .route("/{id}/view", get(handle_view))
         .route("/{id}/get", get(handle_get))
         .route("/{id}/set", post(handle_set))
+        .route("/{id}/query", post(handle_query))
+        .route("/{id}/add", post(handle_add))
+        .route("/{id}/remove", post(handle_remove))
         .route("/{id}/page/{page_num}/html", get(handle_page_html))
         .layer(CorsLayer::permissive())
         .with_state(state);
@@ -273,8 +309,18 @@ async fn run_host_server(
     );
     println!("Press Ctrl+C to stop the watch server");
 
-    axum::serve(listener, app).await?;
+    let mut shutdown_signal = shutdown_rx.clone();
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            let _ = shutdown_signal.changed().await;
+        })
+        .await?;
     Ok(())
+}
+
+async fn handle_shutdown(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let _ = state.shutdown_tx.send(true);
+    "shutting down"
 }
 
 // ─── Document Registration Helper ──────────────────────────────────────
@@ -472,30 +518,9 @@ fn execute_handler_op(
                 data: serde_json::json!({"error": e.to_string()}),
             },
         },
-        HandlerOp::GetMark { path } => match handler.get(&path, 1) {
-            Ok(node) => HandlerResult {
-                data: serde_json::to_value(node).unwrap_or_default(),
-            },
-            Err(e) => HandlerResult {
-                data: serde_json::json!({"error": e.to_string()}),
-            },
+        HandlerOp::Goto { path } => HandlerResult {
+            data: serde_json::json!({"scrolled_to": path}),
         },
-        HandlerOp::UnmarkMark { path, all } => {
-            // Advisory marks are stored in-memory; for now return success
-            let _ = (path, all);
-            HandlerResult {
-                data: serde_json::json!({"removed": 0}),
-            }
-        }
-        HandlerOp::GetMarks => HandlerResult {
-            data: serde_json::json!({"version": 0, "marks": []}),
-        },
-        HandlerOp::Goto { path } => {
-            // Return the scroll target for SSE broadcast
-            HandlerResult {
-                data: serde_json::json!({"scrolled_to": path}),
-            }
-        }
         HandlerOp::Reload => HandlerResult {
             data: serde_json::json!({"error": "reload should be handled by runner"}),
         },
@@ -849,34 +874,45 @@ async fn handle_text(
     }
 }
 
-// ─── POST /:id/mark — Select/highlight elements ────────────────────────
+// ─── POST /:id/mark — Attach an advisory mark to an element ─────────────
 
 async fn handle_mark(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
-    Json(req): Json<MarkRequest>,
+    Json(req): Json<MarkEntry>,
 ) -> impl IntoResponse {
+    // Validate the document exists before recording the mark so a typo in
+    // the id surfaces cleanly instead of silently collecting orphan marks.
     let doc = match get_doc(&state, &id).await {
         Ok(d) => d,
         Err(e) => return e.into_response(),
     };
-    let result = send_op_for_doc(
-        &doc,
-        HandlerOp::GetMark {
-            path: req.path.clone(),
-        },
-    )
-    .await;
 
-    if result.data.get("error").is_some() {
-        Json(ApiResponse::err(
-            result.data["error"].as_str().unwrap_or("unknown error"),
-        ))
-        .into_response()
-    } else {
-        let _ = doc.update_tx.send(format!("mark:{}", req.path));
-        Json(ApiResponse::ok(result.data)).into_response()
-    }
+    let mut entry = MarkEntry::new(&req.path);
+    entry.find = req.find.clone();
+    entry.color = req.color.clone();
+    entry.note = req.note.clone();
+    entry.tofix = req.tofix.clone();
+    entry.regex = req.regex;
+
+    let entry_clone = entry.clone();
+    let mut marks = state.marks.lock().await;
+    let bucket = marks.entry(id.clone()).or_default();
+    // Replace any existing mark at the same path — only one mark per path.
+    bucket.retain(|m| m.path != entry.path);
+    bucket.push(entry);
+    let len = bucket.len();
+    drop(marks);
+
+    // Push an SSE update so connected browsers re-render with the new mark.
+    let _ = doc.update_tx.send(format!("mark:{}", entry_clone.path));
+
+    Json(ApiResponse::ok(serde_json::json!({
+        "id": entry_clone.id,
+        "path": entry_clone.path,
+        "total_marks": len,
+    })))
+    .into_response()
 }
 
 // ─── POST /:id/unmark — Remove marks from elements ─────────────────────
@@ -892,28 +928,33 @@ async fn handle_unmark(
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(req): Json<UnmarkRequest>,
 ) -> impl IntoResponse {
+    // Make sure the doc exists so we don't accumulate marks for ghost ids.
     let doc = match get_doc(&state, &id).await {
         Ok(d) => d,
         Err(e) => return e.into_response(),
     };
-    let all = req.all.unwrap_or(false);
-    let result = send_op_for_doc(
-        &doc,
-        HandlerOp::UnmarkMark {
-            path: req.path,
-            all,
-        },
-    )
-    .await;
 
-    if result.data.get("error").is_some() {
-        Json(ApiResponse::err(
-            result.data["error"].as_str().unwrap_or("unknown error"),
-        ))
-        .into_response()
-    } else {
-        Json(ApiResponse::ok(result.data)).into_response()
+    let removed;
+    {
+        let mut marks = state.marks.lock().await;
+        let bucket = marks.entry(id.clone()).or_default();
+        if req.all.unwrap_or(false) {
+            removed = bucket.len();
+            bucket.clear();
+        } else if let Some(path) = &req.path {
+            let before = bucket.len();
+            bucket.retain(|m| &m.path != path);
+            removed = before - bucket.len();
+        } else {
+            removed = 0;
+        }
     }
+    let _ = doc.update_tx.send(if req.all.unwrap_or(false) {
+        "unmark:all".to_string()
+    } else {
+        format!("unmark:{}", req.path.unwrap_or_default())
+    });
+    Json(ApiResponse::ok(serde_json::json!({"removed": removed}))).into_response()
 }
 
 // ─── GET /:id/marks — List all marks ───────────────────────────────────
@@ -922,12 +963,13 @@ async fn handle_marks(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> impl IntoResponse {
-    let doc = match get_doc(&state, &id).await {
-        Ok(d) => d,
-        Err(e) => return e.into_response(),
-    };
-    let result = send_op_for_doc(&doc, HandlerOp::GetMarks).await;
-    Json(ApiResponse::ok(result.data)).into_response()
+    let marks = state.marks.lock().await;
+    let bucket = marks.get(&id).cloned().unwrap_or_default();
+    Json(ApiResponse::ok(serde_json::json!({
+        "version": 1,
+        "marks": bucket,
+    })))
+    .into_response()
 }
 
 // ─── POST /:id/goto — Scroll to an element ─────────────────────────────
@@ -1076,6 +1118,128 @@ async fn handle_set(
         .into_response()
     } else {
         let _ = doc.update_tx.send("set".to_string());
+        Json(ApiResponse::ok(result.data)).into_response()
+    }
+}
+
+// ─── POST /:id/query — CSS-like selector query ─────────────────────────
+
+#[derive(Deserialize)]
+struct QueryRequest {
+    selector: String,
+}
+
+async fn handle_query(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(req): Json<QueryRequest>,
+) -> impl IntoResponse {
+    let doc = match get_doc(&state, &id).await {
+        Ok(d) => d,
+        Err(e) => return e.into_response(),
+    };
+    let result = send_op_for_doc(
+        &doc,
+        HandlerOp::Query {
+            selector: req.selector,
+        },
+    )
+    .await;
+    if result.data.get("error").is_some() {
+        Json(ApiResponse::err(
+            result.data["error"].as_str().unwrap_or("unknown error"),
+        ))
+        .into_response()
+    } else {
+        Json(ApiResponse::ok(result.data)).into_response()
+    }
+}
+
+// ─── POST /:id/add — Append a new element ───────────────────────────────
+
+#[derive(Deserialize)]
+struct AddRequest {
+    parent: String,
+    #[serde(rename = "type")]
+    element_type: String,
+    #[serde(default)]
+    position: Option<String>,
+    #[serde(default)]
+    properties: HashMap<String, String>,
+}
+
+fn parse_position_simple(s: Option<&str>) -> InsertPosition {
+    match s {
+        None => InsertPosition::Append,
+        Some(p) => {
+            if let Some(rest) = p.strip_prefix("after:") {
+                InsertPosition::AfterElement(rest.to_string())
+            } else if let Some(rest) = p.strip_prefix("before:") {
+                InsertPosition::BeforeElement(rest.to_string())
+            } else if let Ok(n) = p.parse::<usize>() {
+                InsertPosition::AtIndex(n)
+            } else {
+                InsertPosition::Append
+            }
+        }
+    }
+}
+
+async fn handle_add(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(req): Json<AddRequest>,
+) -> impl IntoResponse {
+    let doc = match get_doc(&state, &id).await {
+        Ok(d) => d,
+        Err(e) => return e.into_response(),
+    };
+    let position = parse_position_simple(req.position.as_deref());
+    let result = send_op_for_doc(
+        &doc,
+        HandlerOp::Add {
+            parent: req.parent,
+            element_type: req.element_type,
+            position,
+            properties: req.properties,
+        },
+    )
+    .await;
+    if result.data.get("error").is_some() {
+        Json(ApiResponse::err(
+            result.data["error"].as_str().unwrap_or("unknown error"),
+        ))
+        .into_response()
+    } else {
+        let _ = doc.update_tx.send("add".to_string());
+        Json(ApiResponse::ok(result.data)).into_response()
+    }
+}
+
+// ─── POST /:id/remove — Remove an element ───────────────────────────────
+
+#[derive(Deserialize)]
+struct RemoveRequest {
+    path: String,
+}
+
+async fn handle_remove(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(req): Json<RemoveRequest>,
+) -> impl IntoResponse {
+    let doc = match get_doc(&state, &id).await {
+        Ok(d) => d,
+        Err(e) => return e.into_response(),
+    };
+    let result = send_op_for_doc(&doc, HandlerOp::Remove { path: req.path }).await;
+    if result.data.get("error").is_some() {
+        Json(ApiResponse::err(
+            result.data["error"].as_str().unwrap_or("unknown error"),
+        ))
+        .into_response()
+    } else {
+        let _ = doc.update_tx.send("remove".to_string());
         Json(ApiResponse::ok(result.data)).into_response()
     }
 }

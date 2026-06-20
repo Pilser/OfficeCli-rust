@@ -80,7 +80,9 @@ impl CellValueType {
     pub fn from_attr(t: Option<&str>) -> Self {
         match t {
             Some("s") => Self::SharedString,
-            Some("str") => Self::InlineString,
+            // Both `t="str"` (formula result string) and `t="inlineStr"`
+            // (literal `<is><t>…</t></is>` content) are inline strings.
+            Some("str") | Some("inlineStr") => Self::InlineString,
             Some("b") => Self::Boolean,
             Some("e") => Self::Error,
             None | Some("n") => Self::Number,
@@ -138,10 +140,34 @@ pub struct WorkbookModel {
     pub shared_strings: Vec<String>,
     /// Pivot table definitions found in xl/pivotTables/
     pub pivot_tables: Vec<PivotTableDef>,
+    /// ListObjects (Excel Tables) parsed from xl/tables/tableN.xml.
+    pub tables: Vec<ListObjectDef>,
+}
+
+/// An Excel ListObject ("Table") parsed from xl/tables/tableN.xml.
+/// Carries the column-name → absolute-column-index map that the
+/// `row[col op val]` predicate resolver uses to match data rows.
+#[derive(Debug, Clone)]
+pub struct ListObjectDef {
+    pub name: String,
+    pub display_name: String,
+    /// Sheet name this table lives on. Resolved via the worksheet that owns
+    /// the table's reference range (we walk each sheet's cells).
+    pub sheet_name: String,
+    /// Part path of the table definition, e.g. `xl/tables/table1.xml`.
+    pub part_path: String,
+    /// Reference range as (start_row, start_col, end_row, end_col), 1-based.
+    pub range: (usize, usize, usize, usize),
+    /// Column display names in left-to-right order.
+    pub columns: Vec<String>,
+    /// Whether the first row of `range` is a header (default true).
+    pub header_row: bool,
+    /// Whether the last row of `range` is a totals row (default false).
+    pub totals_row: bool,
 }
 
 /// A pivot table definition extracted from xl/pivotTables/*.xml.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PivotTableDef {
     /// Pivot table name from the definition XML
     pub name: String,
@@ -153,6 +179,18 @@ pub struct PivotTableDef {
     pub field_count: usize,
     /// Part path within the ZIP (e.g. "xl/pivotTables/pivotTable1.xml")
     pub part_path: String,
+    /// Location reference (e.g. "Sheet1!A3:D20")
+    pub location: Option<String>,
+    /// Cache field names (from cache definition). Indexed by pivot field index.
+    pub cache_fields: Vec<String>,
+    /// Indices of pivot fields used as row fields.
+    pub row_fields: Vec<i32>,
+    /// Indices of pivot fields used as column fields.
+    pub col_fields: Vec<i32>,
+    /// Indices of pivot fields used as page/filter fields.
+    pub page_fields: Vec<i32>,
+    /// Data field specs: (name, function, source_field_index).
+    pub data_fields: Vec<(String, String, i32)>,
 }
 
 #[cfg(test)]

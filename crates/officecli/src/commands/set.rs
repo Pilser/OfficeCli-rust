@@ -108,10 +108,30 @@ pub fn handle_set(cmd: SetCommand, format: OutputFormat) -> Result<String, Handl
 
     match format {
         OutputFormat::Text => {
-            if unsupported.is_empty() {
+            // Find/replace-style handlers return synthetic entries like "replaced=N".
+            // Surface those as counts rather than as "unsupported" props.
+            let (counts, real_unsupported): (Vec<&String>, Vec<&String>) =
+                unsupported.iter().partition(|s| s.starts_with("replaced="));
+            if counts.is_empty() && real_unsupported.is_empty() {
                 Ok("OK".to_string())
+            } else if !counts.is_empty() && real_unsupported.is_empty() {
+                let joined: Vec<&str> = counts.iter().map(|s| s.as_str()).collect();
+                Ok(format!("OK ({})", joined.join(", ")))
             } else {
-                Ok(format!("OK (unsupported: {})", unsupported.join(", ")))
+                // Wrap real unsupported props through style_unsupported_hints so
+                // near-misses get a suggestion (e.g. "blod" → "did you mean: bold?").
+                let hint = handler_common::format_style_hint(
+                    &real_unsupported
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>(),
+                );
+                if let Some(msg) = hint {
+                    Ok(format!("OK ({})", msg))
+                } else {
+                    let joined: Vec<&str> = real_unsupported.iter().map(|s| s.as_str()).collect();
+                    Ok(format!("OK (unsupported: {})", joined.join(", ")))
+                }
             }
         }
         OutputFormat::Json => {

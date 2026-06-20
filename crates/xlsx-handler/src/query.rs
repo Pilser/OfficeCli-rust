@@ -12,6 +12,12 @@ use oxml::OxmlPackage;
 ///   "type=sharedString" — all cells of a specific type
 ///   "range=A1:C10" — cells in a range on the first sheet
 ///   "Sheet1!A1:C10" — cells in a range on a specific sheet
+///   "pivot" — all pivot tables (read-only summary)
+///   "tables" — all ListObjects (Excel Tables)
+///   "Sheet!row[Col op Val]" / "row[Col op Val]" — table rows where every
+///     column predicate holds. `op` ∈ {=, !=, >, >=, <, <=, contains,
+///     startswith, endswith}. Column key may use header name (preferred) or
+///     column letter; a `col.`/`column.` prefix forces column interpretation.
 pub fn query_cells(
     package: &OxmlPackage,
     selector: &str,
@@ -19,6 +25,12 @@ pub fn query_cells(
     let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
 
     let mut results = Vec::new();
+
+    // row[...] predicate — must be checked first because the leading part
+    // may be a sheet name containing `!`.
+    if selector.contains("row[") {
+        return query_rows_by_predicate(&model, selector);
+    }
 
     // Parse the selector
     if let Some(sheet_name) = selector.strip_prefix("sheet=") {
@@ -44,15 +56,11 @@ pub fn query_cells(
     } else if selector == "pivot" {
         // All pivot tables
         for pt in &model.pivot_tables {
-            let path = format!("/pivot/\"{}\"", pt.name);
-            let mut node = DocumentNode::new(&path, "pivot-table");
-            node = node.with_text(pt.name.clone());
-            let range_info = pt.source_range.as_deref().unwrap_or("unknown");
-            node = node.with_preview(format!(
-                "\"{}\" — {} fields, source: {}",
-                pt.name, pt.field_count, range_info
-            ));
-            results.push(node);
+            results.push(make_pivot_node(pt));
+        }
+    } else if selector == "tables" {
+        for tbl in &model.tables {
+            results.push(make_table_node(tbl));
         }
     } else if let Some(type_name) = selector.strip_prefix("type=") {
         // Type selector
@@ -133,6 +141,398 @@ pub fn query_cells(
     Ok(results)
 }
 
+/// Parse `[SheetName!]row[col op val and col2 op val2 ...]` and return the
+/// matching data rows. AND-only; OR/parens are out of scope for v1.
+fn query_rows_by_predicate(
+    model: &WorkbookModel,
+    selector: &str,
+) -> Result<Vec<DocumentNode>, HandlerError> {
+    let (sheet_filter, predicate_str) = split_row_predicate(selector).ok_or_else(|| {
+        HandlerError::InvalidArgument(format!("malformed row predicate: {}", selector))
+    })?;
+
+    let predicates = parse_predicate_list(predicate_str)
+        .map_err(|e| HandlerError::InvalidArgument(format!("row predicate: {}", e)))?;
+    if predicates.is_empty() {
+        return Err(HandlerError::InvalidArgument(
+            "row predicate has no conditions".into(),
+        ));
+    }
+
+    // Auto-bind: find the single ListObject that owns every referenced column.
+    let mut candidates: Vec<&ListObjectDef> = Vec::new();
+    for tbl in &model.tables {
+        if let Some(sheet_filter) = sheet_filter {
+            if !tbl.sheet_name.eq_ignore_ascii_case(sheet_filter) {
+                continue;
+            }
+        }
+        if predicates
+            .iter()
+            .all(|p| resolve_column_index(tbl, &p.key).is_some())
+        {
+            candidates.push(tbl);
+        }
+    }
+
+    if candidates.is_empty() {
+        let cols: Vec<String> = predicates.iter().map(|p| format!("'{}'", p.key)).collect();
+        let scope = sheet_filter.unwrap_or("any sheet");
+        return Err(HandlerError::InvalidArgument(format!(
+            "row predicate found no Excel Table on {} with column(s) {}. \
+             Column predicates resolve header names (or column letters) against a ListObject.",
+            scope,
+            cols.join(", ")
+        )));
+    }
+    if candidates.len() > 1 {
+        let names: Vec<String> = candidates
+            .iter()
+            .map(|t| format!("{}!{}", t.sheet_name, t.name))
+            .collect();
+        return Err(HandlerError::InvalidArgument(format!(
+            "row predicate is ambiguous — column(s) exist in {} tables ({}). \
+             Scope by sheet, e.g. SheetName!row[...].",
+            candidates.len(),
+            names.join(", ")
+        )));
+    }
+
+    let tbl = candidates[0];
+    let ws = model
+        .sheets
+        .iter()
+        .find(|s| s.name.eq_ignore_ascii_case(&tbl.sheet_name))
+        .ok_or_else(|| HandlerError::PathNotFound(format!("sheet '{}'", tbl.sheet_name)))?;
+
+    let data_r1 = tbl.range.0 + if tbl.header_row { 1 } else { 0 };
+    let data_r2 = tbl.range.2 - if tbl.totals_row { 1 } else { 0 };
+
+    let mut results = Vec::new();
+    for r in data_r1..=data_r2 {
+        let mut all_match = true;
+        let mut probe_values: Vec<(String, String)> = Vec::new();
+        for p in &predicates {
+            let abs_col = resolve_column_index(tbl, &p.key).unwrap();
+            let cell = ws.cells.get(&(r, abs_col));
+            let val = cell.map(|c| c.display_value.as_str()).unwrap_or("");
+            if !eval_predicate(val, p) {
+                all_match = false;
+                break;
+            }
+            probe_values.push((p.key.clone(), val.to_string()));
+        }
+        if !all_match {
+            continue;
+        }
+
+        let mut node = DocumentNode::new(&format!("/{}/row[{}]", tbl.sheet_name, r), "row")
+            .with_preview(r.to_string());
+        for (k, v) in probe_values {
+            node = node.with_format(&k, serde_json::Value::String(v));
+        }
+        node = node.with_format("matchedTable", serde_json::Value::String(tbl.name.clone()));
+        results.push(node);
+    }
+
+    Ok(results)
+}
+
+/// Split `[SheetName!]row[...]` into `(Option<SheetName>, "[...]")`.
+fn split_row_predicate(selector: &str) -> Option<(Option<&str>, &str)> {
+    let bang_idx = selector.find('!');
+    let (sheet, rest) = match bang_idx {
+        Some(i) => (Some(&selector[..i]), &selector[i + 1..]),
+        None => (None, selector),
+    };
+    let pred_start = rest.find("row[")? + "row[".len();
+    let pred_end = rest.rfind(']')?;
+    if pred_end < pred_start {
+        return None;
+    }
+    Some((sheet, &rest[pred_start..pred_end]))
+}
+
+/// A single leaf predicate: `col_key op value`.
+struct Predicate {
+    key: String,
+    op: PredicateOp,
+    value: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PredicateOp {
+    Eq,
+    Ne,
+    Gt,
+    Ge,
+    Lt,
+    Le,
+    Contains,
+    StartsWith,
+    EndsWith,
+}
+
+/// Parse a list of predicates joined by `and`/`AND`/`&&`. Returns Err on
+/// malformed input.
+fn parse_predicate_list(s: &str) -> Result<Vec<Predicate>, String> {
+    s.split("and")
+        .flat_map(|chunk| {
+            chunk
+                .split("AND")
+                .flat_map(|c| c.split("&&").collect::<Vec<_>>())
+        })
+        .map(parse_single_predicate)
+        .collect()
+}
+
+fn parse_single_predicate(s: &str) -> Result<Predicate, String> {
+    let s = s.trim();
+    // Try longest-op-first to disambiguate `>=` from `>`.
+    for (op_str, op) in [
+        ("!=", PredicateOp::Ne),
+        (">=", PredicateOp::Ge),
+        ("<=", PredicateOp::Le),
+        ("=", PredicateOp::Eq),
+        (">", PredicateOp::Gt),
+        ("<", PredicateOp::Lt),
+    ] {
+        if let Some(idx) = s.find(op_str) {
+            let key = s[..idx].trim().to_string();
+            let value = s[idx + op_str.len()..].trim().to_string();
+            if key.is_empty() {
+                return Err(format!("missing column name in '{}'", s));
+            }
+            return Ok(Predicate {
+                key,
+                op,
+                value: unquote(&value),
+            });
+        }
+    }
+    // Word ops: contains X / contains(X) / contains "X"
+    let lower = s.to_ascii_lowercase();
+    for (op_word, op) in [
+        ("contains", PredicateOp::Contains),
+        ("startswith", PredicateOp::StartsWith),
+        ("endswith", PredicateOp::EndsWith),
+    ] {
+        if let Some(rest) = lower.strip_prefix(&format!("{} ", op_word)) {
+            // rest borrows the original `s` via lower → safe to slice back.
+            let value = &s[rest.len() + op_word.len() + 1..];
+            return Ok(Predicate {
+                key: String::new(),
+                op,
+                value: unquote(value),
+            });
+        }
+        if let Some(rest) = lower.strip_prefix(&format!("{}(", op_word)) {
+            let value = &s[rest.len() + op_word.len() + 1..];
+            let value = value.trim_end_matches(')').trim();
+            return Ok(Predicate {
+                key: String::new(),
+                op,
+                value: unquote(value),
+            });
+        }
+    }
+    Err(format!(
+        "could not parse '{}' — expected `col op val` (ops: =, !=, >, >=, <, <=, contains, startswith, endswith)",
+        s
+    ))
+}
+
+fn unquote(s: &str) -> String {
+    let s = s.trim();
+    if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
+        s[1..s.len() - 1].to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+/// Resolve a predicate key (column name or letter, with optional `col.` /
+/// `column.` prefix) to an absolute column index inside `tbl.range`.
+fn resolve_column_index(tbl: &ListObjectDef, key: &str) -> Option<usize> {
+    let bare = strip_col_prefix(key);
+    let (_, c1, _, c2) = tbl.range;
+    // Header name wins over a column letter (case-insensitive).
+    let name_idx = tbl
+        .columns
+        .iter()
+        .position(|c| c.eq_ignore_ascii_case(bare));
+    if let Some(i) = name_idx {
+        return Some(c1 + i);
+    }
+    // Try column-letter form (A–ZZ).
+    if bare.chars().all(|c| c.is_ascii_alphabetic()) && bare.len() <= 3 {
+        let upper = bare.to_ascii_uppercase();
+        if let Some(n) = col_letters_to_num_pub(&upper) {
+            if n >= c1 && n <= c2 {
+                return Some(n);
+            }
+        }
+    }
+    None
+}
+
+fn strip_col_prefix(key: &str) -> &str {
+    let lower = key.to_ascii_lowercase();
+    if lower.starts_with("column.") {
+        &key["column.".len()..]
+    } else if lower.starts_with("col.") {
+        &key["col.".len()..]
+    } else {
+        key
+    }
+}
+
+/// Public re-export of the private `col_letters_to_num` to avoid a duplicate
+/// implementation. Returns the 1-based column index for `A`..`ZZZ`.
+fn col_letters_to_num_pub(letters: &str) -> Option<usize> {
+    let mut n: usize = 0;
+    for ch in letters.chars() {
+        if !ch.is_ascii_uppercase() {
+            return None;
+        }
+        n = n * 26 + (ch as usize - 'A' as usize + 1);
+    }
+    if n == 0 {
+        return None;
+    }
+    Some(n)
+}
+
+fn eval_predicate(cell_value: &str, p: &Predicate) -> bool {
+    match p.op {
+        PredicateOp::Eq => cell_value == p.value,
+        PredicateOp::Ne => cell_value != p.value,
+        PredicateOp::Gt | PredicateOp::Ge | PredicateOp::Lt | PredicateOp::Le => {
+            // Numeric-aware compare when both sides parse as f64, else lexicographic.
+            let lhs: f64 = match cell_value.parse() {
+                Ok(v) => v,
+                Err(_) => return lexical_compare(cell_value, &p.value, p.op),
+            };
+            let rhs: f64 = match p.value.parse() {
+                Ok(v) => v,
+                Err(_) => return lexical_compare(cell_value, &p.value, p.op),
+            };
+            match p.op {
+                PredicateOp::Gt => lhs > rhs,
+                PredicateOp::Ge => lhs >= rhs,
+                PredicateOp::Lt => lhs < rhs,
+                PredicateOp::Le => lhs <= rhs,
+                _ => unreachable!(),
+            }
+        }
+        PredicateOp::Contains => cell_value.contains(&p.value),
+        PredicateOp::StartsWith => cell_value.starts_with(&p.value),
+        PredicateOp::EndsWith => cell_value.ends_with(&p.value),
+    }
+}
+
+fn lexical_compare(lhs: &str, rhs: &str, op: PredicateOp) -> bool {
+    match op {
+        PredicateOp::Gt => lhs > rhs,
+        PredicateOp::Ge => lhs >= rhs,
+        PredicateOp::Lt => lhs < rhs,
+        PredicateOp::Le => lhs <= rhs,
+        _ => unreachable!(),
+    }
+}
+
+fn make_table_node(tbl: &ListObjectDef) -> DocumentNode {
+    let (r1, c1, r2, c2) = tbl.range;
+    let path = format!("/{}/table[{}]", tbl.sheet_name, tbl.name);
+    let col_count = tbl.columns.len();
+    let preview = format!(
+        "\"{}\" — {} column(s), range {}{}:{}{}",
+        tbl.name,
+        col_count,
+        col_num_to_letters(c1),
+        r1,
+        ':',
+        col_num_to_letters(c2)
+    );
+    // Append end-row (kept separate to avoid nested format!).
+    let preview = format!("{}{}", preview, r2);
+    DocumentNode::new(&path, "table")
+        .with_text(tbl.name.clone())
+        .with_preview(preview)
+}
+
+/// Resolve a pivot-field index to its cacheField name, falling back to the
+/// numeric index when the cache can't supply a name.
+fn resolve_pivot_field_name(pt: &PivotTableDef, idx: i32) -> String {
+    let i = idx as usize;
+    if let Some(name) = pt.cache_fields.get(i) {
+        if !name.is_empty() {
+            return name.clone();
+        }
+    }
+    idx.to_string()
+}
+
+fn make_pivot_node(pt: &PivotTableDef) -> DocumentNode {
+    let path = format!("/pivot/\"{}\"", pt.name);
+    let mut node = DocumentNode::new(&path, "pivot-table").with_text(pt.name.clone());
+    node = node.with_format(
+        "fieldCount",
+        serde_json::Value::Number(pt.field_count.into()),
+    );
+    if let Some(loc) = &pt.location {
+        node = node.with_format("location", serde_json::Value::String(loc.clone()));
+    }
+    if let Some(src) = &pt.source_range {
+        node = node.with_format("source", serde_json::Value::String(src.clone()));
+    }
+    if let Some(cid) = &pt.cache_id {
+        node = node.with_format("cacheId", serde_json::Value::String(cid.clone()));
+    }
+    if !pt.row_fields.is_empty() {
+        let names: Vec<String> = pt
+            .row_fields
+            .iter()
+            .map(|&i| resolve_pivot_field_name(pt, i))
+            .collect();
+        node = node.with_format("rows", serde_json::Value::String(names.join(",")));
+    }
+    if !pt.col_fields.is_empty() {
+        let names: Vec<String> = pt
+            .col_fields
+            .iter()
+            .map(|&i| resolve_pivot_field_name(pt, i))
+            .collect();
+        node = node.with_format("cols", serde_json::Value::String(names.join(",")));
+    }
+    if !pt.page_fields.is_empty() {
+        let names: Vec<String> = pt
+            .page_fields
+            .iter()
+            .map(|&i| resolve_pivot_field_name(pt, i))
+            .collect();
+        node = node.with_format("filters", serde_json::Value::String(names.join(",")));
+    }
+    node = node.with_format(
+        "dataFieldCount",
+        serde_json::Value::Number(pt.data_fields.len().into()),
+    );
+    for (i, (name, func, fld)) in pt.data_fields.iter().enumerate() {
+        let field_name = resolve_pivot_field_name(pt, *fld);
+        let composite = format!("{}:{}:{}", name, func, field_name);
+        node = node.with_format(
+            &format!("dataField{}", i + 1),
+            serde_json::Value::String(composite),
+        );
+    }
+    let range_info = pt.source_range.as_deref().unwrap_or("unknown");
+    node = node.with_preview(format!(
+        "\"{}\" — {} fields, source: {}",
+        pt.name, pt.field_count, range_info
+    ));
+    node
+}
+
 fn make_cell_node(ws: &Worksheet, cell: &Cell) -> DocumentNode {
     let path = format!("/{}{}", ws.name, cell.ref_str);
     let mut node = DocumentNode::new(&path, "cell").with_text(cell.display_value.clone());
@@ -142,4 +542,55 @@ fn make_cell_node(ws: &Worksheet, cell: &Cell) -> DocumentNode {
     }
 
     node
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_handles_sheet_prefix_and_bare() {
+        let (s, p) = split_row_predicate("Sheet1!row[A>5]").unwrap();
+        assert_eq!(s, Some("Sheet1"));
+        assert_eq!(p, "A>5");
+
+        let (s, p) = split_row_predicate("row[Name=Bob]").unwrap();
+        assert_eq!(s, None);
+        assert_eq!(p, "Name=Bob");
+    }
+
+    #[test]
+    fn parse_predicate_eq_ne_gt() {
+        let p = parse_single_predicate("Age > 30").unwrap();
+        assert_eq!(p.key, "Age");
+        assert_eq!(p.op, PredicateOp::Gt);
+        assert_eq!(p.value, "30");
+
+        let p = parse_single_predicate("Name != Bob").unwrap();
+        assert_eq!(p.op, PredicateOp::Ne);
+
+        let p = parse_single_predicate("col.B >= 5").unwrap();
+        assert_eq!(p.key, "col.B");
+        assert_eq!(p.op, PredicateOp::Ge);
+    }
+
+    #[test]
+    fn parse_predicate_list_joins_with_and() {
+        let list = parse_predicate_list("A>5 and B<10").unwrap();
+        assert_eq!(list.len(), 2);
+    }
+
+    #[test]
+    fn eval_numeric_and_lexical() {
+        let p = Predicate {
+            key: "X".into(),
+            op: PredicateOp::Gt,
+            value: "5".into(),
+        };
+        assert!(eval_predicate("10", &p));
+        assert!(!eval_predicate("3", &p));
+        // Non-numeric → lexical compare ("5" sorts before any ASCII letter).
+        assert!(eval_predicate("z", &p));
+        assert!(eval_predicate("a", &p));
+    }
 }

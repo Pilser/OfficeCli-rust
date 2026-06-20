@@ -198,6 +198,32 @@ fn get_tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            name: "find_replace".to_string(),
+            description: "Find and replace text across the document. Works on Word (.docx), \
+                           Excel (.xlsx), and PowerPoint (.pptx). Re-routes the set handler with \
+                           find/replace properties; honors regex, caseSensitive, and wholeWord."
+                .to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "file": { "type": "string", "description": "Path to the document file" },
+                    "path": {
+                        "type": "string",
+                        "description": "Scope path. Use \"/\" or \"/body\" for the whole \
+                                        document (Word), or \"/SheetName\" (Excel), or \
+                                        \"/slide[N]\" (PowerPoint). For Word you can also target \
+                                        a single paragraph like \"/body/p[2]\"."
+                    },
+                    "find": { "type": "string", "description": "Literal text or regex pattern to find" },
+                    "replace": { "type": "string", "description": "Replacement text. Supports $1/${name} capture refs when regex=true." },
+                    "regex": { "type": "boolean", "default": false, "description": "Treat find as a regex pattern" },
+                    "caseSensitive": { "type": "boolean", "default": true, "description": "Case-sensitive match (default true)" },
+                    "wholeWord": { "type": "boolean", "default": false, "description": "Match whole words only" }
+                },
+                "required": ["file", "find", "replace"]
+            }),
+        },
+        ToolDefinition {
             name: "save".to_string(),
             description: "Save modifications to the document file".to_string(),
             input_schema: serde_json::json!({
@@ -303,7 +329,10 @@ fn execute_tool(name: &str, params: &HashMap<String, Value>) -> Result<Value, St
         .and_then(|v| v.as_str())
         .ok_or_else(|| "missing required parameter: file".to_string())?;
 
-    let editable = matches!(name, "set" | "add" | "remove" | "move" | "save");
+    let editable = matches!(
+        name,
+        "set" | "add" | "remove" | "move" | "save" | "find_replace"
+    );
 
     let handler = crate::open_handler(file, editable)
         .map_err(|e| format!("failed to open document: {}", e))?;
@@ -446,6 +475,55 @@ fn execute_tool(name: &str, params: &HashMap<String, Value>) -> Result<Value, St
             .extract_text_with_offsets()
             .map(|map| serde_json::to_value(map).unwrap_or_default())
             .map_err(|e| e.to_string()),
+        "find_replace" => {
+            let find = params
+                .get("find")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "missing required parameter: find".to_string())?
+                .to_string();
+            let replace = params
+                .get("replace")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "missing required parameter: replace".to_string())?
+                .to_string();
+            // Default scope is the whole document.
+            let path = params
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("/")
+                .to_string();
+            let mut props = HashMap::new();
+            props.insert("find".to_string(), find);
+            props.insert("replace".to_string(), replace);
+            if let Some(true) = params.get("regex").and_then(|v| v.as_bool()) {
+                props.insert("regex".to_string(), "true".to_string());
+            }
+            if let Some(b) = params.get("caseSensitive").and_then(|v| v.as_bool()) {
+                props.insert(
+                    "caseSensitive".to_string(),
+                    if b { "true" } else { "false" }.to_string(),
+                );
+            }
+            if let Some(true) = params.get("wholeWord").and_then(|v| v.as_bool()) {
+                props.insert("wholeWord".to_string(), "true".to_string());
+            }
+            handler
+                .set(&path, &props)
+                .and_then(|out| {
+                    handler.save()?;
+                    // Handler returns "replaced=N" in the unsupported Vec.
+                    let replaced = out
+                        .iter()
+                        .find_map(|s| s.strip_prefix("replaced=").and_then(|n| n.parse::<usize>().ok()))
+                        .unwrap_or(0);
+                    Ok(serde_json::json!({
+                        "result": "OK",
+                        "replaced": replaced,
+                        "unsupported": out.iter().filter(|s| !s.starts_with("replaced=")).cloned().collect::<Vec<_>>()
+                    }))
+                })
+                .map_err(|e| e.to_string())
+        }
         "save" => handler
             .save()
             .map(|_| serde_json::json!({"result": "saved"}))

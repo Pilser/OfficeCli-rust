@@ -5,6 +5,7 @@ mod convert;
 mod create;
 mod dump;
 mod extract_text;
+mod format_handler_session;
 mod get;
 mod help;
 mod import;
@@ -13,6 +14,7 @@ mod install;
 mod merge;
 mod move_element;
 mod plugins;
+mod plugin_process;
 mod query;
 mod raw;
 mod raw_set;
@@ -23,6 +25,12 @@ mod set;
 mod swap;
 mod validate;
 mod view;
+mod watch_client;
+
+pub use watch_client::{default_id, get_json, post_json, resolve_port};
+
+pub use format_handler_session::FormatHandlerProxy;
+pub use plugin_process::resolve_format_handler;
 
 use clap::Args;
 use handler_common::{DocumentHandler, HandlerError};
@@ -101,6 +109,10 @@ pub struct WatchCommand {
 pub struct UnwatchCommand {
     /// Document file path
     pub file: String,
+
+    /// Port the watch server is running on (default: 26315)
+    #[arg(short, long)]
+    pub port: Option<u16>,
 }
 
 /// Mark a document element with advisory properties (operates on running watch)
@@ -115,6 +127,14 @@ pub struct MarkCommand {
     /// Mark property: find=..., color=..., note=..., tofix=..., regex=true
     #[arg(long)]
     pub prop: Option<Vec<String>>,
+
+    /// Port the watch server is running on (default: 26315)
+    #[arg(short, long)]
+    pub port: Option<u16>,
+
+    /// Document id registered with the watch server (default: file stem)
+    #[arg(short, long)]
+    pub id: Option<String>,
 }
 
 /// Remove marks from a document element (operates on running watch)
@@ -130,6 +150,14 @@ pub struct UnmarkCommand {
     /// Remove all marks for this file
     #[arg(long)]
     pub all: bool,
+
+    /// Port the watch server is running on (default: 26315)
+    #[arg(short, long)]
+    pub port: Option<u16>,
+
+    /// Document id registered with the watch server (default: file stem)
+    #[arg(short, long)]
+    pub id: Option<String>,
 }
 
 /// List all marks on a document (operates on running watch)
@@ -137,6 +165,14 @@ pub struct UnmarkCommand {
 pub struct MarksCommand {
     /// Document file path
     pub file: String,
+
+    /// Port the watch server is running on (default: 26315)
+    #[arg(short, long)]
+    pub port: Option<u16>,
+
+    /// Document id registered with the watch server (default: file stem)
+    #[arg(short, long)]
+    pub id: Option<String>,
 }
 
 /// Scroll the running watch viewer to an element (operates on running watch)
@@ -147,6 +183,14 @@ pub struct GotoCommand {
 
     /// Element path to scroll to (e.g. /body/p[5])
     pub path: String,
+
+    /// Port the watch server is running on (default: 26315)
+    #[arg(short, long)]
+    pub port: Option<u16>,
+
+    /// Document id registered with the watch server (default: file stem)
+    #[arg(short, long)]
+    pub id: Option<String>,
 }
 
 /// Internal: print the Unix socket path for a file's resident server
@@ -270,12 +314,13 @@ pub use view::handle_view;
 
 /// Handle `mark` command — attach advisory mark to element via watch
 pub fn handle_mark(cmd: MarkCommand, json: bool) -> Result<String, HandlerError> {
-    // Parse props
-    let mut find = None;
-    let mut color = None;
-    let mut note = None;
-    let mut tofix = None;
+    let mut entry = serde_json::json!({ "path": cmd.path });
     if let Some(props) = &cmd.prop {
+        let mut find = None;
+        let mut color = None;
+        let mut note = None;
+        let mut tofix = None;
+        let mut regex = false;
         for p in props {
             if let Some(eq) = p.find('=') {
                 let key = &p[..eq];
@@ -285,25 +330,32 @@ pub fn handle_mark(cmd: MarkCommand, json: bool) -> Result<String, HandlerError>
                     "color" => color = Some(val.to_string()),
                     "note" => note = Some(val.to_string()),
                     "tofix" => tofix = Some(val.to_string()),
+                    "regex" => regex = val.eq_ignore_ascii_case("true") || val == "1",
                     _ => eprintln!("Warning: unknown property '{}' for mark, ignored. Known: find, color, note, tofix, regex.", key),
                 }
             }
         }
+        entry["find"] = serde_json::json!(find);
+        entry["color"] = serde_json::json!(color);
+        entry["note"] = serde_json::json!(note);
+        entry["tofix"] = serde_json::json!(tofix);
+        entry["regex"] = serde_json::json!(regex);
     }
-
-    // For now, just report the mark. Full implementation would send to watch server.
+    let port = resolve_port(cmd.port);
+    let id = cmd.id.clone().unwrap_or_else(|| default_id(&cmd.file));
+    let result = post_json(port, &format!("/{}/mark", id), &entry)?;
     if json {
-        let result = serde_json::json!({
-            "id": format!("m{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() % 1000),
-            "path": cmd.path,
-            "find": find,
-            "color": color,
-            "note": note,
-            "tofix": tofix
-        });
         Ok(result.to_string())
     } else {
-        Ok(format!("Marked {} (id=)", cmd.path))
+        let id = result.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let total = result
+            .get("total_marks")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        Ok(format!(
+            "Marked {} (id={}, {} marks total on this document)",
+            cmd.path, id, total
+        ))
     }
 }
 
@@ -319,35 +371,55 @@ pub fn handle_unmark(cmd: UnmarkCommand, json: bool) -> Result<String, HandlerEr
             "Specify either --path or --all, not both.".to_string(),
         ));
     }
-    // For now, report success. Full impl would send to watch server.
-    let msg = if cmd.all {
-        "Removed all marks".to_string()
-    } else {
-        format!("Removed mark from {}", cmd.path.as_deref().unwrap_or(""))
-    };
+    let body = serde_json::json!({
+        "path": cmd.path,
+        "all": cmd.all,
+    });
+    let port = resolve_port(cmd.port);
+    let id = cmd.id.clone().unwrap_or_else(|| default_id(&cmd.file));
+    let result = post_json(port, &format!("/{}/unmark", id), &body)?;
+    let removed = result.get("removed").and_then(|v| v.as_u64()).unwrap_or(0);
     if json {
-        Ok(serde_json::json!({"removed": 1, "message": msg}).to_string())
+        Ok(result.to_string())
+    } else if cmd.all {
+        Ok(format!("Removed {} mark(s) (all)", removed))
     } else {
-        Ok(msg)
+        Ok(format!(
+            "Removed {} mark(s) from {}",
+            removed,
+            cmd.path.as_deref().unwrap_or("")
+        ))
     }
 }
 
 /// Handle `marks` command — list all marks
-pub fn handle_marks(cmd: MarksCommand, _json: bool) -> Result<String, HandlerError> {
-    // For now, report no marks. Full impl would query watch server.
-    Ok(format!(
-        "(no marks for {}) — no watch process running",
-        cmd.file
-    ))
+pub fn handle_marks(cmd: MarksCommand, json: bool) -> Result<String, HandlerError> {
+    let port = resolve_port(cmd.port);
+    let id = cmd.id.clone().unwrap_or_else(|| default_id(&cmd.file));
+    let result = get_json(port, &format!("/{}/marks", id))?;
+    let marks = result
+        .get("marks")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    if json {
+        Ok(result.to_string())
+    } else if marks == 0 {
+        Ok(format!("No marks on {}", cmd.file))
+    } else {
+        Ok(format!("{} mark(s) on {}", marks, cmd.file))
+    }
 }
 
 /// Handle `goto` command — scroll watch viewer to element
 pub fn handle_goto(cmd: GotoCommand, json: bool) -> Result<String, HandlerError> {
-    // For now, just report. Full impl would send scroll target to watch SSE.
-    let msg = format!("Scrolled watcher(s) to {}", cmd.path);
+    let body = serde_json::json!({ "path": cmd.path });
+    let port = resolve_port(cmd.port);
+    let id = cmd.id.clone().unwrap_or_else(|| default_id(&cmd.file));
+    let result = post_json(port, &format!("/{}/goto", id), &body)?;
     if json {
-        Ok(serde_json::json!({"scrolled_to": cmd.path}).to_string())
+        Ok(result.to_string())
     } else {
-        Ok(msg)
+        Ok(format!("Scrolled to {}", cmd.path))
     }
 }

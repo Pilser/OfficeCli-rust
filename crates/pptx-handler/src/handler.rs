@@ -66,7 +66,27 @@ impl DocumentHandler for PptxHandler {
     }
 
     fn view_as_stats_json(&self) -> Result<serde_json::Value, HandlerError> {
-        crate::view::view_as_stats_json(&self.package.borrow())
+        let mut stats = crate::view::view_as_stats_json(&self.package.borrow())?;
+        // Merge docProps/app.xml extended properties — see docx_handler.
+        if let Ok(app_xml) = self.package.borrow().read_part_bytes("docProps/app.xml") {
+            let mut node = DocumentNode::new("/", "root");
+            handler_common::extended_properties::populate_extended_properties(
+                Some(app_xml.as_slice()),
+                &mut node,
+            );
+            if let serde_json::Value::Object(ref mut map) = stats {
+                if !node.format.is_empty() {
+                    let mut extended = serde_json::Map::new();
+                    for (k, v) in node.format.iter() {
+                        if let Some(val) = v {
+                            extended.insert(k.clone(), val.clone());
+                        }
+                    }
+                    map.insert("extended".into(), serde_json::Value::Object(extended));
+                }
+            }
+        }
+        Ok(stats)
     }
 
     fn get(&self, path: &str, depth: usize) -> Result<DocumentNode, HandlerError> {
@@ -86,6 +106,10 @@ impl DocumentHandler for PptxHandler {
             return Err(HandlerError::OperationFailed(
                 "package opened in read-only mode".to_string(),
             ));
+        }
+        // Find/replace legitimately targets "/" (whole deck); other sets need scope.
+        if !properties.contains_key("find") {
+            handler_common::ensure_scoped(path, "set")?;
         }
         if let Some(range_paths_str) = properties.get("range_paths") {
             let segments = handler_common::parse_range_paths(range_paths_str).map_err(|e| {
@@ -129,6 +153,7 @@ impl DocumentHandler for PptxHandler {
                 "package opened in read-only mode".to_string(),
             ));
         }
+        handler_common::ensure_scoped(path, "remove")?;
         crate::mutations::remove_element(&mut self.package.borrow_mut(), path)
     }
 

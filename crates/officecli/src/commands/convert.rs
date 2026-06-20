@@ -132,6 +132,125 @@ pub fn handle_convert(
         )));
     }
 
+    // If the target is a foreign extension that the built-in native handlers
+    // don't speak, delegate to a plugin exporter before falling back to the
+    // built-in engines (LibreOffice / oxide). This makes
+    // `officecli convert foo.docx bar.html` route through whatever
+    // exporter plugin is installed for `.html`.
+    if !is_native_office_ext(&output_ext)
+        && !is_native_office_ext(&input_ext)
+    {
+        // Both foreign: the user wants, say, .doc → .html. We can do this
+        // in two hops (dump-reader to native, then exporter to target) if
+        // both plugins are installed.
+        if let Some(dump_result) = try_plugin_dump(&input_ext, &cmd.file)? {
+            if let Some(export_result) = try_plugin_export(
+                dump_result.target_family(),
+                &output_ext,
+                &dump_result.converted_path,
+                &output_path,
+            )? {
+                // Best-effort cleanup of the intermediate native sibling.
+                let _ = std::fs::remove_file(&dump_result.converted_path);
+                return match format {
+                    handler_common::OutputFormat::Text => Ok(format!(
+                        "Converted '{}' -> '{}' via dump-reader '{}' then exporter '{}'",
+                        cmd.file,
+                        export_result.output_path,
+                        dump_result.plugin_name,
+                        export_result.plugin_name
+                    )),
+                    handler_common::OutputFormat::Json => Ok(serde_json::json!({
+                        "input": cmd.file,
+                        "output": export_result.output_path,
+                        "from_format": input_ext,
+                        "to_format": output_ext,
+                        "engine": "plugin-pipeline",
+                        "stages": [dump_result.plugin_name, export_result.plugin_name],
+                    })
+                    .to_string()),
+                };
+            }
+            // No exporter for native→foreign here — fall back to error below.
+            let _ = std::fs::remove_file(&dump_result.converted_path);
+        }
+        return Err(HandlerError::UnsupportedMode(format!(
+            "cannot convert .{} → .{} via plugin (need dump-reader + exporter). \
+             See plugins/plugin-protocol.md.",
+            input_ext, output_ext
+        )));
+    }
+    if !is_native_office_ext(&output_ext)
+        && is_native_office_ext(&input_ext)
+    {
+        if let Some(export_result) = try_plugin_export(&input_ext, &output_ext, &cmd.file, &output_path)? {
+            return match format {
+                handler_common::OutputFormat::Text => Ok(format!(
+                    "Converted '{}' -> '{}' via plugin '{}'",
+                    cmd.file, export_result.output_path, export_result.plugin_name
+                )),
+                handler_common::OutputFormat::Json => Ok(serde_json::json!({
+                    "input": cmd.file,
+                    "output": export_result.output_path,
+                    "from_format": input_ext,
+                    "to_format": output_ext,
+                    "engine": "plugin",
+                    "plugin": export_result.plugin_name,
+                })
+                .to_string()),
+            };
+        }
+        // No plugin — fall through to existing engines below.
+    }
+
+    // Foreign source → native target: try a dump-reader plugin first.
+    // A `.doc → .docx` invocation should route to the installed dump-reader
+    // before falling back to LibreOffice, since dump-readers preserve more
+    // structure than LibreOffice's generic conversion.
+    if !is_native_office_ext(&input_ext)
+        && is_native_office_ext(&output_ext)
+        && output_ext == family_from_foreign(&input_ext)
+    {
+        if let Some(dump_result) = try_plugin_dump(&input_ext, &cmd.file)? {
+            // The dump-reader wrote to its own sibling path; if that's not
+            // the same as `output_path`, copy across (or rename).
+            if dump_result.converted_path != output_path.to_string_lossy() {
+                std::fs::rename(&dump_result.converted_path, &output_path)
+                    .or_else(|_| {
+                        std::fs::copy(&dump_result.converted_path, &output_path)
+                            .map(|_| ())
+                    })
+                    .map_err(|e| {
+                        HandlerError::OperationFailed(format!(
+                            "failed to move dump-reader output to '{}': {}",
+                            output_path.display(),
+                            e
+                        ))
+                    })?;
+            }
+            return match format {
+                handler_common::OutputFormat::Text => Ok(format!(
+                    "Converted '{}' -> '{}' via dump-reader plugin '{}' ({} items)",
+                    cmd.file,
+                    output_path.display(),
+                    dump_result.plugin_name,
+                    dump_result.items_replayed
+                )),
+                handler_common::OutputFormat::Json => Ok(serde_json::json!({
+                    "input": cmd.file,
+                    "output": output_path.to_string_lossy(),
+                    "from_format": input_ext,
+                    "to_format": output_ext,
+                    "engine": "plugin-dump-reader",
+                    "plugin": dump_result.plugin_name,
+                    "items_replayed": dump_result.items_replayed,
+                })
+                .to_string()),
+            };
+        }
+        // No dump-reader installed — fall through to LibreOffice.
+    }
+
     // Perform conversion with selected engine
     match cmd.engine {
         ConvertEngine::LibreOffice => convert_via_libreoffice(&cmd.file, &output_path, target_ext)?,
@@ -300,6 +419,81 @@ fn convert_via_oxide(input_file: &str, output_path: &std::path::Path) -> Result<
     Ok(())
 }
 
+/// Whether `ext` is a native Office extension the in-tree handlers speak.
+fn is_native_office_ext(ext: &str) -> bool {
+    matches!(ext, "docx" | "xlsx" | "pptx")
+}
+
+/// Map a legacy/foreign extension to its native sibling.
+fn family_from_foreign(ext: &str) -> &'static str {
+    match ext {
+        "doc" => "docx",
+        "xls" => "xlsx",
+        "ppt" => "pptx",
+        _ => "docx",
+    }
+}
+
+/// Try to delegate the conversion to an installed exporter plugin. Returns
+/// `Ok(None)` when no plugin is registered for `(input_ext, output_ext)`;
+/// the caller falls back to the built-in engines.
+fn try_plugin_export(
+    _input_ext: &str,
+    output_ext: &str,
+    input_file: &str,
+    output_path: &std::path::Path,
+) -> Result<Option<super::plugin_process::ExportResult>, HandlerError> {
+    match super::plugin_process::run_exporter(
+        input_file,
+        output_ext,
+        &output_path.to_string_lossy(),
+    ) {
+        Ok(res) => Ok(Some(res)),
+        Err(HandlerError::UnsupportedMode(_)) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Try to delegate foreign-source migration to a dump-reader plugin. Writes
+/// the native sibling file into a temporary path next to `input_file`. Returns
+/// `Ok(None)` when no plugin is registered for `input_ext`.
+fn try_plugin_dump(
+    input_ext: &str,
+    input_file: &str,
+) -> Result<Option<super::plugin_process::DumpResult>, HandlerError> {
+    if super::plugin_process::resolve_dump_reader(input_ext).is_none() {
+        return Ok(None);
+    }
+    // Derive a sibling output path. The dump-reader's manifest `target`
+    // selects the family; we don't know it without consulting the manifest,
+    // so we guess from `input_ext` (`.doc` → `.docx`, `.xls` → `.xlsx`,
+    // `.ppt` → `.pptx`). If wrong, the plugin's manifest target will
+    // already have steered the skeleton creation, so the on-disk file is
+    // correct — only our guess at the sibling name is wrong.
+    let input_path = PathBuf::from(input_file);
+    let stem = input_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("converted")
+        .to_string();
+    let dir = input_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let family_guess = match input_ext {
+        "doc" => "docx",
+        "xls" => "xlsx",
+        "ppt" => "pptx",
+        _ => "docx",
+    };
+    let sibling = dir.join(format!("{}.{}", stem, family_guess));
+    match super::plugin_process::run_dump_reader(input_file, &sibling.to_string_lossy()) {
+        Ok(r) => Ok(Some(r)),
+        Err(HandlerError::UnsupportedMode(_)) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
 /// Validate that the conversion is supported.
 fn validate_conversion(
     input_ext: &str,
@@ -307,6 +501,27 @@ fn validate_conversion(
     engine: ConvertEngine,
 ) -> Result<(), HandlerError> {
     // Cross-family: PDF -> DOCX (LibreOffice only)
+    // Foreign target extensions are valid if a plugin exporter exists.
+    // Skip the family-rule check below — those only cover native→native.
+    if !is_native_office_ext(output_ext) {
+        if super::plugin_process::resolve_exporter(input_ext, output_ext).is_some() {
+            return Ok(());
+        }
+        // No direct exporter for (input_ext, output_ext) — but a
+        // foreign→foreign pipeline through a dump-reader + exporter may
+        // still succeed. Allow validate to pass; the dispatcher in
+        // handle_convert handles the case where the pipeline is missing.
+        if !is_native_office_ext(input_ext)
+            && super::plugin_process::resolve_dump_reader(input_ext).is_some()
+        {
+            return Ok(());
+        }
+        return Err(HandlerError::UnsupportedMode(format!(
+            "no plugin exporter handles .{} → .{} — install one or see plugins/plugin-protocol.md",
+            input_ext, output_ext
+        )));
+    }
+
     if input_ext == "pdf" && output_ext == "docx" {
         if engine != ConvertEngine::LibreOffice {
             return Err(HandlerError::UnsupportedMode(

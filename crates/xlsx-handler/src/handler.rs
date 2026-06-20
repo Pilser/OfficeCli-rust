@@ -124,7 +124,28 @@ impl DocumentHandler for ExcelHandler {
 
     fn view_as_stats_json(&self) -> Result<serde_json::Value, HandlerError> {
         let pkg = self.package.borrow();
-        view::view_as_stats_json(&pkg)
+        let mut stats = view::view_as_stats_json(&pkg)?;
+        // Merge docProps/app.xml extended properties — see docx_handler for
+        // the equivalent wiring and handler_common::extended_properties.
+        if let Ok(app_xml) = pkg.read_part_bytes("docProps/app.xml") {
+            let mut node = DocumentNode::new("/", "root");
+            handler_common::extended_properties::populate_extended_properties(
+                Some(app_xml.as_slice()),
+                &mut node,
+            );
+            if let serde_json::Value::Object(ref mut map) = stats {
+                if !node.format.is_empty() {
+                    let mut extended = serde_json::Map::new();
+                    for (k, v) in node.format.iter() {
+                        if let Some(val) = v {
+                            extended.insert(k.clone(), val.clone());
+                        }
+                    }
+                    map.insert("extended".into(), serde_json::Value::Object(extended));
+                }
+            }
+        }
+        Ok(stats)
     }
 
     fn get(&self, path: &str, depth: usize) -> Result<DocumentNode, HandlerError> {
@@ -146,6 +167,10 @@ impl DocumentHandler for ExcelHandler {
             return Err(HandlerError::OperationFailed(
                 "package opened in read-only mode".to_string(),
             ));
+        }
+        // Find/replace legitimately targets "/" (whole workbook); other sets need scope.
+        if !properties.contains_key("find") {
+            handler_common::ensure_scoped(path, "set")?;
         }
         let mut pkg = self.package.borrow_mut();
         if let Some(range_paths_str) = properties.get("range_paths") {
@@ -181,6 +206,7 @@ impl DocumentHandler for ExcelHandler {
                 "package opened in read-only mode".to_string(),
             ));
         }
+        handler_common::ensure_scoped(path, "remove")?;
         let mut pkg = self.package.borrow_mut();
         mutations::remove_element(&mut pkg, path)
     }

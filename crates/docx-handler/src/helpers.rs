@@ -244,7 +244,11 @@ pub fn generate_para_id() -> String {
     uuid.to_string().replace('-', "")[..8].to_string()
 }
 
-/// Build a minimal w:rPr (run properties) XML element from format properties.
+/// Build a w:rPr (run properties) XML element from format properties.
+/// Full vocabulary: bold/b, italic/i, underline/u, strike/strikeout,
+/// font/fontFamily, size/fontSize, color/fontColor, bgColor/highlight/bg,
+/// shading/shd, caps, smallCaps, vanish/hidden, kern, characterSpacing,
+/// border, emphasisMark, lang, rightToLeft
 pub fn build_run_properties(props: &std::collections::HashMap<String, String>) -> Option<WordNode> {
     if props.is_empty() {
         return None;
@@ -257,14 +261,22 @@ pub fn build_run_properties(props: &std::collections::HashMap<String, String>) -
         match key.as_str() {
             "bold" | "b" => {
                 if value == "true" || value == "1" {
-                    let b_node = WordNode::new(WordElementType::Unknown("b".to_string()));
-                    children.push(b_node);
+                    children.push(WordNode::new(WordElementType::Unknown("b".to_string())));
+                } else if value == "false" || value == "0" {
+                    children.push(
+                        WordNode::new(WordElementType::Unknown("b".to_string()))
+                            .with_attribute("val", "0"),
+                    );
                 }
             }
             "italic" | "i" => {
                 if value == "true" || value == "1" {
-                    let i_node = WordNode::new(WordElementType::Unknown("i".to_string()));
-                    children.push(i_node);
+                    children.push(WordNode::new(WordElementType::Unknown("i".to_string())));
+                } else if value == "false" || value == "0" {
+                    children.push(
+                        WordNode::new(WordElementType::Unknown("i".to_string()))
+                            .with_attribute("val", "0"),
+                    );
                 }
             }
             "underline" | "u" => {
@@ -273,41 +285,47 @@ pub fn build_run_properties(props: &std::collections::HashMap<String, String>) -
                 } else {
                     value.as_str()
                 };
-                let u_node = WordNode::new(WordElementType::Unknown("u".to_string()))
-                    .with_attribute("val", val);
-                children.push(u_node);
+                children.push(
+                    WordNode::new(WordElementType::Unknown("u".to_string()))
+                        .with_attribute("val", val),
+                );
             }
             "strike" | "strikeout" => {
                 if value == "true" || value == "1" {
-                    let strike_node = WordNode::new(WordElementType::Unknown("strike".to_string()));
-                    children.push(strike_node);
+                    children.push(WordNode::new(WordElementType::Unknown(
+                        "strike".to_string(),
+                    )));
                 }
             }
-            "font" | "fontFamily" => {
-                let rfonts = WordNode::new(WordElementType::Unknown("rFonts".to_string()))
-                    .with_attribute("ascii", value.as_str())
-                    .with_attribute("hAnsi", value.as_str());
-                children.push(rfonts);
+            "font" | "fontFamily" | "font.name" => {
+                children.push(
+                    WordNode::new(WordElementType::Unknown("rFonts".to_string()))
+                        .with_attribute("ascii", value.as_str())
+                        .with_attribute("hAnsi", value.as_str())
+                        .with_attribute("cs", value.as_str()),
+                );
             }
-            "size" | "fontSize" => {
-                // OOXML font size is in half-points (24 = 12pt)
+            "size" | "fontSize" | "font.size" => {
                 let half_points = if let Ok(pt) = value.parse::<f32>() {
                     (pt * 2.0) as usize
                 } else {
-                    24 // default 12pt
+                    24
                 };
-                let sz_node = WordNode::new(WordElementType::Unknown("sz".to_string()))
-                    .with_attribute("val", half_points.to_string().as_str());
-                children.push(sz_node);
-                let sz_cs = WordNode::new(WordElementType::Unknown("szCs".to_string()))
-                    .with_attribute("val", half_points.to_string().as_str());
-                children.push(sz_cs);
+                children.push(
+                    WordNode::new(WordElementType::Unknown("sz".to_string()))
+                        .with_attribute("val", half_points.to_string().as_str()),
+                );
+                children.push(
+                    WordNode::new(WordElementType::Unknown("szCs".to_string()))
+                        .with_attribute("val", half_points.to_string().as_str()),
+                );
             }
-            "color" | "fontColor" => {
+            "color" | "fontColor" | "font.color" => {
                 let color_val = value.strip_prefix('#').unwrap_or(value);
-                let color_node = WordNode::new(WordElementType::Unknown("color".to_string()))
-                    .with_attribute("val", color_val);
-                children.push(color_node);
+                children.push(
+                    WordNode::new(WordElementType::Unknown("color".to_string()))
+                        .with_attribute("val", color_val),
+                );
             }
             "bgColor" | "highlight" | "bg" => {
                 let color_val = value.strip_prefix('#').unwrap_or(value);
@@ -331,33 +349,108 @@ pub fn build_run_properties(props: &std::collections::HashMap<String, String>) -
                         | "black"
                         | "none"
                 ) {
-                    let hl_node = WordNode::new(WordElementType::Unknown("highlight".to_string()))
-                        .with_attribute("val", color_val.to_lowercase());
-                    children.push(hl_node);
+                    children.push(
+                        WordNode::new(WordElementType::Unknown("highlight".to_string()))
+                            .with_attribute("val", color_val.to_lowercase()),
+                    );
                 } else {
-                    let shd_node = WordNode::new(WordElementType::Unknown("shd".to_string()))
-                        .with_attribute("val", "clear")
-                        .with_attribute("color", "auto")
-                        .with_attribute("fill", color_val);
-                    children.push(shd_node);
+                    children.push(
+                        WordNode::new(WordElementType::Unknown("shd".to_string()))
+                            .with_attribute("val", "clear")
+                            .with_attribute("color", "auto")
+                            .with_attribute("fill", color_val),
+                    );
                 }
             }
             "shading" | "shd" => {
                 let value = value.strip_prefix('#').unwrap_or(value);
-                // Triplet format: pattern;fill;color  e.g. "clear;FFFF00;auto"
                 let parts: Vec<&str> = value.split(';').collect();
                 let (pat, fill, clr) = match parts.len() {
                     3 => (parts[0], parts[1], parts[2]),
                     2 => ("clear", parts[0], parts[1]),
                     _ => ("clear", value, "auto"),
                 };
-                let shd_node = WordNode::new(WordElementType::Unknown("shd".to_string()))
-                    .with_attribute("val", pat)
-                    .with_attribute("color", clr)
-                    .with_attribute("fill", fill);
-                children.push(shd_node);
+                children.push(
+                    WordNode::new(WordElementType::Unknown("shd".to_string()))
+                        .with_attribute("val", pat)
+                        .with_attribute("color", clr)
+                        .with_attribute("fill", fill),
+                );
             }
-            _ => {} // Ignore unknown properties
+            "caps" => {
+                if value == "true" || value == "1" {
+                    children.push(WordNode::new(WordElementType::Unknown("caps".to_string())));
+                }
+            }
+            "smallCaps" => {
+                if value == "true" || value == "1" {
+                    children.push(WordNode::new(WordElementType::Unknown(
+                        "smallCaps".to_string(),
+                    )));
+                }
+            }
+            "vanish" | "hidden" => {
+                if value == "true" || value == "1" {
+                    children.push(WordNode::new(WordElementType::Unknown(
+                        "vanish".to_string(),
+                    )));
+                }
+            }
+            "kern" => {
+                let kern_val = value.parse::<usize>().unwrap_or(0);
+                children.push(
+                    WordNode::new(WordElementType::Unknown("kern".to_string()))
+                        .with_attribute("val", kern_val.to_string().as_str()),
+                );
+            }
+            "characterSpacing" | "spacing" => {
+                let spacing_val = value.parse::<i32>().unwrap_or(0);
+                children.push(
+                    WordNode::new(WordElementType::Unknown("spacing".to_string()))
+                        .with_attribute("val", spacing_val.to_string().as_str()),
+                );
+            }
+            "emphasisMark" => {
+                children.push(
+                    WordNode::new(WordElementType::Unknown("em".to_string()))
+                        .with_attribute("val", value.as_str()),
+                );
+            }
+            "lang" => {
+                children.push(
+                    WordNode::new(WordElementType::Unknown("lang".to_string()))
+                        .with_attribute("val", value.as_str()),
+                );
+            }
+            "rightToLeft" => {
+                if value == "true" || value == "1" {
+                    children.push(WordNode::new(WordElementType::Unknown("rtl".to_string())));
+                }
+            }
+            "font.bold" => {
+                if value == "true" || value == "1" {
+                    children.push(WordNode::new(WordElementType::Unknown("b".to_string())));
+                }
+            }
+            "font.italic" => {
+                if value == "true" || value == "1" {
+                    children.push(WordNode::new(WordElementType::Unknown("i".to_string())));
+                }
+            }
+            "font.underline" => {
+                children.push(
+                    WordNode::new(WordElementType::Unknown("u".to_string()))
+                        .with_attribute("val", value.as_str()),
+                );
+            }
+            "font.strike" => {
+                if value == "true" || value == "1" {
+                    children.push(WordNode::new(WordElementType::Unknown(
+                        "strike".to_string(),
+                    )));
+                }
+            }
+            _ => {}
         }
     }
 
@@ -370,6 +463,10 @@ pub fn build_run_properties(props: &std::collections::HashMap<String, String>) -
 }
 
 /// Build paragraph properties from format properties.
+/// Full vocabulary: style/pStyle, alignment/jc, indentLeft, indentRight,
+/// indent, firstLine, hanging, spacingBefore, spacingAfter, lineSpacing,
+/// keepLines, keepNext, outlineLevel, numId, numLevel, pageBreakBefore,
+/// widowControl, border, shading/shd
 pub fn build_paragraph_properties(
     props: &std::collections::HashMap<String, String>,
 ) -> Option<WordNode> {
@@ -380,43 +477,176 @@ pub fn build_paragraph_properties(
     let mut ppr = WordNode::new(WordElementType::ParagraphProperties);
     let mut children = Vec::new();
 
+    // Collect indent attributes into a single w:ind node
+    let mut ind_attrs: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    // Collect spacing attributes into a single w:spacing node
+    let mut spacing_attrs: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    // Collect numbering properties
+    let mut num_id: Option<String> = None;
+    let mut num_level: Option<String> = None;
+    // Collect border entries
+    let mut border_entries: Vec<WordNode> = Vec::new();
+    let mut has_shading = false;
+    let mut shading_val = "";
+
     for (key, value) in props {
         match key.as_str() {
             "style" | "pStyle" => {
-                let pstyle = WordNode::new(WordElementType::Unknown("pStyle".to_string()))
-                    .with_attribute("val", value.as_str());
-                children.push(pstyle);
+                children.push(
+                    WordNode::new(WordElementType::Unknown("pStyle".to_string()))
+                        .with_attribute("val", value.as_str()),
+                );
             }
             "alignment" | "jc" => {
-                let jc = WordNode::new(WordElementType::Unknown("jc".to_string()))
-                    .with_attribute("val", value.as_str());
-                children.push(jc);
+                children.push(
+                    WordNode::new(WordElementType::Unknown("jc".to_string()))
+                        .with_attribute("val", value.as_str()),
+                );
             }
             "indentLeft" => {
-                let ind = WordNode::new(WordElementType::Unknown("ind".to_string()))
-                    .with_attribute("left", value.as_str());
-                children.push(ind);
+                ind_attrs.insert("left".to_string(), value.clone());
             }
             "indentRight" => {
-                // We might need to combine with existing ind node
-                // For simplicity, create separate ind nodes per property
-                // (OOXML has a single ind element with multiple attrs, but this is simpler)
-                let ind = WordNode::new(WordElementType::Unknown("ind".to_string()))
-                    .with_attribute("right", value.as_str());
-                children.push(ind);
+                ind_attrs.insert("right".to_string(), value.clone());
+            }
+            "indent" => {
+                ind_attrs.insert("left".to_string(), value.clone());
+            }
+            "firstLine" => {
+                ind_attrs.insert("firstLine".to_string(), value.clone());
+            }
+            "hanging" => {
+                ind_attrs.insert("hanging".to_string(), value.clone());
             }
             "spacingBefore" => {
-                let spacing = WordNode::new(WordElementType::Unknown("spacing".to_string()))
-                    .with_attribute("before", value.as_str());
-                children.push(spacing);
+                spacing_attrs.insert("before".to_string(), value.clone());
             }
             "spacingAfter" => {
-                let spacing = WordNode::new(WordElementType::Unknown("spacing".to_string()))
-                    .with_attribute("after", value.as_str());
-                children.push(spacing);
+                spacing_attrs.insert("after".to_string(), value.clone());
             }
-            _ => {} // Ignore unknown properties
+            "lineSpacing" | "line" => {
+                spacing_attrs.insert("line".to_string(), value.clone());
+            }
+            "spacing" => {
+                // Generic spacing: try to parse as "before=X;after=Y;line=Z"
+                if value.contains(';') {
+                    for pair in value.split(';') {
+                        if let Some(eq) = pair.find('=') {
+                            let k = &pair[..eq];
+                            let v = &pair[eq + 1..];
+                            spacing_attrs.insert(k.to_string(), v.to_string());
+                        }
+                    }
+                } else {
+                    spacing_attrs.insert("after".to_string(), value.clone());
+                }
+            }
+            "keepLines" => {
+                if value == "true" || value == "1" {
+                    children.push(WordNode::new(WordElementType::Unknown(
+                        "keepLines".to_string(),
+                    )));
+                }
+            }
+            "keepNext" => {
+                if value == "true" || value == "1" {
+                    children.push(WordNode::new(WordElementType::Unknown(
+                        "keepNext".to_string(),
+                    )));
+                }
+            }
+            "outlineLevel" => {
+                children.push(
+                    WordNode::new(WordElementType::Unknown("outlineLvl".to_string()))
+                        .with_attribute("val", value.as_str()),
+                );
+            }
+            "numId" => {
+                num_id = Some(value.clone());
+            }
+            "numLevel" => {
+                num_level = Some(value.clone());
+            }
+            "pageBreakBefore" => {
+                if value == "true" || value == "1" {
+                    children.push(WordNode::new(WordElementType::Unknown(
+                        "pageBreakBefore".to_string(),
+                    )));
+                }
+            }
+            "widowControl" => {
+                if value == "false" || value == "0" {
+                    children.push(WordNode::new(WordElementType::Unknown(
+                        "widowControl".to_string(),
+                    )));
+                }
+            }
+            "border" => {
+                // Parse border format: "top=single;bottom=single;..." or "all=single" or "none"
+                border_entries = build_pborder_children(value);
+            }
+            "shading" | "shd" => {
+                has_shading = true;
+                shading_val = value.as_str();
+            }
+            _ => {}
         }
+    }
+
+    // Build single w:ind node from collected attributes
+    if !ind_attrs.is_empty() {
+        let mut ind = WordNode::new(WordElementType::Unknown("ind".to_string()));
+        ind.attributes = ind_attrs;
+        children.push(ind);
+    }
+
+    // Build single w:spacing node from collected attributes
+    if !spacing_attrs.is_empty() {
+        let mut spacing = WordNode::new(WordElementType::Unknown("spacing".to_string()));
+        spacing.attributes = spacing_attrs;
+        children.push(spacing);
+    }
+
+    // Build numbering properties
+    if num_id.is_some() || num_level.is_some() {
+        let mut num_pr = WordNode::new(WordElementType::Unknown("numPr".to_string()));
+        if let Some(id) = num_id {
+            num_pr.children.push(
+                WordNode::new(WordElementType::Unknown("numId".to_string()))
+                    .with_attribute("val", id.as_str()),
+            );
+        } else {
+            num_pr.children.push(
+                WordNode::new(WordElementType::Unknown("numId".to_string()))
+                    .with_attribute("val", "0"),
+            );
+        }
+        if let Some(level) = num_level {
+            num_pr.children.push(
+                WordNode::new(WordElementType::Unknown("ilvl".to_string()))
+                    .with_attribute("val", level.as_str()),
+            );
+        } else {
+            num_pr.children.push(
+                WordNode::new(WordElementType::Unknown("ilvl".to_string()))
+                    .with_attribute("val", "0"),
+            );
+        }
+        children.push(num_pr);
+    }
+
+    // Build border node
+    if !border_entries.is_empty() {
+        let mut p_bdr = WordNode::new(WordElementType::Unknown("pBdr".to_string()));
+        p_bdr.children = border_entries;
+        children.push(p_bdr);
+    }
+
+    // Build shading node
+    if has_shading {
+        let shd = crate::mutations::build_shd_node(shading_val);
+        children.push(shd);
     }
 
     if children.is_empty() {
@@ -425,4 +655,45 @@ pub fn build_paragraph_properties(
 
     ppr.children = children;
     Some(ppr)
+}
+
+fn build_pborder_children(value: &str) -> Vec<WordNode> {
+    let mut entries = Vec::new();
+    if value == "none" || value == "0" {
+        for border_name in ["top", "bottom", "left", "right"] {
+            entries.push(
+                WordNode::new(WordElementType::Unknown(border_name.to_string()))
+                    .with_attribute("val", "none")
+                    .with_attribute("sz", "0")
+                    .with_attribute("space", "0")
+                    .with_attribute("color", "auto"),
+            );
+        }
+    } else if value.starts_with("all=") || value == "single" || value == "thin" {
+        let style = value.strip_prefix("all=").unwrap_or("single");
+        for border_name in ["top", "bottom", "left", "right"] {
+            entries.push(
+                WordNode::new(WordElementType::Unknown(border_name.to_string()))
+                    .with_attribute("val", style)
+                    .with_attribute("sz", "4")
+                    .with_attribute("space", "1")
+                    .with_attribute("color", "auto"),
+            );
+        }
+    } else {
+        for pair in value.split(';') {
+            if let Some(eq) = pair.find('=') {
+                let name = &pair[..eq];
+                let style = &pair[eq + 1..];
+                entries.push(
+                    WordNode::new(WordElementType::Unknown(name.to_string()))
+                        .with_attribute("val", style)
+                        .with_attribute("sz", "4")
+                        .with_attribute("space", "1")
+                        .with_attribute("color", "auto"),
+                );
+            }
+        }
+    }
+    entries
 }
