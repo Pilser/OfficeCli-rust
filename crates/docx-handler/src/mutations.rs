@@ -1916,7 +1916,9 @@ fn set_hyperlink_properties(
                 // execute script or exfiltrate data on click in the host
                 // product (javascript:, data:, vbscript:). See
                 // handler_common::hyperlink_validator for the allowlist.
-                if let Err(msg) = handler_common::hyperlink_validator::require_safe_scheme(value, "hyperlink") {
+                if let Err(msg) =
+                    handler_common::hyperlink_validator::require_safe_scheme(value, "hyperlink")
+                {
                     return Err(HandlerError::InvalidArgument(msg));
                 }
                 // Hyperlink target is stored as r:id attribute pointing to a relationship
@@ -3104,9 +3106,13 @@ fn build_docx_chart_xml(
 
     let mut xml = String::with_capacity(2048);
     xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n");
-    xml.push_str("<c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" ");
+    xml.push_str(
+        "<c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" ",
+    );
     xml.push_str("xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" ");
-    xml.push_str("xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">");
+    xml.push_str(
+        "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">",
+    );
     xml.push_str("<c:chart>");
     if !title.is_empty() {
         xml.push_str(&format!(
@@ -3561,8 +3567,7 @@ pub fn set_doc_defaults_on_part(
     if new_block != doc_defaults_block {
         let new_xml = if xml.contains(dd_open_marker) {
             let open = xml.find(dd_open_marker).unwrap();
-            let close =
-                find_matching_close(&xml, open, dd_open_marker, dd_close_marker).unwrap();
+            let close = find_matching_close(&xml, open, dd_open_marker, dd_close_marker).unwrap();
             let mut out = String::with_capacity(xml.len() + new_block.len());
             out.push_str(&xml[..open]);
             out.push_str(&new_block);
@@ -3777,14 +3782,22 @@ const COMPAT_FLAGS: &[&str] = &[
 const SETTINGS_ELEMENT_KEYS: &[(&str, &str, &str)] = &[
     // (cli key, child element name, attribute name for value)
     ("defaultTabStop", "w:defaultTabStop", "w:val"),
-    ("characterSpacingControl", "w:characterSpacingControl", "w:val"),
+    (
+        "characterSpacingControl",
+        "w:characterSpacingControl",
+        "w:val",
+    ),
     ("trackChanges", "w:trackChanges", ""),
     ("defaultDateFormat", "w:date", "w:val"),
     ("linkStyles", "w:linkStyles", ""),
     ("alignBordersAndEdges", "w:alignBordersAndEdges", ""),
     ("autoFormatOverride", "w:autoFormatOverride", ""),
     ("displayBackgroundShape", "w:displayBackgroundShape", ""),
-    ("doNotDisplayPageBoundaries", "w:doNotDisplayPageBoundaries", ""),
+    (
+        "doNotDisplayPageBoundaries",
+        "w:doNotDisplayPageBoundaries",
+        "",
+    ),
     ("embedSystemFonts", "w:embedSystemFonts", ""),
     ("zoomPercent", "w:zoom", "w:percent"),
     ("evenAndOddHeaders", "w:evenAndOddHeaders", ""),
@@ -3975,7 +3988,9 @@ mod doc_settings_tests {
     fn settings_key_lookup() {
         let table = SETTINGS_ELEMENT_KEYS;
         assert!(table.iter().any(|(k, _, _)| *k == "defaultTabStop"));
-        assert!(table.iter().any(|(k, _, _)| *k == "characterSpacingControl"));
+        assert!(table
+            .iter()
+            .any(|(k, _, _)| *k == "characterSpacingControl"));
     }
 
     #[test]

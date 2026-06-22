@@ -1600,7 +1600,7 @@ fn minimal_glb_v2() -> Vec<u8> {
     v.extend_from_slice(b"glTF"); // magic 0x46546C67
     v.extend_from_slice(&2u32.to_le_bytes()); // version
     v.extend_from_slice(&total_len.to_le_bytes()); // total length
-    // ── JSON chunk ──
+                                                   // ── JSON chunk ──
     v.extend_from_slice(&(json_chunk_len as u32).to_le_bytes());
     v.extend_from_slice(&0x4E4F534Au32.to_le_bytes()); // "JSON"
     v.extend_from_slice(json);

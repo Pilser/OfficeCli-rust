@@ -137,9 +137,7 @@ pub fn handle_convert(
     // built-in engines (LibreOffice / oxide). This makes
     // `officecli convert foo.docx bar.html` route through whatever
     // exporter plugin is installed for `.html`.
-    if !is_native_office_ext(&output_ext)
-        && !is_native_office_ext(&input_ext)
-    {
+    if !is_native_office_ext(&output_ext) && !is_native_office_ext(&input_ext) {
         // Both foreign: the user wants, say, .doc → .html. We can do this
         // in two hops (dump-reader to native, then exporter to target) if
         // both plugins are installed.
@@ -180,10 +178,10 @@ pub fn handle_convert(
             input_ext, output_ext
         )));
     }
-    if !is_native_office_ext(&output_ext)
-        && is_native_office_ext(&input_ext)
-    {
-        if let Some(export_result) = try_plugin_export(&input_ext, &output_ext, &cmd.file, &output_path)? {
+    if !is_native_office_ext(&output_ext) && is_native_office_ext(&input_ext) {
+        if let Some(export_result) =
+            try_plugin_export(&input_ext, &output_ext, &cmd.file, &output_path)?
+        {
             return match format {
                 handler_common::OutputFormat::Text => Ok(format!(
                     "Converted '{}' -> '{}' via plugin '{}'",
@@ -217,8 +215,7 @@ pub fn handle_convert(
             if dump_result.converted_path != output_path.to_string_lossy() {
                 std::fs::rename(&dump_result.converted_path, &output_path)
                     .or_else(|_| {
-                        std::fs::copy(&dump_result.converted_path, &output_path)
-                            .map(|_| ())
+                        std::fs::copy(&dump_result.converted_path, &output_path).map(|_| ())
                     })
                     .map_err(|e| {
                         HandlerError::OperationFailed(format!(

@@ -27,17 +27,7 @@
 /// `javascript:` / `data:` / `vbscript:` stay rejected (omitted from the
 /// allowlist).
 const ALLOWED_SCHEMES: &[&str] = &[
-    "http",
-    "https",
-    "mailto",
-    "ftp",
-    "ftps",
-    "sftp",
-    "news",
-    "tel",
-    "sms",
-    "ppaction",
-    "file",
+    "http", "https", "mailto", "ftp", "ftps", "sftp", "news", "tel", "sms", "ppaction", "file",
 ];
 
 /// True when `url` is an absolute URI whose scheme is in the allowlist.
@@ -52,7 +42,9 @@ pub fn is_safe_scheme(url: &str) -> bool {
     let Some(scheme) = extract_scheme(url) else {
         return false;
     };
-    ALLOWED_SCHEMES.iter().any(|s| s.eq_ignore_ascii_case(scheme))
+    ALLOWED_SCHEMES
+        .iter()
+        .any(|s| s.eq_ignore_ascii_case(scheme))
 }
 
 /// Returns the lowercase scheme prefix when `url` parses as `scheme:rest`,
@@ -115,7 +107,10 @@ pub fn require_safe_scheme(url: &str, context_key: &str) -> Result<(), String> {
     let Some(scheme) = extract_scheme(url) else {
         return Ok(());
     };
-    if ALLOWED_SCHEMES.iter().any(|s| s.eq_ignore_ascii_case(scheme)) {
+    if ALLOWED_SCHEMES
+        .iter()
+        .any(|s| s.eq_ignore_ascii_case(scheme))
+    {
         return Ok(());
     }
     Err(format!(

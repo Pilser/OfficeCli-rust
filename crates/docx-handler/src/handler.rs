@@ -320,16 +320,10 @@ impl DocumentHandler for WordHandler {
             return mutations::set_style_on_part(&mut self.package.borrow_mut(), path, properties);
         }
         if path_lc.starts_with("/docdefaults") {
-            return mutations::set_doc_defaults_on_part(
-                &mut self.package.borrow_mut(),
-                properties,
-            );
+            return mutations::set_doc_defaults_on_part(&mut self.package.borrow_mut(), properties);
         }
         if path_lc.starts_with("/settings") {
-            return mutations::set_settings_on_part(
-                &mut self.package.borrow_mut(),
-                properties,
-            );
+            return mutations::set_settings_on_part(&mut self.package.borrow_mut(), properties);
         }
         if path_lc.starts_with("/comments") || path_lc.contains("/comment[") {
             return mutations::set_comment_on_part(

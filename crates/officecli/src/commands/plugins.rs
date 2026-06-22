@@ -306,8 +306,7 @@ fn discover_from_path(
             // Match `officecli-<kind>-<ext>` or `officecli-<ext>` (the latter
             // only when not also matched by the former — try the longer form
             // first).
-            let is_kind_ext = name.starts_with("officecli-")
-                && name.matches('-').count() >= 2;
+            let is_kind_ext = name.starts_with("officecli-") && name.matches('-').count() >= 2;
             if !is_kind_ext {
                 continue;
             }
@@ -531,10 +530,7 @@ fn info_plugin(name: &str, format: OutputFormat) -> Result<String, HandlerError>
                 if let Some(spec) = &plugin.manifest.idle_timeout_seconds {
                     let mut verbs = serde_json::Map::new();
                     for (k, v) in &spec.verbs {
-                        verbs.insert(
-                            k.clone(),
-                            serde_json::Value::Number((*v).into()),
-                        );
+                        verbs.insert(k.clone(), serde_json::Value::Number((*v).into()));
                     }
                     let mut idle = serde_json::Map::new();
                     idle.insert(
@@ -542,7 +538,10 @@ fn info_plugin(name: &str, format: OutputFormat) -> Result<String, HandlerError>
                         serde_json::Value::Number(spec.default.into()),
                     );
                     idle.insert("verbs".into(), serde_json::Value::Object(verbs));
-                    map.insert("idle_timeout_seconds".into(), serde_json::Value::Object(idle));
+                    map.insert(
+                        "idle_timeout_seconds".into(),
+                        serde_json::Value::Object(idle),
+                    );
                 }
             }
             Ok(serde_json::to_string_pretty(&obj)
@@ -623,10 +622,7 @@ fn lint_target(path: &str, format: OutputFormat) -> Result<String, HandlerError>
         None
     };
     let resolved = resolved.ok_or_else(|| {
-        HandlerError::OperationFailed(format!(
-            "could not resolve a plugin at '{}'",
-            path
-        ))
+        HandlerError::OperationFailed(format!("could not resolve a plugin at '{}'", path))
     })?;
     let warnings = validate_manifest(&resolved.manifest);
 
@@ -658,8 +654,10 @@ fn lint_target(path: &str, format: OutputFormat) -> Result<String, HandlerError>
                 "manifest_source".into(),
                 serde_json::Value::String(resolved.manifest_source.into()),
             );
-            Ok(serde_json::to_string_pretty(&serde_json::Value::Object(obj))
-                .map_err(|e| HandlerError::OperationFailed(e.to_string()))?)
+            Ok(
+                serde_json::to_string_pretty(&serde_json::Value::Object(obj))
+                    .map_err(|e| HandlerError::OperationFailed(e.to_string()))?,
+            )
         }
         OutputFormat::Text => {
             let mut lines = Vec::new();
@@ -702,7 +700,10 @@ fn lint_manifest_file(path: &Path) -> Result<ResolvedPlugin, HandlerError> {
 /// Serialize a ResolvedPlugin's manifest + provenance into a JSON object.
 fn plugin_to_json(p: &ResolvedPlugin) -> serde_json::Value {
     let mut obj = serde_json::Map::new();
-    obj.insert("name".into(), serde_json::Value::String(p.manifest.name.clone()));
+    obj.insert(
+        "name".into(),
+        serde_json::Value::String(p.manifest.name.clone()),
+    );
     obj.insert(
         "version".into(),
         serde_json::Value::String(p.manifest.version.clone()),
@@ -870,7 +871,9 @@ mod tests {
             ..Default::default()
         };
         let w = validate_manifest(&m);
-        assert!(w.iter().any(|s| s.contains("dump-reader requires `target`")));
+        assert!(w
+            .iter()
+            .any(|s| s.contains("dump-reader requires `target`")));
     }
 
     #[test]

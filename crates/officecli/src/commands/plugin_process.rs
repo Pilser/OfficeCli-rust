@@ -12,8 +12,8 @@ use handler_common::HandlerError;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::plugins::{enumerate_all, PluginManifest};
@@ -243,9 +243,12 @@ pub fn resolve_format_handler(source_ext: &str) -> Option<(String, PluginManifes
         if !plugin.manifest.kinds.iter().any(|k| k == "format-handler") {
             continue;
         }
-        if !plugin.manifest.extensions.iter().any(|e| {
-            e.eq_ignore_ascii_case(&source_dotted) || e.eq_ignore_ascii_case(source_ext)
-        }) {
+        if !plugin
+            .manifest
+            .extensions
+            .iter()
+            .any(|e| e.eq_ignore_ascii_case(&source_dotted) || e.eq_ignore_ascii_case(source_ext))
+        {
             continue;
         }
         return Some((plugin.executable_path, plugin.manifest));
@@ -261,9 +264,12 @@ pub fn resolve_dump_reader(source_ext: &str) -> Option<(String, PluginManifest)>
         if !plugin.manifest.kinds.iter().any(|k| k == "dump-reader") {
             continue;
         }
-        if !plugin.manifest.extensions.iter().any(|e| {
-            e.eq_ignore_ascii_case(&source_dotted) || e.eq_ignore_ascii_case(source_ext)
-        }) {
+        if !plugin
+            .manifest
+            .extensions
+            .iter()
+            .any(|e| e.eq_ignore_ascii_case(&source_dotted) || e.eq_ignore_ascii_case(source_ext))
+        {
             continue;
         }
         return Some((plugin.executable_path, plugin.manifest));
@@ -400,20 +406,14 @@ pub fn resolve_exporter(source_ext: &str, target_ext: &str) -> Option<(String, P
     let source_dotted = format!(".{}", source_bare);
 
     for plugin in enumerate_all() {
-        if !plugin
-            .manifest
-            .kinds
-            .iter()
-            .any(|k| k == "exporter")
-        {
+        if !plugin.manifest.kinds.iter().any(|k| k == "exporter") {
             continue;
         }
         // Match by target extension.
-        let handles_target = plugin
-            .manifest
-            .extensions
-            .iter()
-            .any(|e| e.eq_ignore_ascii_case(&target_dotted) || e.eq_ignore_ascii_case(target_ext));
+        let handles_target =
+            plugin.manifest.extensions.iter().any(|e| {
+                e.eq_ignore_ascii_case(&target_dotted) || e.eq_ignore_ascii_case(target_ext)
+            });
         if !handles_target {
             continue;
         }
@@ -423,9 +423,7 @@ pub fn resolve_exporter(source_ext: &str, target_ext: &str) -> Option<(String, P
         }
         let accepts_source = plugin.manifest.supports.iter().any(|s| {
             let s_lc = s.to_ascii_lowercase();
-            s_lc == format!("from:{}", source_bare)
-                || s_lc == source_bare
-                || s_lc == source_dotted
+            s_lc == format!("from:{}", source_bare) || s_lc == source_bare || s_lc == source_dotted
         });
         if accepts_source {
             return Some((plugin.executable_path, plugin.manifest));

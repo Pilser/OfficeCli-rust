@@ -598,9 +598,7 @@ enum PivotFieldsContainer {
 fn read_field_idx(e: &quick_xml::events::BytesStart<'_>) -> Option<i32> {
     for attr in e.attributes().filter_map(|a| a.ok()) {
         if attr.key.as_ref() == b"idx" {
-            return String::from_utf8_lossy(attr.value.as_ref())
-                .parse()
-                .ok();
+            return String::from_utf8_lossy(attr.value.as_ref()).parse().ok();
         }
     }
     None
@@ -610,9 +608,7 @@ fn read_field_idx(e: &quick_xml::events::BytesStart<'_>) -> Option<i32> {
 fn read_page_field_fld(e: &quick_xml::events::BytesStart<'_>) -> Option<i32> {
     for attr in e.attributes().filter_map(|a| a.ok()) {
         if attr.key.as_ref() == b"fld" {
-            return String::from_utf8_lossy(attr.value.as_ref())
-                .parse()
-                .ok();
+            return String::from_utf8_lossy(attr.value.as_ref()).parse().ok();
         }
     }
     None
@@ -714,10 +710,7 @@ fn find_pivot_cache_definition_xml_for_part(
 /// any pivot part) and return the absolute path of the related cache
 /// definition. Returns the path as it appears in the package (relative
 /// targets starting with `/` or `../` are normalized).
-fn resolve_pivot_cache_via_rels(
-    package: &OxmlPackage,
-    pivot_part_path: &str,
-) -> Option<String> {
+fn resolve_pivot_cache_via_rels(package: &OxmlPackage, pivot_part_path: &str) -> Option<String> {
     let rels_path = pivot_part_rels_path(pivot_part_path)?;
     let rels_xml = package.read_part_xml(&rels_path).ok()?;
     let mut reader = Reader::from_str(&rels_xml);
@@ -737,7 +730,8 @@ fn resolve_pivot_cache_via_rels(
                                 t = Some(String::from_utf8_lossy(attr.value.as_ref()).to_string());
                             }
                             b"Type" => {
-                                typ = Some(String::from_utf8_lossy(attr.value.as_ref()).to_string());
+                                typ =
+                                    Some(String::from_utf8_lossy(attr.value.as_ref()).to_string());
                             }
                             _ => {}
                         }
@@ -1048,8 +1042,14 @@ mod tests {
 
     #[test]
     fn normalize_target_handles_absolute_and_relative() {
-        assert_eq!(normalize_part_target("/pivotCache/x.xml"), "pivotCache/x.xml");
-        assert_eq!(normalize_part_target("pivotCache/x.xml"), "pivotCache/x.xml");
+        assert_eq!(
+            normalize_part_target("/pivotCache/x.xml"),
+            "pivotCache/x.xml"
+        );
+        assert_eq!(
+            normalize_part_target("pivotCache/x.xml"),
+            "pivotCache/x.xml"
+        );
         assert_eq!(
             normalize_part_target("../pivotCache/x.xml"),
             "../pivotCache/x.xml"

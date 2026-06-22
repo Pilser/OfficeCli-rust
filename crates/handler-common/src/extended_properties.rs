@@ -112,7 +112,10 @@ fn collect_properties(xml: &str) -> HashMap<String, String> {
         }
         // Open tag: read local name (strip any namespace prefix).
         let start = i + 1;
-        let name_end = match bytes[start..].iter().position(|&b| matches!(b, b' ' | b'>' | b'/')) {
+        let name_end = match bytes[start..]
+            .iter()
+            .position(|&b| matches!(b, b' ' | b'>' | b'/'))
+        {
             Some(p) => start + p,
             None => break,
         };
@@ -166,8 +169,10 @@ fn store_string(
     key: &str,
 ) {
     if let Some(value) = fields.get(element) {
-        node.format
-            .insert(key.to_string(), Some(serde_json::Value::String(value.clone())));
+        node.format.insert(
+            key.to_string(),
+            Some(serde_json::Value::String(value.clone())),
+        );
     }
 }
 
@@ -255,7 +260,10 @@ mod tests {
 </Properties>"#;
         let mut n = node();
         populate_extended_properties(Some(xml), &mut n);
-        assert_eq!(n.format["extended.template"].clone().unwrap(), "Normal.dotm");
+        assert_eq!(
+            n.format["extended.template"].clone().unwrap(),
+            "Normal.dotm"
+        );
         assert_eq!(n.format["extended.company"].clone().unwrap(), "ACME");
         assert_eq!(
             n.format["extended.application"].clone().unwrap(),

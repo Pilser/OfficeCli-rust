@@ -99,10 +99,7 @@ fn build_command_envelope(
         .iter()
         .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
         .collect();
-    body.insert(
-        "props".into(),
-        serde_json::Value::Object(props_obj),
-    );
+    body.insert("props".into(), serde_json::Value::Object(props_obj));
     build_envelope("command", &serde_json::Value::Object(body))
 }
 
@@ -160,12 +157,14 @@ impl FormatHandlerSession {
         let mut child = cmd
             .spawn()
             .map_err(|e| HandlerError::OperationFailed(format!("failed to spawn plugin: {}", e)))?;
-        let child_stdin = child.stdin.take().ok_or_else(|| {
-            HandlerError::OperationFailed("plugin stdin not piped".into())
-        })?;
-        let child_stdout = child.stdout.take().ok_or_else(|| {
-            HandlerError::OperationFailed("plugin stdout not piped".into())
-        })?;
+        let child_stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| HandlerError::OperationFailed("plugin stdin not piped".into()))?;
+        let child_stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| HandlerError::OperationFailed("plugin stdout not piped".into()))?;
         let child_stderr = child.stderr.take();
 
         let last_activity = Arc::new(AtomicI64::new(now_millis()));
@@ -302,7 +301,10 @@ impl FormatHandlerSession {
         let envelope = build_command_envelope(command, args, props);
         let reply = self.send_raw(&envelope)?;
         match reply.get("msg_type").and_then(|v| v.as_str()) {
-            Some("ok") => Ok(reply.get("result").cloned().unwrap_or(serde_json::Value::Null)),
+            Some("ok") => Ok(reply
+                .get("result")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null)),
             Some("error") => {
                 let err = reply.get("error").cloned().unwrap_or_default();
                 let code = err
@@ -315,7 +317,9 @@ impl FormatHandlerSession {
                     .unwrap_or("(no message)");
                 Err(HandlerError::OperationFailed(format!(
                     "plugin {}: {} — {}",
-                    self.plugin_name(), code, message
+                    self.plugin_name(),
+                    code,
+                    message
                 )))
             }
             Some(other) => Err(HandlerError::OperationFailed(format!(
@@ -551,8 +555,10 @@ impl FormatHandlerProxy {
             args.insert("max_lines".into(), serde_json::Value::from(m));
         }
         if let Some(cols) = &opts.cols {
-            let arr: Vec<serde_json::Value> =
-                cols.iter().map(|c| serde_json::Value::String(c.clone())).collect();
+            let arr: Vec<serde_json::Value> = cols
+                .iter()
+                .map(|c| serde_json::Value::String(c.clone()))
+                .collect();
             args.insert("cols".into(), serde_json::Value::Array(arr));
         }
         serde_json::Value::Object(args)
@@ -850,8 +856,10 @@ impl DocumentHandler for FormatHandlerProxy {
             args.insert("end_row".into(), serde_json::Value::from(e));
         }
         if let Some(cols) = &opts.cols {
-            let arr: Vec<serde_json::Value> =
-                cols.iter().map(|c| serde_json::Value::String(c.clone())).collect();
+            let arr: Vec<serde_json::Value> = cols
+                .iter()
+                .map(|c| serde_json::Value::String(c.clone()))
+                .collect();
             args.insert("cols".into(), serde_json::Value::Array(arr));
         }
         let result = self.send("raw", &serde_json::Value::Object(args), &HashMap::new())?;
@@ -874,7 +882,10 @@ impl DocumentHandler for FormatHandlerProxy {
             serde_json::Value::String(part_path.to_string()),
         );
         args.insert("xpath".into(), serde_json::Value::String(xpath.to_string()));
-        args.insert("action".into(), serde_json::Value::String(action.to_string()));
+        args.insert(
+            "action".into(),
+            serde_json::Value::String(action.to_string()),
+        );
         if let Some(xml) = xml {
             args.insert("xml".into(), serde_json::Value::String(xml.to_string()));
         }
@@ -918,7 +929,11 @@ impl DocumentHandler for FormatHandlerProxy {
     }
 
     fn validate(&self) -> Result<Vec<ValidationError>, HandlerError> {
-        let result = self.send("validate", &serde_json::Value::Object(Default::default()), &HashMap::new())?;
+        let result = self.send(
+            "validate",
+            &serde_json::Value::Object(Default::default()),
+            &HashMap::new(),
+        )?;
         let arr = match result {
             serde_json::Value::Array(a) => a,
             other => {
@@ -940,7 +955,11 @@ impl DocumentHandler for FormatHandlerProxy {
             .collect()
     }
 
-    fn try_extract_binary(&self, path: &str, dest: &str) -> Result<Option<BinaryInfo>, HandlerError> {
+    fn try_extract_binary(
+        &self,
+        path: &str,
+        dest: &str,
+    ) -> Result<Option<BinaryInfo>, HandlerError> {
         let args = serde_json::json!({"path": path, "dest_path": dest});
         let result = self.send("extract_binary", &args, &HashMap::new())?;
         let found = result
@@ -1008,11 +1027,7 @@ mod tests {
     fn command_envelope_includes_protocol_msg_type_command_args_props() {
         let mut props = HashMap::new();
         props.insert("text".to_string(), "hi".to_string());
-        let env = build_command_envelope(
-            "add",
-            &serde_json::json!({"parent": "/body"}),
-            &props,
-        );
+        let env = build_command_envelope("add", &serde_json::json!({"parent": "/body"}), &props);
         assert_eq!(env["protocol"], 1);
         assert_eq!(env["msg_type"], "command");
         assert_eq!(env["command"], "add");
@@ -1022,7 +1037,10 @@ mod tests {
 
     #[test]
     fn open_envelope_is_well_formed() {
-        let env = build_envelope("open", &serde_json::json!({"path": "/tmp/x", "editable": true}));
+        let env = build_envelope(
+            "open",
+            &serde_json::json!({"path": "/tmp/x", "editable": true}),
+        );
         assert_eq!(env["protocol"], 1);
         assert_eq!(env["msg_type"], "open");
         assert_eq!(env["path"], "/tmp/x");

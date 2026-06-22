@@ -263,7 +263,10 @@ fn handle_socket_path(cmd: commands::SocketPathCommand) -> Result<String, Handle
 }
 
 /// Open a document handler based on file extension.
-pub(crate) fn open_handler(file: &str, editable: bool) -> Result<Box<dyn DocumentHandler>, HandlerError> {
+pub(crate) fn open_handler(
+    file: &str,
+    editable: bool,
+) -> Result<Box<dyn DocumentHandler>, HandlerError> {
     let path = PathBuf::from(file);
     let ext = path
         .extension()
