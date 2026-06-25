@@ -2,7 +2,7 @@ use handler_common::output_format::{BinaryInfo, RawOptions};
 use handler_common::*;
 use oxml::OxmlPackage;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::add::add_element;
 use crate::dom_types::{WordDom, WordElementType, WordNode};
@@ -14,7 +14,22 @@ use crate::text_offset::extract_text_with_offsets;
 use crate::view::*;
 
 const DOCUMENT_PART: &str = "word/document.xml";
+const A_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
+const C_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+const MC_NS: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+const O_NS: &str = "urn:schemas-microsoft-com:office:office";
+const PIC_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/picture";
+const R_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const V_NS: &str = "urn:schemas-microsoft-com:vml";
+const W10_NS: &str = "urn:schemas-microsoft-com:office:word";
+const W14_NS: &str = "http://schemas.microsoft.com/office/word/2010/wordml";
+const W15_NS: &str = "http://schemas.microsoft.com/office/word/2012/wordml";
 const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+const WP_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
+const WP14_NS: &str = "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing";
+const WPG_NS: &str = "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup";
+const WPS_NS: &str = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
+const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
 
 pub struct WordHandler {
     package: RefCell<OxmlPackage>,
@@ -306,9 +321,9 @@ impl DocumentHandler for WordHandler {
                 "document opened in read-only mode".to_string(),
             ));
         }
-        // Find/replace on the whole document is a legitimate "/" target; everything
-        // else requires a scoped path.
-        if !properties.contains_key("find") {
+        // Find/replace and range edits can legitimately target the whole document
+        // or pass an empty path because their target lives in the property map.
+        if !properties.contains_key("find") && !properties.contains_key("range_paths") {
             handler_common::ensure_scoped(path, "set")?;
         }
 
@@ -907,8 +922,29 @@ fn build_node_from_roxmltree(node: roxmltree::Node) -> WordNode {
     };
 
     let mut attrs = HashMap::new();
+    let mut attr_namespaces = HashMap::new();
     for attr in node.attributes() {
-        attrs.insert(attr.name().to_string(), attr.value().to_string());
+        let is_xml_space = attr.namespace() == Some(XML_NS)
+            || (local_name == "t" && attr.name() == "space" && attr.value() == "preserve");
+        let key = if is_xml_space {
+            format!("xml:{}", attr.name())
+        } else {
+            attr.name().to_string()
+        };
+        attrs.insert(key.clone(), attr.value().to_string());
+        if is_xml_space {
+            attr_namespaces.insert(key, XML_NS.to_string());
+        } else if let Some(attr_ns) = attr.namespace() {
+            attr_namespaces.insert(key, attr_ns.to_string());
+        }
+    }
+
+    let mut namespace_declarations = HashMap::new();
+    for namespace in node.namespaces() {
+        namespace_declarations.insert(
+            namespace.name().unwrap_or_default().to_string(),
+            namespace.uri().to_string(),
+        );
     }
 
     let mut children = Vec::new();
@@ -923,7 +959,12 @@ fn build_node_from_roxmltree(node: roxmltree::Node) -> WordNode {
     }
 
     let mut word_node = WordNode::new(element_type.clone());
+    if !ns.is_empty() {
+        word_node.namespace = Some(ns.to_string());
+    }
     word_node.attributes = attrs;
+    word_node.attribute_namespaces = attr_namespaces;
+    word_node.namespace_declarations = namespace_declarations;
 
     // For w:t and delText, store text directly and clear children
     if element_type == WordElementType::Text
@@ -939,6 +980,9 @@ fn build_node_from_roxmltree(node: roxmltree::Node) -> WordNode {
             word_node.preserve_space = true;
         }
     } else {
+        if !text_content.is_empty() && (children.is_empty() || !text_content.trim().is_empty()) {
+            word_node.text_content = Some(text_content);
+        }
         word_node.children = children;
     }
 
@@ -957,50 +1001,25 @@ fn serialize_dom(dom: &WordDom) -> String {
 }
 
 fn serialize_node_to_string(output: &mut String, node: &WordNode, is_root: bool) {
-    let local_name = node.element_type.to_local_name();
-    let prefixed_name = if needs_w_prefix(&node.element_type) {
-        format!("w:{}", local_name)
-    } else {
-        local_name.to_string()
-    };
+    let prefixed_name = qualified_element_name(node);
 
     // w:t and w:delText: text element
     if node.element_type == WordElementType::Text
         || node.element_type == WordElementType::Unknown("delText".into())
     {
-        let space_attr = if node.preserve_space
-            || node.attributes.get("xml:space").map(|s| s.as_str()) == Some("preserve")
-        {
-            " xml:space=\"preserve\""
-        } else {
-            ""
-        };
-        output.push_str(&format!("<w:{}{}>", local_name, space_attr));
+        let mut attr_str = build_attribute_string(node, is_root);
+        if node.preserve_space && !has_xml_space_attr(node) {
+            attr_str.push_str(" xml:space=\"preserve\"");
+        }
+        output.push_str(&format!("<{}{}>", prefixed_name, attr_str));
         if let Some(text) = &node.text_content {
             output.push_str(&escape_xml_text(text));
         }
-        output.push_str(&format!("</w:{}>", local_name));
+        output.push_str(&format!("</{}>", prefixed_name));
         return;
     }
 
-    // Build attribute string
-    let mut attr_str = String::new();
-    if is_root && node.element_type == WordElementType::Document {
-        attr_str
-            .push_str(" xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"");
-        attr_str.push_str(
-            " xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"",
-        );
-        attr_str
-            .push_str(" xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"");
-    }
-    for (key, val) in &node.attributes {
-        attr_str.push_str(&format!(
-            " {}=\"{}\"",
-            escape_xml_text(key),
-            escape_xml_text(val)
-        ));
-    }
+    let attr_str = build_attribute_string(node, is_root);
 
     if node.children.is_empty() && node.text_content.is_none() {
         // Self-closing empty element
@@ -1018,12 +1037,154 @@ fn serialize_node_to_string(output: &mut String, node: &WordNode, is_root: bool)
     }
 }
 
-fn needs_w_prefix(element_type: &WordElementType) -> bool {
-    match element_type {
-        WordElementType::InlineImage => false,
-        WordElementType::Unknown(_) => true, // default to w: prefix for unknowns in docx context
-        _ => true,
+fn qualified_element_name(node: &WordNode) -> String {
+    let local_name = node.element_type.to_local_name();
+    if let Some(namespace) = &node.namespace {
+        if let Some(prefix) = prefix_for_namespace(namespace, node) {
+            if prefix.is_empty() {
+                return local_name.to_string();
+            }
+            return format!("{}:{}", prefix, local_name);
+        }
     }
+
+    match node.element_type {
+        WordElementType::InlineImage => format!("wp:{}", local_name),
+        _ => format!("w:{}", local_name),
+    }
+}
+
+fn build_attribute_string(node: &WordNode, is_root: bool) -> String {
+    let mut parts = Vec::new();
+
+    let namespace_declarations = namespace_declarations_for_node(node, is_root);
+    for (prefix, uri) in namespace_declarations {
+        let name = if prefix.is_empty() {
+            "xmlns".to_string()
+        } else {
+            format!("xmlns:{}", prefix)
+        };
+        parts.push(format!("{}=\"{}\"", name, escape_xml_text(&uri)));
+    }
+
+    let mut attrs: Vec<(&String, &String)> = node.attributes.iter().collect();
+    attrs.sort_by(|a, b| attribute_sort_key(node, a.0).cmp(&attribute_sort_key(node, b.0)));
+    for (key, val) in attrs {
+        parts.push(format!(
+            "{}=\"{}\"",
+            qualified_attribute_name(node, key),
+            escape_xml_text(val)
+        ));
+    }
+
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", parts.join(" "))
+    }
+}
+
+fn namespace_declarations_for_node(node: &WordNode, is_root: bool) -> BTreeMap<String, String> {
+    let mut declarations = BTreeMap::new();
+
+    if is_root && node.element_type == WordElementType::Document {
+        for (prefix, uri) in known_office_namespaces() {
+            declarations.insert(prefix.to_string(), uri.to_string());
+        }
+    }
+
+    for (prefix, uri) in &node.namespace_declarations {
+        let known = known_office_namespaces()
+            .iter()
+            .any(|(_, known_uri)| *known_uri == uri);
+        if prefix != "xml" && (is_root || !known) {
+            declarations.insert(prefix.clone(), uri.clone());
+        }
+    }
+
+    declarations
+}
+
+fn known_office_namespaces() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("a", A_NS),
+        ("c", C_NS),
+        ("mc", MC_NS),
+        ("o", O_NS),
+        ("pic", PIC_NS),
+        ("r", R_NS),
+        ("v", V_NS),
+        ("w", W_NS),
+        ("w10", W10_NS),
+        ("w14", W14_NS),
+        ("w15", W15_NS),
+        ("wp", WP_NS),
+        ("wp14", WP14_NS),
+        ("wpg", WPG_NS),
+        ("wps", WPS_NS),
+    ]
+}
+
+fn prefix_for_namespace(namespace: &str, node: &WordNode) -> Option<String> {
+    if namespace == XML_NS {
+        return Some("xml".to_string());
+    }
+
+    if let Some((prefix, _)) = known_office_namespaces()
+        .iter()
+        .find(|(_, uri)| *uri == namespace)
+    {
+        return Some((*prefix).to_string());
+    }
+
+    node.namespace_declarations
+        .iter()
+        .find(|(_, uri)| uri.as_str() == namespace)
+        .map(|(prefix, _)| prefix.clone())
+}
+
+fn qualified_attribute_name(node: &WordNode, key: &str) -> String {
+    if key.starts_with("xmlns") {
+        return key.to_string();
+    }
+    if key.contains(':') {
+        return key.to_string();
+    }
+
+    if let Some(namespace) = node.attribute_namespaces.get(key) {
+        if let Some(prefix) = prefix_for_namespace(namespace, node) {
+            if prefix.is_empty() {
+                return key.to_string();
+            }
+            return format!("{}:{}", prefix, key);
+        }
+    }
+
+    if default_attribute_namespace_is_word(node) {
+        format!("w:{}", key)
+    } else {
+        key.to_string()
+    }
+}
+
+fn default_attribute_namespace_is_word(node: &WordNode) -> bool {
+    match node.namespace.as_deref() {
+        Some(W_NS) => true,
+        Some(_) => false,
+        None => node.element_type != WordElementType::InlineImage,
+    }
+}
+
+fn attribute_sort_key(node: &WordNode, key: &str) -> String {
+    qualified_attribute_name(node, key)
+}
+
+fn has_xml_space_attr(node: &WordNode) -> bool {
+    node.attributes.contains_key("xml:space")
+        || node
+            .attribute_namespaces
+            .iter()
+            .any(|(key, ns)| key == "space" && ns == XML_NS)
 }
 
 fn escape_xml_text(text: &str) -> String {
@@ -1168,4 +1329,99 @@ fn find_byte_substring(haystack: &[u8], needle: &[u8], from: usize) -> Option<us
         .windows(needle.len())
         .position(|w| w == needle)
         .map(|p| p + from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serialize_preserves_non_wordprocessing_namespaces() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w10="urn:schemas-microsoft-com:office:word" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="w14 wp14">
+  <w:body>
+    <w:p>
+      <w:r>
+        <mc:AlternateContent>
+          <mc:Choice Requires="wps">
+            <w:drawing>
+              <wp:anchor distT="0" distB="0">
+                <wp:positionH relativeFrom="column"><wp:posOffset>5147945</wp:posOffset></wp:positionH>
+                <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+                  <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                    <wps:wsp>
+                      <wps:txbx>
+                        <w:txbxContent>
+                          <w:p>
+                            <w:r><w:t xml:space="preserve"> Text </w:t></w:r>
+                          </w:p>
+                        </w:txbxContent>
+                      </wps:txbx>
+                    </wps:wsp>
+                  </a:graphicData>
+                </a:graphic>
+              </wp:anchor>
+            </w:drawing>
+          </mc:Choice>
+          <mc:Fallback>
+            <w:pict>
+              <v:shape o:allowincell="f">
+                <v:textbox><w:txbxContent><w:p><w:r><w:t>Fallback</w:t></w:r></w:p></w:txbxContent></v:textbox>
+              </v:shape>
+            </w:pict>
+          </mc:Fallback>
+        </mc:AlternateContent>
+      </w:r>
+    </w:p>
+  </w:body>
+</w:document>"#;
+
+        let dom = parse_document_xml(xml).unwrap();
+        let serialized = serialize_dom(&dom);
+
+        assert!(serialized.contains("<mc:AlternateContent"));
+        assert!(serialized.contains("<mc:Choice"));
+        assert!(serialized.contains("Requires=\"wps\""));
+        assert!(serialized.contains("<wp:anchor"));
+        assert!(serialized.contains("<wp:posOffset>5147945</wp:posOffset>"));
+        assert!(serialized.contains("distB=\"0\""));
+        assert!(serialized.contains("distT=\"0\""));
+        assert!(serialized.contains("<a:graphic"));
+        assert!(serialized.contains("<a:graphicData"));
+        assert!(serialized
+            .contains("uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\""));
+        assert!(serialized.contains("<wps:wsp"));
+        assert!(serialized.contains("<wps:txbx"));
+        assert!(serialized.contains("<v:shape"));
+        assert!(serialized.contains("o:allowincell=\"f\""));
+        assert!(serialized.contains("mc:Ignorable=\"w14 wp14\""));
+        assert!(serialized.contains("<w:t"));
+        assert!(serialized.contains("xml:space=\"preserve\""));
+        assert!(serialized.contains("> Text </w:t>"));
+
+        assert!(!serialized.contains("<w:AlternateContent"));
+        assert!(!serialized.contains("<w:anchor"));
+        assert!(!serialized.contains("<w:graphic"));
+        assert!(!serialized.contains("<w:wsp"));
+        assert!(!serialized.contains("<w:shape"));
+        assert!(!serialized.contains("w:space=\"preserve\""));
+    }
+
+    #[test]
+    fn generated_word_nodes_serialize_local_attributes_in_word_namespace() {
+        let dom = WordDom::new(WordNode::new(WordElementType::Document).with_children(vec![
+            WordNode::new(WordElementType::Body).with_children(vec![
+                WordNode::new(WordElementType::Paragraph).with_children(vec![
+                    WordNode::new(WordElementType::ParagraphProperties).with_children(vec![
+                        WordNode::new(WordElementType::Unknown("pStyle".to_string()))
+                            .with_attribute("val", "Heading1"),
+                    ]),
+                ]),
+            ]),
+        ]));
+
+        let serialized = serialize_dom(&dom);
+
+        assert!(serialized.contains("<w:pStyle w:val=\"Heading1\" />"));
+    }
 }

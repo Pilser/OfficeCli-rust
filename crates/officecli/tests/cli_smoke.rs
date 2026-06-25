@@ -713,6 +713,33 @@ fn test_batch_docx() {
         .success();
 }
 
+#[test]
+fn test_batch_docx_range_paths_with_props_replaces_text() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_batch_range_paths.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args(["set", &p, "/body/p[1]", "text=abcdef"])
+        .assert()
+        .success();
+
+    let batch_json = r#"[{"command":"set","range_paths":"/body/p[1][1..4]","props":{"text":"X"}}]"#;
+
+    officecli()
+        .args(["batch", &p, batch_json, "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"Ok\": \"OK\""));
+
+    officecli()
+        .args(["view", &p])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("aXef"));
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Save — explicit save (create already saves, but test the command)
 // ═══════════════════════════════════════════════════════════════════════

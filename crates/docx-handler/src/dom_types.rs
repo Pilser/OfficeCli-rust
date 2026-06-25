@@ -185,8 +185,18 @@ impl WordElementType {
 pub struct WordNode {
     /// The element type (e.g. Paragraph, Run, Text).
     pub element_type: WordElementType,
+    /// XML namespace URI for this element when it was parsed from an existing
+    /// document. Newly-created Word nodes leave this empty and serialize as
+    /// WordprocessingML by default.
+    pub namespace: Option<String>,
     /// XML attributes (key-value pairs).
     pub attributes: HashMap<String, String>,
+    /// XML namespace URI per attribute key. `attributes` intentionally remains
+    /// keyed by local name for the existing DOM/query/mutation code.
+    pub attribute_namespaces: HashMap<String, String>,
+    /// Namespace declarations found on this element. Key is prefix, or an empty
+    /// string for a default namespace.
+    pub namespace_declarations: HashMap<String, String>,
     /// Text content (for w:t elements and text nodes).
     pub text_content: Option<String>,
     /// Child nodes.
@@ -199,11 +209,19 @@ impl WordNode {
     pub fn new(element_type: WordElementType) -> Self {
         Self {
             element_type,
+            namespace: None,
             attributes: HashMap::new(),
+            attribute_namespaces: HashMap::new(),
+            namespace_declarations: HashMap::new(),
             text_content: None,
             children: Vec::new(),
             preserve_space: false,
         }
+    }
+
+    pub fn with_namespace(mut self, namespace: impl Into<String>) -> Self {
+        self.namespace = Some(namespace.into());
+        self
     }
 
     pub fn with_text(mut self, text: impl Into<String>) -> Self {
