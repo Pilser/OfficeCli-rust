@@ -107,8 +107,8 @@ impl DocumentHandler for PptxHandler {
                 "package opened in read-only mode".to_string(),
             ));
         }
-        // Find/replace legitimately targets "/" (whole deck); other sets need scope.
-        if !properties.contains_key("find") {
+        // Find/replace and range edits carry their target in the property map.
+        if !properties.contains_key("find") && !properties.contains_key("range_paths") {
             handler_common::ensure_scoped(path, "set")?;
         }
         if let Some(range_paths_str) = properties.get("range_paths") {
