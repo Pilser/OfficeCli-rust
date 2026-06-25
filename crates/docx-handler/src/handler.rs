@@ -712,107 +712,19 @@ fn apply_docx_range_highlights(
     }
 
     for seg in segments {
-        let para_node = navigate_to_element_mut(dom, &seg.path)?;
-        if para_node.element_type != WordElementType::Paragraph {
-            return Err(HandlerError::InvalidArgument(format!(
-                "Range highlight path must point to a Paragraph, found: {:?}",
-                para_node.element_type
-            )));
-        }
-
-        // 1. Collect all runs under the paragraph with their index paths and text contents
-        let mut collected_runs = Vec::new();
-        let mut path_tracker = Vec::new();
-        collect_run_locations(para_node, &mut path_tracker, &mut collected_runs);
-
-        // 2. Map global character offsets to the runs
-        let mut global_start = 0;
-        let mut runs_with_spans = Vec::new();
-        for (path, text) in collected_runs {
-            let len = text.chars().count();
-            let global_end = global_start + len;
-            runs_with_spans.push((path, global_start, global_end, len));
-            global_start = global_end;
-        }
-
-        let total_text_len = global_start;
-        let target_start = seg.start.unwrap_or(0);
-        let target_end = seg.end.unwrap_or(total_text_len);
-
-        // For text replacement, only the first overlapping run receives the new
-        // text; the selected portions of subsequent runs are removed so the new
-        // text appears exactly once across the whole selection.
-        let first_overlap_path = runs_with_spans
-            .iter()
-            .find(|(_p, r_start, r_end, _len)| {
-                (*r_start).max(target_start) < (*r_end).min(target_end)
-            })
-            .map(|(p, _, _, _)| p.clone());
-
-        // 3. Process runs in reverse order to keep index paths stable
-        for (path, r_start, r_end, _r_len) in runs_with_spans.into_iter().rev() {
-            let overlap_start = r_start.max(target_start);
-            let overlap_end = r_end.min(target_end);
-
-            if overlap_start < overlap_end {
-                let local_start = overlap_start - r_start;
-                let local_end = overlap_end - r_start;
-
-                let parent = get_node_mut_by_path(para_node, &path[..path.len() - 1]);
-                let last_idx = path[path.len() - 1];
-
-                let run = parent.children[last_idx].clone();
-                let text = run.paragraph_text();
-
-                // Convert char offsets to byte indices
-                let byte_start = text
-                    .char_indices()
-                    .nth(local_start)
-                    .map(|(i, _)| i)
-                    .unwrap_or(text.len());
-                let byte_end = text
-                    .char_indices()
-                    .nth(local_end)
-                    .map(|(i, _)| i)
-                    .unwrap_or(text.len());
-
-                // Split run at byte offsets
-                let (left, rest) = crate::helpers::split_run_at_offset(&run, byte_start);
-                let mut mid = None;
-                let mut right = None;
-                if let Some(r) = rest {
-                    let (m, rg) = crate::helpers::split_run_at_offset(&r, byte_end - byte_start);
-                    mid = m;
-                    right = rg;
-                }
-
-                // Build the replacement run list for this run.
-                let mut inserted_runs = Vec::new();
-                if let Some(l) = left {
-                    inserted_runs.push(l);
-                }
-                match &new_text {
-                    Some(nt) => {
-                        // Text replacement: insert the new text only on the first
-                        // overlapping run; drop the selected mid of all others.
-                        if first_overlap_path.as_ref() == Some(&path) {
-                            let mut new_run = crate::helpers::build_run_with_text(&run, nt);
-                            merge_run_properties(&mut new_run, &format_props);
-                            inserted_runs.push(new_run);
-                        }
-                    }
-                    None => {
-                        if let Some(mut m) = mid {
-                            merge_run_properties(&mut m, &format_props);
-                            inserted_runs.push(m);
-                        }
-                    }
-                }
-                if let Some(rg) = right {
-                    inserted_runs.push(rg);
-                }
-
-                parent.children.splice(last_idx..=last_idx, inserted_runs);
+        let target_node = navigate_to_element_mut(dom, &seg.path)?;
+        match target_node.element_type {
+            WordElementType::Paragraph => {
+                apply_docx_paragraph_range(target_node, seg, new_text.as_deref(), &format_props)?;
+            }
+            WordElementType::Run => {
+                apply_docx_run_range(target_node, seg, new_text.as_deref(), &format_props)?;
+            }
+            _ => {
+                return Err(HandlerError::InvalidArgument(format!(
+                    "Range path must point to a Paragraph or Run, found: {:?}",
+                    target_node.element_type
+                )));
             }
         }
     }
@@ -847,6 +759,165 @@ fn apply_docx_range_highlights(
     }
 
     Ok(unsupported)
+}
+
+fn apply_docx_paragraph_range(
+    para_node: &mut WordNode,
+    seg: &PathRangeSegment,
+    new_text: Option<&str>,
+    format_props: &HashMap<String, String>,
+) -> Result<(), HandlerError> {
+    // 1. Collect all runs under the paragraph with their index paths and text contents
+    let mut collected_runs = Vec::new();
+    let mut path_tracker = Vec::new();
+    collect_run_locations(para_node, &mut path_tracker, &mut collected_runs);
+
+    // 2. Map global character offsets to the runs
+    let mut global_start = 0;
+    let mut runs_with_spans = Vec::new();
+    for (path, text) in collected_runs {
+        let len = text.chars().count();
+        let global_end = global_start + len;
+        runs_with_spans.push((path, global_start, global_end, len));
+        global_start = global_end;
+    }
+
+    let total_text_len = global_start;
+    let target_start = seg.start.unwrap_or(0);
+    let target_end = seg.end.unwrap_or(total_text_len);
+
+    if target_start >= target_end {
+        return Err(HandlerError::InvalidArgument(format!(
+            "range {}[{}..{}] is empty or reversed",
+            seg.path, target_start, target_end
+        )));
+    }
+
+    // For text replacement, only the first overlapping run receives the new
+    // text; the selected portions of subsequent runs are removed so the new
+    // text appears exactly once across the whole selection.
+    let first_overlap_path = runs_with_spans
+        .iter()
+        .find(|(_p, r_start, r_end, _len)| (*r_start).max(target_start) < (*r_end).min(target_end))
+        .map(|(p, _, _, _)| p.clone());
+
+    if first_overlap_path.is_none() {
+        return Err(HandlerError::InvalidArgument(format!(
+            "range {}[{}..{}] did not overlap paragraph text length {}",
+            seg.path, target_start, target_end, total_text_len
+        )));
+    }
+
+    // 3. Process runs in reverse order to keep index paths stable
+    for (path, r_start, r_end, _r_len) in runs_with_spans.into_iter().rev() {
+        let overlap_start = r_start.max(target_start);
+        let overlap_end = r_end.min(target_end);
+
+        if overlap_start < overlap_end {
+            let local_start = overlap_start - r_start;
+            let local_end = overlap_end - r_start;
+
+            let parent = get_node_mut_by_path(para_node, &path[..path.len() - 1]);
+            let last_idx = path[path.len() - 1];
+
+            let run = parent.children[last_idx].clone();
+            let text = run.paragraph_text();
+
+            // Convert char offsets to byte indices
+            let byte_start = char_offset_to_byte_index(&text, local_start);
+            let byte_end = char_offset_to_byte_index(&text, local_end);
+
+            // Split run at byte offsets
+            let (left, rest) = crate::helpers::split_run_at_offset(&run, byte_start);
+            let mut mid = None;
+            let mut right = None;
+            if let Some(r) = rest {
+                let (m, rg) = crate::helpers::split_run_at_offset(&r, byte_end - byte_start);
+                mid = m;
+                right = rg;
+            }
+
+            // Build the replacement run list for this run.
+            let mut inserted_runs = Vec::new();
+            if let Some(l) = left {
+                inserted_runs.push(l);
+            }
+            match new_text {
+                Some(nt) => {
+                    // Text replacement: insert the new text only on the first
+                    // overlapping run; drop the selected mid of all others.
+                    if first_overlap_path.as_ref() == Some(&path) {
+                        let mut new_run = crate::helpers::build_run_with_text(&run, nt);
+                        merge_run_properties(&mut new_run, format_props);
+                        inserted_runs.push(new_run);
+                    }
+                }
+                None => {
+                    if let Some(mut m) = mid {
+                        merge_run_properties(&mut m, format_props);
+                        inserted_runs.push(m);
+                    }
+                }
+            }
+            if let Some(rg) = right {
+                inserted_runs.push(rg);
+            }
+
+            parent.children.splice(last_idx..=last_idx, inserted_runs);
+        }
+    }
+
+    Ok(())
+}
+
+fn apply_docx_run_range(
+    run_node: &mut WordNode,
+    seg: &PathRangeSegment,
+    new_text: Option<&str>,
+    format_props: &HashMap<String, String>,
+) -> Result<(), HandlerError> {
+    let Some(nt) = new_text else {
+        merge_run_properties(run_node, format_props);
+        return Ok(());
+    };
+
+    let source_run = run_node.clone();
+    let text = source_run.paragraph_text();
+
+    let replacement = if seg.start.is_none() && seg.end.is_none() {
+        nt.to_string()
+    } else {
+        let total_text_len = text.chars().count();
+        let target_start = seg.start.unwrap_or(0);
+        let target_end = seg.end.unwrap_or(total_text_len);
+
+        if target_start >= target_end || target_start >= total_text_len {
+            return Err(HandlerError::InvalidArgument(format!(
+                "range {}[{}..{}] did not overlap run text length {}",
+                seg.path, target_start, target_end, total_text_len
+            )));
+        }
+
+        let clamped_end = target_end.min(total_text_len);
+        let byte_start = char_offset_to_byte_index(&text, target_start);
+        let byte_end = char_offset_to_byte_index(&text, clamped_end);
+        format!("{}{}{}", &text[..byte_start], nt, &text[byte_end..])
+    };
+
+    *run_node = crate::helpers::build_run_with_text(&source_run, &replacement);
+    merge_run_properties(run_node, format_props);
+    Ok(())
+}
+
+fn char_offset_to_byte_index(text: &str, offset: usize) -> usize {
+    if offset == text.chars().count() {
+        return text.len();
+    }
+
+    text.char_indices()
+        .nth(offset)
+        .map(|(idx, _)| idx)
+        .unwrap_or(text.len())
 }
 
 fn collect_run_locations(
