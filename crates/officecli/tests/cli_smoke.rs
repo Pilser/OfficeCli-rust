@@ -740,6 +740,147 @@ fn test_batch_docx_range_paths_with_props_replaces_text() {
         .stdout(predicate::str::contains("aXef"));
 }
 
+#[test]
+fn test_batch_docx_range_paths_supports_run_paths() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_batch_run_paths.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args(["set", &p, "/body/p[1]", "text=abcdef"])
+        .assert()
+        .success();
+
+    let batch_json = r#"[{"command":"set","range_paths":"/body/p[1]/r[1]","props":{"text":"X"}}]"#;
+
+    officecli()
+        .args(["batch", &p, batch_json, "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"Ok\": \"OK\""));
+
+    officecli()
+        .args(["view", &p])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("X"));
+}
+
+#[test]
+fn test_batch_docx_bookmark_range_paths_supports_table_cell_paths() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_batch_table_cell_bookmark.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args([
+            "add",
+            &p,
+            "--parent",
+            "/body",
+            "--type-name",
+            "table",
+            "--properties",
+            "rows=1",
+            "cols=1",
+            "r1c1=abcdef",
+        ])
+        .assert()
+        .success();
+
+    let batch_json = r#"[{"command":"add","parent":"/body/p[1]","type":"bookmark","properties":{"name":"DSN_CELL"},"range_paths":"/body/tbl[1]/tr[1]/tc[1][1..4]"}]"#;
+
+    officecli()
+        .args(["batch", &p, batch_json, "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"Ok\": \"created:"))
+        .stdout(predicate::str::contains("DSN_CELL"));
+
+    officecli()
+        .args([
+            "get",
+            &p,
+            "/body/tbl[1]/tr[1]/tc[1]/p[1]",
+            "--depth",
+            "2",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("bookmarkStart"))
+        .stdout(predicate::str::contains("bookmarkEnd"))
+        .stdout(predicate::str::contains("bcd"));
+}
+
+#[test]
+fn test_batch_docx_set_range_paths_supports_span_index_table_cell_paths() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_batch_span_index_table_cell_set.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args([
+            "add",
+            &p,
+            "--parent",
+            "/body",
+            "--type-name",
+            "table",
+            "--properties",
+            "rows=1",
+            "cols=1",
+            "r1c1=abcdef",
+        ])
+        .assert()
+        .success();
+
+    let batch_json = r#"[{"command":"set","range_paths":"/body/p[3][1..4]","props":{"text":"X"}}]"#;
+
+    officecli()
+        .args(["batch", &p, batch_json, "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"Ok\": \"OK\""));
+
+    officecli()
+        .args(["view", &p])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("aXef"));
+}
+
+#[test]
+fn test_batch_docx_set_range_paths_suffix_fallback_for_stale_offsets() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_batch_stale_offsets.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args(["set", &p, "/body/p[1]", "text=prefix:1234567890"])
+        .assert()
+        .success();
+
+    let batch_json =
+        r#"[{"command":"set","range_paths":"/body/p[1][614..624]","props":{"text":"[DATE]"}}]"#;
+
+    officecli()
+        .args(["batch", &p, batch_json, "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"Ok\": \"OK\""));
+
+    officecli()
+        .args(["view", &p])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("prefix:[DATE]"));
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Save — explicit save (create already saves, but test the command)
 // ═══════════════════════════════════════════════════════════════════════

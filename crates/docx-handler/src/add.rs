@@ -59,6 +59,13 @@ enum AddType {
     SdtRun,
 }
 
+#[derive(Debug, Clone)]
+struct ParagraphRange {
+    path: String,
+    start: usize,
+    end: usize,
+}
+
 fn resolve_add_type(name: &str) -> Result<AddType, HandlerError> {
     match name {
         "p" | "paragraph" => Ok(AddType::Paragraph),
@@ -157,6 +164,133 @@ fn resolve_range_to_paragraph(
             node.element_type
         )))
     }
+}
+
+fn resolve_segments_to_paragraph_ranges(
+    dom: &WordDom,
+    segments: &[PathRangeSegment],
+) -> Result<Vec<ParagraphRange>, HandlerError> {
+    let mut ranges = Vec::new();
+
+    for seg in segments {
+        ranges.extend(resolve_segment_to_paragraph_ranges(dom, seg)?);
+    }
+
+    if ranges.is_empty() {
+        return Err(HandlerError::InvalidArgument(
+            "range-paths did not resolve to any paragraph text".to_string(),
+        ));
+    }
+
+    Ok(ranges)
+}
+
+fn resolve_segment_to_paragraph_ranges(
+    dom: &WordDom,
+    seg: &PathRangeSegment,
+) -> Result<Vec<ParagraphRange>, HandlerError> {
+    let node = navigate_to_element(dom, &seg.path)?;
+
+    if node.element_type == WordElementType::TableCell {
+        return resolve_cell_range_to_paragraph_ranges(node, &seg.path, seg.start, seg.end);
+    }
+
+    if node.element_type == WordElementType::Paragraph || node.element_type == WordElementType::Run
+    {
+        let (path, start, end) = resolve_range_to_paragraph(dom, &seg.path, seg.start, seg.end)?;
+        return Ok(vec![ParagraphRange { path, start, end }]);
+    }
+
+    Err(HandlerError::InvalidArgument(format!(
+        "range-paths must point to a Paragraph, Run, or TableCell, found: {:?}",
+        node.element_type
+    )))
+}
+
+fn resolve_cell_range_to_paragraph_ranges(
+    cell: &WordNode,
+    cell_path: &str,
+    seg_start: Option<usize>,
+    seg_end: Option<usize>,
+) -> Result<Vec<ParagraphRange>, HandlerError> {
+    let para_count = cell
+        .children
+        .iter()
+        .filter(|child| child.element_type == WordElementType::Paragraph)
+        .count();
+
+    if para_count == 0 {
+        return Err(HandlerError::InvalidArgument(format!(
+            "range-paths target table cell '{}' has no paragraphs",
+            cell_path
+        )));
+    }
+
+    let total_len = cell_text_len(cell);
+    let target_start = seg_start.unwrap_or(0);
+    let target_end = seg_end.unwrap_or(total_len);
+
+    if target_start > target_end {
+        return Err(HandlerError::InvalidArgument(format!(
+            "range {}[{}..{}] is reversed",
+            cell_path, target_start, target_end
+        )));
+    }
+
+    let mut ranges = Vec::new();
+    let mut para_idx = 0;
+    let mut cursor = 0;
+
+    for child in &cell.children {
+        if child.element_type != WordElementType::Paragraph {
+            continue;
+        }
+
+        para_idx += 1;
+        let text_len = child.paragraph_text().chars().count();
+        let para_start = cursor;
+        let para_end = para_start + text_len;
+
+        let overlap_start = target_start.max(para_start);
+        let overlap_end = target_end.min(para_end);
+        if overlap_start < overlap_end || (text_len == 0 && target_start == para_start) {
+            ranges.push(ParagraphRange {
+                path: format!("{}/p[{}]", cell_path, para_idx),
+                start: overlap_start.saturating_sub(para_start),
+                end: overlap_end.saturating_sub(para_start),
+            });
+        }
+
+        cursor = para_end;
+        if para_idx < para_count {
+            cursor += 1; // extract-text joins paragraphs inside a cell with '\n'.
+        }
+    }
+
+    if ranges.is_empty() {
+        return Err(HandlerError::InvalidArgument(format!(
+            "range {}[{}..{}] did not overlap table cell text length {}",
+            cell_path, target_start, target_end, total_len
+        )));
+    }
+
+    Ok(ranges)
+}
+
+fn cell_text_len(cell: &WordNode) -> usize {
+    let para_count = cell
+        .children
+        .iter()
+        .filter(|child| child.element_type == WordElementType::Paragraph)
+        .count();
+    let text_len: usize = cell
+        .children
+        .iter()
+        .filter(|child| child.element_type == WordElementType::Paragraph)
+        .map(|child| child.paragraph_text().chars().count())
+        .sum();
+
+    text_len + para_count.saturating_sub(1)
 }
 
 /// Extract the paragraph path from a run path by stripping the /r[N] suffix
@@ -268,11 +402,14 @@ fn add_bookmark_by_range(
     format_props.remove("endPara");
     format_props.remove("endpara");
 
+    let paragraph_ranges = resolve_segments_to_paragraph_ranges(dom, segments)?;
+
     // For range-paths with a single segment, wrap around that range
-    if segments.len() == 1 {
-        let seg = &segments[0];
-        let (para_path, target_start, target_end) =
-            resolve_range_to_paragraph(dom, &seg.path, seg.start, seg.end)?;
+    if paragraph_ranges.len() == 1 {
+        let range = &paragraph_ranges[0];
+        let para_path = range.path.clone();
+        let target_start = range.start;
+        let target_end = range.end;
 
         let para_node = navigate_to_element_mut(dom, &para_path)?;
         if para_node.element_type != WordElementType::Paragraph {
@@ -446,21 +583,19 @@ fn add_bookmark_by_range(
 
     // Multi-segment range: bookmarkStart at first segment start, bookmarkEnd at last segment end
     // Process each segment to split runs at its boundaries.
-    let first_seg = &segments[0];
-    let last_seg = segments.last().unwrap();
-
-    // Resolve first/last segment paths to paragraph-level before the loop
-    let (first_para_path, first_target_start, _) =
-        resolve_range_to_paragraph(dom, &first_seg.path, first_seg.start, first_seg.end)?;
-    let (last_para_path, _, last_target_end) =
-        resolve_range_to_paragraph(dom, &last_seg.path, last_seg.start, last_seg.end)?;
+    let first_range = &paragraph_ranges[0];
+    let last_range = paragraph_ranges.last().unwrap();
+    let first_para_path = first_range.path.clone();
+    let first_target_start = first_range.start;
+    let last_para_path = last_range.path.clone();
+    let last_target_end = last_range.end;
 
     // Process each segment: split runs at boundaries
-    for seg in segments {
-        let (para_path, seg_target_start, seg_target_end) =
-            resolve_range_to_paragraph(dom, &seg.path, seg.start, seg.end)?;
-
-        let para_node = navigate_to_element_mut(dom, &para_path)?;
+    for range in &paragraph_ranges {
+        let para_path = &range.path;
+        let seg_target_start = range.start;
+        let seg_target_end = range.end;
+        let para_node = navigate_to_element_mut(dom, para_path)?;
         if para_node.element_type != WordElementType::Paragraph {
             return Err(HandlerError::InvalidArgument(
                 "range-paths for bookmark must point to Paragraphs".to_string(),
@@ -497,7 +632,7 @@ fn add_bookmark_by_range(
             let parent_path = &path[..path.len() - 1];
             let last_idx = path[path.len() - 1];
 
-            let para_node = navigate_to_element_mut(dom, &para_path)?;
+            let para_node = navigate_to_element_mut(dom, para_path)?;
             let run_parent = get_node_mut_by_path(para_node, parent_path);
             let run = run_parent.children[last_idx].clone();
             let text = run.paragraph_text();
@@ -536,7 +671,7 @@ fn add_bookmark_by_range(
                 inserted.push(rg);
             }
 
-            let para_node = navigate_to_element_mut(dom, &para_path)?;
+            let para_node = navigate_to_element_mut(dom, para_path)?;
             let run_parent = get_node_mut_by_path(para_node, parent_path);
             run_parent.children.splice(last_idx..=last_idx, inserted);
         }

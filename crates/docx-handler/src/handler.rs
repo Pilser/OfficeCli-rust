@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, HashMap};
 use crate::add::add_element;
 use crate::dom_types::{WordDom, WordElementType, WordNode};
 use crate::mutations::{self, move_element, remove_element, set_properties, swap_elements};
-use crate::navigation::{navigate_to_element, navigate_to_element_mut};
+use crate::navigation::{navigate_to_element, navigate_to_element_mut, parse_path};
 use crate::query::query_elements;
 use crate::raw::read_raw;
 use crate::text_offset::extract_text_with_offsets;
@@ -711,108 +711,22 @@ fn apply_docx_range_highlights(
         format_props.insert("highlight".to_string(), "yellow".to_string());
     }
 
-    for seg in segments {
-        let para_node = navigate_to_element_mut(dom, &seg.path)?;
-        if para_node.element_type != WordElementType::Paragraph {
-            return Err(HandlerError::InvalidArgument(format!(
-                "Range highlight path must point to a Paragraph, found: {:?}",
-                para_node.element_type
-            )));
-        }
+    let segments = resolve_docx_range_segments(dom, segments)?;
 
-        // 1. Collect all runs under the paragraph with their index paths and text contents
-        let mut collected_runs = Vec::new();
-        let mut path_tracker = Vec::new();
-        collect_run_locations(para_node, &mut path_tracker, &mut collected_runs);
-
-        // 2. Map global character offsets to the runs
-        let mut global_start = 0;
-        let mut runs_with_spans = Vec::new();
-        for (path, text) in collected_runs {
-            let len = text.chars().count();
-            let global_end = global_start + len;
-            runs_with_spans.push((path, global_start, global_end, len));
-            global_start = global_end;
-        }
-
-        let total_text_len = global_start;
-        let target_start = seg.start.unwrap_or(0);
-        let target_end = seg.end.unwrap_or(total_text_len);
-
-        // For text replacement, only the first overlapping run receives the new
-        // text; the selected portions of subsequent runs are removed so the new
-        // text appears exactly once across the whole selection.
-        let first_overlap_path = runs_with_spans
-            .iter()
-            .find(|(_p, r_start, r_end, _len)| {
-                (*r_start).max(target_start) < (*r_end).min(target_end)
-            })
-            .map(|(p, _, _, _)| p.clone());
-
-        // 3. Process runs in reverse order to keep index paths stable
-        for (path, r_start, r_end, _r_len) in runs_with_spans.into_iter().rev() {
-            let overlap_start = r_start.max(target_start);
-            let overlap_end = r_end.min(target_end);
-
-            if overlap_start < overlap_end {
-                let local_start = overlap_start - r_start;
-                let local_end = overlap_end - r_start;
-
-                let parent = get_node_mut_by_path(para_node, &path[..path.len() - 1]);
-                let last_idx = path[path.len() - 1];
-
-                let run = parent.children[last_idx].clone();
-                let text = run.paragraph_text();
-
-                // Convert char offsets to byte indices
-                let byte_start = text
-                    .char_indices()
-                    .nth(local_start)
-                    .map(|(i, _)| i)
-                    .unwrap_or(text.len());
-                let byte_end = text
-                    .char_indices()
-                    .nth(local_end)
-                    .map(|(i, _)| i)
-                    .unwrap_or(text.len());
-
-                // Split run at byte offsets
-                let (left, rest) = crate::helpers::split_run_at_offset(&run, byte_start);
-                let mut mid = None;
-                let mut right = None;
-                if let Some(r) = rest {
-                    let (m, rg) = crate::helpers::split_run_at_offset(&r, byte_end - byte_start);
-                    mid = m;
-                    right = rg;
-                }
-
-                // Build the replacement run list for this run.
-                let mut inserted_runs = Vec::new();
-                if let Some(l) = left {
-                    inserted_runs.push(l);
-                }
-                match &new_text {
-                    Some(nt) => {
-                        // Text replacement: insert the new text only on the first
-                        // overlapping run; drop the selected mid of all others.
-                        if first_overlap_path.as_ref() == Some(&path) {
-                            let mut new_run = crate::helpers::build_run_with_text(&run, nt);
-                            merge_run_properties(&mut new_run, &format_props);
-                            inserted_runs.push(new_run);
-                        }
-                    }
-                    None => {
-                        if let Some(mut m) = mid {
-                            merge_run_properties(&mut m, &format_props);
-                            inserted_runs.push(m);
-                        }
-                    }
-                }
-                if let Some(rg) = right {
-                    inserted_runs.push(rg);
-                }
-
-                parent.children.splice(last_idx..=last_idx, inserted_runs);
+    for seg in &segments {
+        let target_node = navigate_to_element_mut(dom, &seg.path)?;
+        match target_node.element_type {
+            WordElementType::Paragraph => {
+                apply_docx_paragraph_range(target_node, seg, new_text.as_deref(), &format_props)?;
+            }
+            WordElementType::Run => {
+                apply_docx_run_range(target_node, seg, new_text.as_deref(), &format_props)?;
+            }
+            _ => {
+                return Err(HandlerError::InvalidArgument(format!(
+                    "Range path must point to a Paragraph or Run, found: {:?}",
+                    target_node.element_type
+                )));
             }
         }
     }
@@ -847,6 +761,379 @@ fn apply_docx_range_highlights(
     }
 
     Ok(unsupported)
+}
+
+fn resolve_docx_range_segments(
+    dom: &WordDom,
+    segments: &[PathRangeSegment],
+) -> Result<Vec<PathRangeSegment>, HandlerError> {
+    let mut resolved = Vec::new();
+
+    for seg in segments {
+        resolved.extend(resolve_docx_range_segment(dom, seg)?);
+    }
+
+    if resolved.is_empty() {
+        return Err(HandlerError::InvalidArgument(
+            "range_paths did not resolve to any editable text".to_string(),
+        ));
+    }
+
+    Ok(resolved)
+}
+
+fn resolve_docx_range_segment(
+    dom: &WordDom,
+    seg: &PathRangeSegment,
+) -> Result<Vec<PathRangeSegment>, HandlerError> {
+    match navigate_to_element(dom, &seg.path) {
+        Ok(node) => resolve_existing_range_segment(node, seg),
+        Err(path_err) => {
+            if let Some(span_index) = parse_body_p_index(&seg.path) {
+                return resolve_span_index_range_segment(dom, seg, span_index);
+            }
+            Err(path_err)
+        }
+    }
+}
+
+fn resolve_existing_range_segment(
+    node: &WordNode,
+    seg: &PathRangeSegment,
+) -> Result<Vec<PathRangeSegment>, HandlerError> {
+    match node.element_type {
+        WordElementType::Paragraph | WordElementType::Run => Ok(vec![seg.clone()]),
+        WordElementType::TableCell => {
+            resolve_cell_range_segments(node, &seg.path, seg.start, seg.end)
+        }
+        _ => Err(HandlerError::InvalidArgument(format!(
+            "Range path must point to a Paragraph, Run, or TableCell, found: {:?}",
+            node.element_type
+        ))),
+    }
+}
+
+fn resolve_span_index_range_segment(
+    dom: &WordDom,
+    seg: &PathRangeSegment,
+    span_index: usize,
+) -> Result<Vec<PathRangeSegment>, HandlerError> {
+    if span_index == 0 {
+        return Err(HandlerError::InvalidArgument(format!(
+            "range path '{}' uses 0-based span index; expected 1-based",
+            seg.path
+        )));
+    }
+
+    let map = extract_text_with_offsets(dom)?;
+    let span = map.spans.get(span_index - 1).ok_or_else(|| {
+        HandlerError::PathNotFound(format!(
+            "span-index path '{}' out of range (max span index: {})",
+            seg.path,
+            map.spans.len()
+        ))
+    })?;
+
+    match span.element_type.as_str() {
+        "run" | "paragraph" | "cell" => {
+            let mapped = PathRangeSegment {
+                path: span.path.clone(),
+                start: seg.start,
+                end: seg.end,
+            };
+            resolve_docx_range_segment(dom, &mapped)
+        }
+        other => Err(HandlerError::InvalidArgument(format!(
+            "span-index path '{}' points to non-editable {} span '{}'",
+            seg.path, other, span.path
+        ))),
+    }
+}
+
+fn parse_body_p_index(path: &str) -> Option<usize> {
+    let segments = parse_path(path).ok()?;
+    if segments.len() == 2 && segments[0].name == "body" && segments[1].name == "p" {
+        segments[1].index
+    } else {
+        None
+    }
+}
+
+fn resolve_cell_range_segments(
+    cell: &WordNode,
+    cell_path: &str,
+    seg_start: Option<usize>,
+    seg_end: Option<usize>,
+) -> Result<Vec<PathRangeSegment>, HandlerError> {
+    let para_count = cell
+        .children
+        .iter()
+        .filter(|child| child.element_type == WordElementType::Paragraph)
+        .count();
+
+    if para_count == 0 {
+        return Err(HandlerError::InvalidArgument(format!(
+            "range_paths target table cell '{}' has no paragraphs",
+            cell_path
+        )));
+    }
+
+    let total_len = cell_text_len(cell);
+    let target_start = seg_start.unwrap_or(0);
+    let target_end = seg_end.unwrap_or(total_len);
+
+    if target_start > target_end {
+        return Err(HandlerError::InvalidArgument(format!(
+            "range {}[{}..{}] is reversed",
+            cell_path, target_start, target_end
+        )));
+    }
+
+    let mut ranges = Vec::new();
+    let mut para_idx = 0;
+    let mut cursor = 0;
+
+    for child in &cell.children {
+        if child.element_type != WordElementType::Paragraph {
+            continue;
+        }
+
+        para_idx += 1;
+        let text_len = child.paragraph_text().chars().count();
+        let para_start = cursor;
+        let para_end = para_start + text_len;
+
+        let overlap_start = target_start.max(para_start);
+        let overlap_end = target_end.min(para_end);
+        if overlap_start < overlap_end || (text_len == 0 && target_start == para_start) {
+            ranges.push(PathRangeSegment {
+                path: format!("{}/p[{}]", cell_path, para_idx),
+                start: Some(overlap_start.saturating_sub(para_start)),
+                end: Some(overlap_end.saturating_sub(para_start)),
+            });
+        }
+
+        cursor = para_end;
+        if para_idx < para_count {
+            cursor += 1;
+        }
+    }
+
+    if ranges.is_empty() {
+        return Err(HandlerError::InvalidArgument(format!(
+            "range {}[{}..{}] did not overlap table cell text length {}",
+            cell_path, target_start, target_end, total_len
+        )));
+    }
+
+    Ok(ranges)
+}
+
+fn cell_text_len(cell: &WordNode) -> usize {
+    let para_count = cell
+        .children
+        .iter()
+        .filter(|child| child.element_type == WordElementType::Paragraph)
+        .count();
+    let text_len: usize = cell
+        .children
+        .iter()
+        .filter(|child| child.element_type == WordElementType::Paragraph)
+        .map(|child| child.paragraph_text().chars().count())
+        .sum();
+
+    text_len + para_count.saturating_sub(1)
+}
+
+fn normalize_range_bounds(
+    path: &str,
+    start: usize,
+    end: usize,
+    total_text_len: usize,
+    allow_suffix_fallback: bool,
+) -> Result<(usize, usize), HandlerError> {
+    if start <= end && start < total_text_len {
+        return Ok((start, end));
+    }
+
+    let selection_len = end.saturating_sub(start);
+    if allow_suffix_fallback && selection_len > 0 && selection_len <= total_text_len {
+        return Ok((total_text_len - selection_len, total_text_len));
+    }
+
+    Err(HandlerError::InvalidArgument(format!(
+        "range {}[{}..{}] did not overlap text length {}",
+        path, start, end, total_text_len
+    )))
+}
+
+fn apply_docx_paragraph_range(
+    para_node: &mut WordNode,
+    seg: &PathRangeSegment,
+    new_text: Option<&str>,
+    format_props: &HashMap<String, String>,
+) -> Result<(), HandlerError> {
+    // 1. Collect all runs under the paragraph with their index paths and text contents
+    let mut collected_runs = Vec::new();
+    let mut path_tracker = Vec::new();
+    collect_run_locations(para_node, &mut path_tracker, &mut collected_runs);
+
+    // 2. Map global character offsets to the runs
+    let mut global_start = 0;
+    let mut runs_with_spans = Vec::new();
+    for (path, text) in collected_runs {
+        let len = text.chars().count();
+        let global_end = global_start + len;
+        runs_with_spans.push((path, global_start, global_end, len));
+        global_start = global_end;
+    }
+
+    let total_text_len = global_start;
+    let (target_start, target_end) = normalize_range_bounds(
+        &seg.path,
+        seg.start.unwrap_or(0),
+        seg.end.unwrap_or(total_text_len),
+        total_text_len,
+        new_text.is_some(),
+    )?;
+
+    if target_start >= target_end {
+        return Err(HandlerError::InvalidArgument(format!(
+            "range {}[{}..{}] is empty or reversed",
+            seg.path, target_start, target_end
+        )));
+    }
+
+    // For text replacement, only the first overlapping run receives the new
+    // text; the selected portions of subsequent runs are removed so the new
+    // text appears exactly once across the whole selection.
+    let first_overlap_path = runs_with_spans
+        .iter()
+        .find(|(_p, r_start, r_end, _len)| (*r_start).max(target_start) < (*r_end).min(target_end))
+        .map(|(p, _, _, _)| p.clone());
+
+    if first_overlap_path.is_none() {
+        return Err(HandlerError::InvalidArgument(format!(
+            "range {}[{}..{}] did not overlap paragraph text length {}",
+            seg.path, target_start, target_end, total_text_len
+        )));
+    }
+
+    // 3. Process runs in reverse order to keep index paths stable
+    for (path, r_start, r_end, _r_len) in runs_with_spans.into_iter().rev() {
+        let overlap_start = r_start.max(target_start);
+        let overlap_end = r_end.min(target_end);
+
+        if overlap_start < overlap_end {
+            let local_start = overlap_start - r_start;
+            let local_end = overlap_end - r_start;
+
+            let parent = get_node_mut_by_path(para_node, &path[..path.len() - 1]);
+            let last_idx = path[path.len() - 1];
+
+            let run = parent.children[last_idx].clone();
+            let text = run.paragraph_text();
+
+            // Convert char offsets to byte indices
+            let byte_start = char_offset_to_byte_index(&text, local_start);
+            let byte_end = char_offset_to_byte_index(&text, local_end);
+
+            // Split run at byte offsets
+            let (left, rest) = crate::helpers::split_run_at_offset(&run, byte_start);
+            let mut mid = None;
+            let mut right = None;
+            if let Some(r) = rest {
+                let (m, rg) = crate::helpers::split_run_at_offset(&r, byte_end - byte_start);
+                mid = m;
+                right = rg;
+            }
+
+            // Build the replacement run list for this run.
+            let mut inserted_runs = Vec::new();
+            if let Some(l) = left {
+                inserted_runs.push(l);
+            }
+            match new_text {
+                Some(nt) => {
+                    // Text replacement: insert the new text only on the first
+                    // overlapping run; drop the selected mid of all others.
+                    if first_overlap_path.as_ref() == Some(&path) {
+                        let mut new_run = crate::helpers::build_run_with_text(&run, nt);
+                        merge_run_properties(&mut new_run, format_props);
+                        inserted_runs.push(new_run);
+                    }
+                }
+                None => {
+                    if let Some(mut m) = mid {
+                        merge_run_properties(&mut m, format_props);
+                        inserted_runs.push(m);
+                    }
+                }
+            }
+            if let Some(rg) = right {
+                inserted_runs.push(rg);
+            }
+
+            parent.children.splice(last_idx..=last_idx, inserted_runs);
+        }
+    }
+
+    Ok(())
+}
+
+fn apply_docx_run_range(
+    run_node: &mut WordNode,
+    seg: &PathRangeSegment,
+    new_text: Option<&str>,
+    format_props: &HashMap<String, String>,
+) -> Result<(), HandlerError> {
+    let Some(nt) = new_text else {
+        merge_run_properties(run_node, format_props);
+        return Ok(());
+    };
+
+    let source_run = run_node.clone();
+    let text = source_run.paragraph_text();
+
+    let replacement = if seg.start.is_none() && seg.end.is_none() {
+        nt.to_string()
+    } else {
+        let total_text_len = text.chars().count();
+        let (target_start, target_end) = normalize_range_bounds(
+            &seg.path,
+            seg.start.unwrap_or(0),
+            seg.end.unwrap_or(total_text_len),
+            total_text_len,
+            true,
+        )?;
+
+        if target_start >= target_end {
+            return Err(HandlerError::InvalidArgument(format!(
+                "range {}[{}..{}] did not overlap run text length {}",
+                seg.path, target_start, target_end, total_text_len
+            )));
+        }
+
+        let clamped_end = target_end.min(total_text_len);
+        let byte_start = char_offset_to_byte_index(&text, target_start);
+        let byte_end = char_offset_to_byte_index(&text, clamped_end);
+        format!("{}{}{}", &text[..byte_start], nt, &text[byte_end..])
+    };
+
+    *run_node = crate::helpers::build_run_with_text(&source_run, &replacement);
+    merge_run_properties(run_node, format_props);
+    Ok(())
+}
+
+fn char_offset_to_byte_index(text: &str, offset: usize) -> usize {
+    if offset == text.chars().count() {
+        return text.len();
+    }
+
+    text.char_indices()
+        .nth(offset)
+        .map(|(idx, _)| idx)
+        .unwrap_or(text.len())
 }
 
 fn collect_run_locations(
