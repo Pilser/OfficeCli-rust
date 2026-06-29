@@ -1,5 +1,5 @@
 use clap::Args;
-use handler_common::HandlerError;
+use handler_common::{DocumentHandler, HandlerError};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,7 +34,7 @@ SUPPORTED CONVERSIONS:
   .doc  -> .docx   Word legacy binary to modern OOXML
   .xls  -> .xlsx   Excel legacy binary to modern OOXML
   .ppt  -> .pptx   PowerPoint legacy binary to modern OOXML
-  .pdf  -> .docx   PDF to Word (LibreOffice only)
+  .pdf  -> .docx   PDF to Word (LibreOffice, with text fallback)
   .docx -> .docx   Re-save / normalize modern Word (same for .xlsx, .pptx)
 
 Cross-family conversions other than PDF->DOCX are NOT supported.
@@ -47,6 +47,7 @@ CONVERSION ENGINES:
   Slower (process spawn overhead)          Fast (sub-second)
   Preserves formatting, images, tables     Preserves basic content and structure
   Supports PDF -> DOCX                     Same-family only (no PDF support)
+  Falls back to extractable PDF text
 
   Install LibreOffice:
     macOS:  brew install --cask libreoffice
@@ -57,7 +58,7 @@ EXAMPLES:
   officecli convert old.doc                       Convert .doc -> .docx via LibreOffice (default)
   officecli convert old.xls -o report.xlsx        Convert with custom output name
   officecli convert old.ppt --force               Convert, overwrite existing output
-  officecli convert input.pdf -o output.docx      Convert PDF to Word (requires LibreOffice)
+  officecli convert input.pdf -o output.docx      Convert PDF to Word
   officecli convert old.doc --engine oxide        Convert via oxide (no LibreOffice needed)")]
 pub struct ConvertCommand {
     /// Input file path (.doc, .xls, .ppt, .docx, .xlsx, .pptx, .pdf)
@@ -249,33 +250,301 @@ pub fn handle_convert(
     }
 
     // Perform conversion with selected engine
-    match cmd.engine {
-        ConvertEngine::LibreOffice => convert_via_libreoffice(&cmd.file, &output_path, target_ext)?,
-        ConvertEngine::Oxide => convert_via_oxide(&cmd.file, &output_path)?,
-    }
+    let used_engine = match cmd.engine {
+        ConvertEngine::LibreOffice if input_ext == "pdf" && output_ext == "docx" => {
+            convert_pdf_to_docx(&cmd.file, &output_path, target_ext)?
+        }
+        ConvertEngine::LibreOffice => {
+            convert_via_libreoffice(&cmd.file, &output_path, target_ext)?;
+            "libreoffice"
+        }
+        ConvertEngine::Oxide => {
+            convert_via_oxide(&cmd.file, &output_path)?;
+            "oxide"
+        }
+    };
 
     match format {
         handler_common::OutputFormat::Text => Ok(format!(
             "Converted '{}' -> '{}' [{}]",
             cmd.file,
             output_path.display(),
-            match cmd.engine {
-                ConvertEngine::LibreOffice => "libreoffice",
-                ConvertEngine::Oxide => "oxide",
-            }
+            used_engine
         )),
         handler_common::OutputFormat::Json => Ok(serde_json::json!({
             "input": cmd.file,
             "output": output_path.to_string_lossy(),
             "from_format": input_ext,
             "to_format": target_ext,
-            "engine": match cmd.engine {
-                ConvertEngine::LibreOffice => "libreoffice",
-                ConvertEngine::Oxide => "oxide",
-            },
+            "engine": used_engine,
         })
         .to_string()),
     }
+}
+
+/// Convert PDF to DOCX. LibreOffice's PDF import can either fail or produce
+/// a structurally valid but empty DOCX for some PDFs, so verify the output and
+/// fall back to the in-tree PDF text extractor when needed.
+fn convert_pdf_to_docx(
+    input_file: &str,
+    output_path: &std::path::Path,
+    target_ext: &str,
+) -> Result<&'static str, HandlerError> {
+    match convert_via_libreoffice(input_file, output_path, target_ext) {
+        Ok(()) if docx_has_extractable_text(output_path) => Ok("libreoffice"),
+        Ok(()) => {
+            convert_pdf_text_to_docx(input_file, output_path)?;
+            Ok("pdf-text-fallback")
+        }
+        Err(lo_err) => match convert_pdf_text_to_docx(input_file, output_path) {
+            Ok(()) => Ok("pdf-text-fallback"),
+            Err(fallback_err) => Err(HandlerError::OperationFailed(format!(
+                "PDF to DOCX failed; LibreOffice: {}; text fallback: {}",
+                lo_err, fallback_err
+            ))),
+        },
+    }
+}
+
+fn docx_has_extractable_text(path: &std::path::Path) -> bool {
+    let Some(path_str) = path.to_str() else {
+        return false;
+    };
+    docx_handler::WordHandler::open(path_str, false)
+        .and_then(|handler| handler.view_as_text(handler_common::ViewOptions::default()))
+        .map(|text| !text.trim().is_empty())
+        .unwrap_or(false)
+}
+
+#[derive(Debug)]
+enum DocxParagraph {
+    Text(String),
+    PageBreak,
+}
+
+#[derive(Debug)]
+struct PdfLineSegment {
+    text: String,
+    x: f32,
+    right: f32,
+    font_size: f32,
+}
+
+fn convert_pdf_text_to_docx(
+    input_file: &str,
+    output_path: &std::path::Path,
+) -> Result<(), HandlerError> {
+    let reader = pdf_handler::reader::PdfReader::open(input_file)?;
+    let paragraphs = extract_pdf_docx_paragraphs(&reader);
+
+    if !paragraphs
+        .iter()
+        .any(|p| matches!(p, DocxParagraph::Text(text) if !text.trim().is_empty()))
+    {
+        return Err(HandlerError::OperationFailed(
+            "PDF contains no extractable text; OCR is required before converting to DOCX"
+                .to_string(),
+        ));
+    }
+
+    if let Some(parent) = output_path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                HandlerError::OperationFailed(format!("cannot create output dir: {}", e))
+            })?;
+        }
+    }
+
+    write_text_docx(output_path, &paragraphs)
+}
+
+fn extract_pdf_docx_paragraphs(reader: &pdf_handler::reader::PdfReader) -> Vec<DocxParagraph> {
+    let mut paragraphs = Vec::new();
+
+    for page_num in 1..=reader.page_count() {
+        if page_num > 1 && paragraphs.last().is_some() {
+            paragraphs.push(DocxParagraph::PageBreak);
+        }
+
+        let Some(parsed) = reader.parse_page_text_blocks(page_num) else {
+            continue;
+        };
+
+        let mut current_line: Vec<PdfLineSegment> = Vec::new();
+        let mut current_y: Option<f32> = None;
+        let mut current_tolerance = 2.0_f32;
+
+        for block in parsed.text_blocks {
+            if block.text.is_empty() {
+                continue;
+            }
+
+            let tolerance = (block.bbox.height * 0.4).max(2.0);
+            let starts_new_line = current_y
+                .map(|y| (block.bbox.y - y).abs() > current_tolerance.max(tolerance))
+                .unwrap_or(false);
+
+            if starts_new_line {
+                push_pdf_line(&mut paragraphs, &mut current_line);
+                current_y = None;
+                current_tolerance = 2.0;
+            }
+
+            current_y.get_or_insert(block.bbox.y);
+            current_tolerance = current_tolerance.max(tolerance);
+            current_line.push(PdfLineSegment {
+                text: block.text,
+                x: block.bbox.x,
+                right: block.bbox.x + block.bbox.width,
+                font_size: block.style.font_size.unwrap_or(block.bbox.height).max(1.0),
+            });
+        }
+
+        push_pdf_line(&mut paragraphs, &mut current_line);
+    }
+
+    paragraphs
+}
+
+fn push_pdf_line(paragraphs: &mut Vec<DocxParagraph>, segments: &mut Vec<PdfLineSegment>) {
+    if segments.is_empty() {
+        return;
+    }
+
+    segments.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut line = String::new();
+    let mut last_right: Option<f32> = None;
+    let mut last_font_size = 12.0_f32;
+
+    for segment in segments.drain(..) {
+        if let Some(right) = last_right {
+            let gap = segment.x - right;
+            let threshold = (last_font_size * 0.35).max(3.0);
+            if gap > threshold && should_insert_space(&line, &segment.text) {
+                line.push(' ');
+            }
+        }
+        line.push_str(&segment.text);
+        last_right = Some(segment.right);
+        last_font_size = segment.font_size;
+    }
+
+    let line = line.trim_end().to_string();
+    if !line.trim().is_empty() {
+        paragraphs.push(DocxParagraph::Text(line));
+    }
+}
+
+fn should_insert_space(existing: &str, next: &str) -> bool {
+    let prev_has_space = existing
+        .chars()
+        .last()
+        .map(|c| c.is_whitespace())
+        .unwrap_or(true);
+    let next_has_space = next
+        .chars()
+        .next()
+        .map(|c| c.is_whitespace())
+        .unwrap_or(true);
+    !prev_has_space && !next_has_space && !starts_with_closing_punctuation(next)
+}
+
+fn starts_with_closing_punctuation(text: &str) -> bool {
+    text.chars()
+        .next()
+        .map(|c| {
+            matches!(
+                c,
+                '，' | '。'
+                    | '、'
+                    | '；'
+                    | '：'
+                    | '！'
+                    | '？'
+                    | ','
+                    | '.'
+                    | ';'
+                    | ':'
+                    | '!'
+                    | '?'
+                    | ')'
+                    | ']'
+                    | '}'
+                    | '）'
+                    | '】'
+                    | '」'
+                    | '』'
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn write_text_docx(
+    output_path: &std::path::Path,
+    paragraphs: &[DocxParagraph],
+) -> Result<(), HandlerError> {
+    use oxml::OxmlPackage;
+
+    let mut body = String::new();
+    for paragraph in paragraphs {
+        match paragraph {
+            DocxParagraph::Text(text) => {
+                body.push_str("    <w:p><w:r><w:t xml:space=\"preserve\">");
+                body.push_str(&xml_escape_text(text));
+                body.push_str("</w:t></w:r></w:p>\n");
+            }
+            DocxParagraph::PageBreak => {
+                body.push_str("    <w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>\n");
+            }
+        }
+    }
+
+    let document_xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+            xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <w:body>
+{body}  </w:body>
+</w:document>"#
+    );
+
+    let content_types = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>"#;
+
+    let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"#;
+
+    let mut pkg = OxmlPackage::create(&output_path.to_string_lossy());
+    pkg.add_part("[Content_Types].xml", content_types.as_bytes());
+    pkg.add_part("_rels/.rels", rels.as_bytes());
+    pkg.add_part("word/document.xml", document_xml.as_bytes());
+    pkg.add_part(
+        "word/_rels/document.xml.rels",
+        b"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"/>",
+    );
+
+    pkg.save_as(&output_path.to_string_lossy())
+        .map_err(|e| HandlerError::SaveError(e.to_string()))
+}
+
+fn xml_escape_text(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 /// Convert via LibreOffice CLI (soffice --convert-to).

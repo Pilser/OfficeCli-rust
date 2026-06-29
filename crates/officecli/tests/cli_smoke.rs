@@ -19,7 +19,7 @@ fn temp_dir() -> tempfile::TempDir {
 
 /// Helper: workspace root for sample files.
 fn workspace_root() -> PathBuf {
-    std::env::current_dir().unwrap()
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -663,6 +663,27 @@ fn test_convert_docx_resave() {
         .args(["convert", &s, "--engine", "oxide", "--force"])
         .assert()
         .success();
+}
+
+#[test]
+fn test_convert_pdf_to_docx_preserves_extractable_text() {
+    let tmp = temp_dir();
+    let src = workspace_root().join("examples/test.pdf");
+    let dst = tmp.path().join("converted_pdf.docx");
+    let src = src.to_string_lossy().to_string();
+    let dst = dst.to_string_lossy().to_string();
+
+    officecli()
+        .args(["convert", &src, "-o", &dst, "--force"])
+        .assert()
+        .success();
+
+    officecli()
+        .args(["view", &dst, "-m", "text"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Hello World from OfficeCLI"))
+        .stdout(predicate::str::contains("Second line of text"));
 }
 
 // ═══════════════════════════════════════════════════════════════════════
