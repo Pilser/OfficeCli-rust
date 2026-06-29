@@ -271,6 +271,25 @@ impl WordNode {
                     buf.push('\n');
                 }
             }
+            WordElementType::Unknown(local) if local == "AlternateContent" => {
+                // mc:AlternateContent holds equivalent renderings of the same
+                // content (a modern Choice plus a legacy Fallback, e.g. a
+                // DrawingML text box and its VML twin). Traverse only one branch
+                // — prefer Choice, else Fallback — so the text is not counted
+                // twice. Mirrors the logic in text_offset.rs.
+                let preferred = self
+                    .children
+                    .iter()
+                    .find(|c| matches!(&c.element_type, WordElementType::Unknown(n) if n == "Choice"))
+                    .or_else(|| {
+                        self.children.iter().find(
+                            |c| matches!(&c.element_type, WordElementType::Unknown(n) if n == "Fallback"),
+                        )
+                    });
+                if let Some(child) = preferred {
+                    child.collect_text_into(buf);
+                }
+            }
             _ => {
                 for child in &self.children {
                     child.collect_text_into(buf);
@@ -615,4 +634,46 @@ pub struct OutlineEntry {
 /// Count words in a text string (whitespace-separated tokens).
 fn count_words(text: &str) -> usize {
     text.split_whitespace().count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_run(text: &str) -> WordNode {
+        WordNode::new(WordElementType::Run)
+            .with_children(vec![WordNode::new(WordElementType::Text).with_text(text)])
+    }
+
+    fn unknown(name: &str, children: Vec<WordNode>) -> WordNode {
+        WordNode::new(WordElementType::Unknown(name.to_string())).with_children(children)
+    }
+
+    #[test]
+    fn paragraph_text_dedupes_alternate_content_to_choice() {
+        // <w:p><mc:AlternateContent>
+        //   <mc:Choice>...DrawingML text box "Hello"...</mc:Choice>
+        //   <mc:Fallback>...VML twin "Hello"...</mc:Fallback>
+        // </mc:AlternateContent></w:p>
+        let para = WordNode::new(WordElementType::Paragraph).with_children(vec![unknown(
+            "AlternateContent",
+            vec![
+                unknown("Choice", vec![text_run("Hello")]),
+                unknown("Fallback", vec![text_run("Hello")]),
+            ],
+        )]);
+
+        // Must not double-count the equivalent Choice/Fallback renderings.
+        assert_eq!(para.paragraph_text(), "Hello");
+    }
+
+    #[test]
+    fn paragraph_text_uses_fallback_when_no_choice() {
+        let para = WordNode::new(WordElementType::Paragraph).with_children(vec![unknown(
+            "AlternateContent",
+            vec![unknown("Fallback", vec![text_run("OnlyFallback")])],
+        )]);
+
+        assert_eq!(para.paragraph_text(), "OnlyFallback");
+    }
 }
