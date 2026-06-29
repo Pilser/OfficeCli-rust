@@ -686,6 +686,44 @@ fn test_convert_pdf_to_docx_preserves_extractable_text() {
         .stdout(predicate::str::contains("Second line of text"));
 }
 
+/// PDF→DOCX drives LibreOffice (two-hop bridge), which gets a private user
+/// profile per invocation. Running several conversions in parallel must all
+/// succeed — if the profile isolation regressed, concurrent `soffice`
+/// processes would block on the shared default-profile lock and these would
+/// hang or fail.
+#[test]
+fn test_convert_pdf_to_docx_concurrent_isolated() {
+    let tmp = temp_dir();
+    let src = workspace_root().join("examples/test.pdf");
+    let src = src.to_string_lossy().to_string();
+
+    let handles: Vec<_> = (0..3)
+        .map(|i| {
+            let src = src.clone();
+            let dst = tmp
+                .path()
+                .join(format!("concurrent_{i}.docx"))
+                .to_string_lossy()
+                .to_string();
+            std::thread::spawn(move || {
+                officecli()
+                    .args(["convert", &src, "-o", &dst, "--force"])
+                    .assert()
+                    .success();
+                officecli()
+                    .args(["view", &dst, "-m", "text"])
+                    .assert()
+                    .success()
+                    .stdout(predicate::str::contains("Hello World from OfficeCLI"));
+            })
+        })
+        .collect();
+
+    for handle in handles {
+        handle.join().expect("conversion thread panicked");
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Raw-set — modify a part's raw XML
 // ═══════════════════════════════════════════════════════════════════════

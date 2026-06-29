@@ -282,14 +282,32 @@ pub fn handle_convert(
     }
 }
 
-/// Convert PDF to DOCX. LibreOffice's PDF import can either fail or produce
-/// a structurally valid but empty DOCX for some PDFs, so verify the output and
-/// fall back to the in-tree PDF text extractor when needed.
+/// Convert PDF to DOCX.
+///
+/// A direct `writer_pdf_import --convert-to docx` places every line of text in
+/// an absolutely-positioned, `behindDoc` text frame while leaving full-page
+/// white VML rectangles in the normal z-order — Microsoft Word then renders
+/// those white boxes on top of the behind-text frames, so the document opens
+/// blank even though previews (which use a different renderer) show the text.
+///
+/// Routing through an intermediate MS Word 97 `.doc` makes LibreOffice
+/// normalize the mixed VML/DrawingML shapes into a single, consistently-layered
+/// DrawingML model that Word renders correctly. We therefore try the two-hop
+/// bridge first, then fall back to the direct conversion, and finally to the
+/// in-tree PDF text extractor.
 fn convert_pdf_to_docx(
     input_file: &str,
     output_path: &std::path::Path,
     target_ext: &str,
 ) -> Result<&'static str, HandlerError> {
+    // Preferred path: PDF -> .doc (MS Word 97) -> .docx, which Word renders
+    // correctly. Only accept it when the result actually carries text.
+    if convert_pdf_to_docx_via_doc(input_file, output_path).is_ok()
+        && docx_has_extractable_text(output_path)
+    {
+        return Ok("libreoffice-doc-bridge");
+    }
+
     match convert_via_libreoffice(input_file, output_path, target_ext) {
         Ok(()) if docx_has_extractable_text(output_path) => Ok("libreoffice"),
         Ok(()) => {
@@ -304,6 +322,142 @@ fn convert_pdf_to_docx(
             ))),
         },
     }
+}
+
+/// Two-hop PDF -> DOCX bridge: convert the PDF to an MS Word 97 `.doc` first,
+/// then to `.docx`. Both hops run in an isolated temp directory so concurrent
+/// conversions never collide on filenames; the temp directory is always
+/// cleaned up before returning.
+fn convert_pdf_to_docx_via_doc(
+    input_file: &str,
+    output_path: &std::path::Path,
+) -> Result<(), HandlerError> {
+    let soffice = find_soffice()?;
+
+    let work_dir = unique_temp_path("officecli-pdf2docx");
+    std::fs::create_dir_all(&work_dir).map_err(|e| {
+        HandlerError::OperationFailed(format!("cannot create temp dir for PDF bridge: {}", e))
+    })?;
+    // Private soffice profile under the (auto-cleaned) work dir so both hops
+    // are isolated from any concurrent conversion.
+    let profile_dir = work_dir.join("lo-profile");
+
+    let result = (|| {
+        let stem = PathBuf::from(input_file)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("output")
+            .to_string();
+
+        // Hop 1: PDF -> MS Word 97 .doc (normalizes the shape/z-order model).
+        run_soffice(
+            &soffice,
+            &profile_dir,
+            &[
+                "--headless".as_ref(),
+                "--infilter=writer_pdf_import".as_ref(),
+                "--convert-to".as_ref(),
+                "doc:MS Word 97".as_ref(),
+                "--outdir".as_ref(),
+                work_dir.as_os_str(),
+                input_file.as_ref(),
+            ],
+        )?;
+        let doc_path = work_dir.join(format!("{}.doc", stem));
+        if !doc_path.exists() {
+            return Err(HandlerError::OperationFailed(
+                "PDF bridge: soffice did not produce intermediate .doc".to_string(),
+            ));
+        }
+
+        // Hop 2: .doc -> .docx.
+        run_soffice(
+            &soffice,
+            &profile_dir,
+            &[
+                "--headless".as_ref(),
+                "--convert-to".as_ref(),
+                "docx".as_ref(),
+                "--outdir".as_ref(),
+                work_dir.as_os_str(),
+                doc_path.as_os_str(),
+            ],
+        )?;
+        let docx_path = work_dir.join(format!("{}.docx", stem));
+        if !docx_path.exists() {
+            return Err(HandlerError::OperationFailed(
+                "PDF bridge: soffice did not produce intermediate .docx".to_string(),
+            ));
+        }
+
+        // Move the result to the requested output path.
+        if let Some(parent) = output_path.parent() {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    HandlerError::OperationFailed(format!("cannot create output dir: {}", e))
+                })?;
+            }
+        }
+        std::fs::rename(&docx_path, output_path)
+            .or_else(|_| std::fs::copy(&docx_path, output_path).map(|_| ()))
+            .map_err(|e| {
+                HandlerError::OperationFailed(format!(
+                    "PDF bridge: failed to move result to '{}': {}",
+                    output_path.display(),
+                    e
+                ))
+            })
+    })();
+
+    let _ = std::fs::remove_dir_all(&work_dir);
+    result
+}
+
+/// Run `soffice` with the given arguments, mapping spawn/exit failures into a
+/// `HandlerError`. stdout/stderr are suppressed (piped) to keep the CLI quiet.
+///
+/// `profile_dir` is passed to soffice as `-env:UserInstallation`, giving this
+/// invocation a private user profile. Without it, every soffice process shares
+/// the default profile and serializes on its lock file, so concurrent
+/// conversions block (or fail) on each other.
+fn run_soffice(
+    soffice: &str,
+    profile_dir: &std::path::Path,
+    args: &[&std::ffi::OsStr],
+) -> Result<(), HandlerError> {
+    let user_install = format!("-env:UserInstallation=file://{}", profile_dir.display());
+    let status = std::process::Command::new(soffice)
+        .arg(&user_install)
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .status()
+        .map_err(|e| HandlerError::OperationFailed(format!("failed to run soffice: {}", e)))?;
+
+    if !status.success() {
+        return Err(HandlerError::OperationFailed(format!(
+            "soffice conversion failed (exit code {})",
+            status.code().unwrap_or(-1)
+        )));
+    }
+    Ok(())
+}
+
+/// Build a unique path under the system temp dir (process id + high-resolution
+/// timestamp). Used for per-invocation soffice profiles and scratch dirs so
+/// concurrent conversions never collide.
+fn unique_temp_path(prefix: &str) -> PathBuf {
+    let mut p = std::env::temp_dir();
+    p.push(format!(
+        "{}-{}-{}",
+        prefix,
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    p
 }
 
 fn docx_has_extractable_text(path: &std::path::Path) -> bool {
@@ -570,8 +724,6 @@ fn convert_via_libreoffice(
         })?;
     }
 
-    let output_dir_str = output_dir.to_string_lossy().to_string();
-
     // Determine input extension for PDF-specific filter
     let input_ext = std::path::Path::new(input_file)
         .extension()
@@ -579,32 +731,23 @@ fn convert_via_libreoffice(
         .map(|e| e.to_lowercase())
         .unwrap_or_default();
 
-    let mut cmd = std::process::Command::new(&soffice);
-    cmd.arg("--headless");
-
-    // PDF requires writer_pdf_import filter, otherwise soffice silently fails
+    // PDF requires writer_pdf_import filter, otherwise soffice silently fails.
+    let mut args: Vec<&std::ffi::OsStr> = vec!["--headless".as_ref()];
     if input_ext == "pdf" {
-        cmd.arg("--infilter=writer_pdf_import");
+        args.push("--infilter=writer_pdf_import".as_ref());
     }
+    args.push("--convert-to".as_ref());
+    args.push(target_ext.as_ref());
+    args.push("--outdir".as_ref());
+    args.push(output_dir.as_os_str());
+    args.push(input_file.as_ref());
 
-    cmd.arg("--convert-to")
-        .arg(target_ext)
-        .arg("--outdir")
-        .arg(&output_dir_str)
-        .arg(input_file)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-
-    let status = cmd
-        .status()
-        .map_err(|e| HandlerError::OperationFailed(format!("failed to run soffice: {}", e)))?;
-
-    if !status.success() {
-        return Err(HandlerError::OperationFailed(format!(
-            "soffice conversion failed (exit code {})",
-            status.code().unwrap_or(-1)
-        )));
-    }
+    // Private soffice profile so concurrent conversions don't block on the
+    // shared default profile lock; cleaned up regardless of the outcome.
+    let profile_dir = unique_temp_path("officecli-lo-profile");
+    let run_res = run_soffice(&soffice, &profile_dir, &args);
+    let _ = std::fs::remove_dir_all(&profile_dir);
+    run_res?;
 
     // soffice generates output as <input_stem>.<target_ext> in output_dir
     let input_path_for_stem = PathBuf::from(input_file);
