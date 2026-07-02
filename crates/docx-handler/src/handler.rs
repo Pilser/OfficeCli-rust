@@ -787,7 +787,7 @@ fn resolve_docx_range_segment(
     seg: &PathRangeSegment,
 ) -> Result<Vec<PathRangeSegment>, HandlerError> {
     match navigate_to_element(dom, &seg.path) {
-        Ok(node) => resolve_existing_range_segment(node, seg),
+        Ok(node) => resolve_existing_range_segment(dom, node, seg),
         Err(path_err) => {
             if let Some(span_index) = parse_body_p_index(&seg.path) {
                 return resolve_span_index_range_segment(dom, seg, span_index);
@@ -798,16 +798,20 @@ fn resolve_docx_range_segment(
 }
 
 fn resolve_existing_range_segment(
+    dom: &WordDom,
     node: &WordNode,
     seg: &PathRangeSegment,
 ) -> Result<Vec<PathRangeSegment>, HandlerError> {
     match node.element_type {
         WordElementType::Paragraph | WordElementType::Run => Ok(vec![seg.clone()]),
+        WordElementType::Hyperlink => Ok(vec![resolve_hyperlink_range_to_paragraph_segment(
+            dom, seg,
+        )?]),
         WordElementType::TableCell => {
             resolve_cell_range_segments(node, &seg.path, seg.start, seg.end)
         }
         _ => Err(HandlerError::InvalidArgument(format!(
-            "Range path must point to a Paragraph, Run, or TableCell, found: {:?}",
+            "Range path must point to a Paragraph, Run, Hyperlink, or TableCell, found: {:?}",
             node.element_type
         ))),
     }
@@ -943,6 +947,92 @@ fn cell_text_len(cell: &WordNode) -> usize {
         .sum();
 
     text_len + para_count.saturating_sub(1)
+}
+
+fn resolve_hyperlink_range_to_paragraph_segment(
+    dom: &WordDom,
+    seg: &PathRangeSegment,
+) -> Result<PathRangeSegment, HandlerError> {
+    let para_path = extract_paragraph_path(&seg.path)?;
+    let para_node = navigate_to_element(dom, &para_path)?;
+    if para_node.element_type != WordElementType::Paragraph {
+        return Err(HandlerError::InvalidArgument(format!(
+            "cannot find paragraph for hyperlink range path '{}'",
+            seg.path
+        )));
+    }
+
+    let (node_start, node_end) = compute_text_range_in_paragraph(para_node, &para_path, &seg.path)?;
+    let node_text_len = node_end.saturating_sub(node_start);
+
+    Ok(PathRangeSegment {
+        path: para_path,
+        start: Some(node_start + seg.start.unwrap_or(0)),
+        end: Some(node_start + seg.end.unwrap_or(node_text_len)),
+    })
+}
+
+fn extract_paragraph_path(path: &str) -> Result<String, HandlerError> {
+    let Some(pos) = path.rfind("/p[") else {
+        return Err(HandlerError::InvalidArgument(format!(
+            "cannot extract paragraph path from '{}'",
+            path
+        )));
+    };
+    let rest = &path[pos..];
+    let Some(end) = rest.find(']') else {
+        return Err(HandlerError::InvalidArgument(format!(
+            "malformed paragraph path '{}'",
+            path
+        )));
+    };
+    Ok(path[..pos + end + 1].to_string())
+}
+
+fn compute_text_range_in_paragraph(
+    para_node: &WordNode,
+    para_path: &str,
+    target_path: &str,
+) -> Result<(usize, usize), HandlerError> {
+    let mut offset = 0;
+    if let Some(range) = find_text_range_by_path(para_node, para_path, target_path, &mut offset) {
+        return Ok(range);
+    }
+    Err(HandlerError::PathNotFound(format!(
+        "range path '{}' was not found in paragraph '{}'",
+        target_path, para_path
+    )))
+}
+
+fn find_text_range_by_path(
+    node: &WordNode,
+    current_path: &str,
+    target_path: &str,
+    offset: &mut usize,
+) -> Option<(usize, usize)> {
+    if current_path == target_path {
+        let start = *offset;
+        let len = node.paragraph_text().chars().count();
+        *offset += len;
+        return Some((start, start + len));
+    }
+
+    if node.element_type == WordElementType::Run {
+        *offset += node.paragraph_text().chars().count();
+        return None;
+    }
+
+    let mut type_counts: HashMap<String, usize> = HashMap::new();
+    for child in &node.children {
+        let name = child.element_type.to_path_name().to_string();
+        let idx = type_counts.entry(name.clone()).or_insert(0);
+        *idx += 1;
+        let child_path = format!("{}/{}[{}]", current_path, name, *idx);
+        if let Some(range) = find_text_range_by_path(child, &child_path, target_path, offset) {
+            return Some(range);
+        }
+    }
+    None
 }
 
 fn normalize_range_bounds(

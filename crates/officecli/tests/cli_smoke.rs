@@ -827,6 +827,91 @@ fn test_batch_docx_range_paths_supports_run_paths() {
 }
 
 #[test]
+fn test_batch_docx_set_range_paths_supports_hyperlink_paths() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_batch_hyperlink_range_set.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args([
+            "add",
+            &p,
+            "--parent",
+            "/body/p[1]",
+            "--type-name",
+            "hyperlink",
+            "--properties",
+            "text=abcdef",
+            "url=https://example.com",
+        ])
+        .assert()
+        .success();
+
+    let batch_json =
+        r#"[{"command":"set","range_paths":"/body/p[1]/hyperlink[1][1..4]","props":{"text":"X"}}]"#;
+
+    officecli()
+        .args(["batch", &p, batch_json, "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"Ok\": \"OK\""));
+
+    officecli()
+        .args(["view", &p])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("aXef"));
+}
+
+#[test]
+fn test_batch_docx_bookmark_range_paths_supports_hyperlink_paths() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_batch_hyperlink_range_bookmark.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args([
+            "add",
+            &p,
+            "--parent",
+            "/body/p[1]",
+            "--type-name",
+            "hyperlink",
+            "--properties",
+            "text=abcdef",
+            "url=https://example.com",
+        ])
+        .assert()
+        .success();
+
+    let batch_json = r#"[{"command":"add","parent":"/body/p[1]","type":"bookmark","properties":{"name":"DSN_LINK"},"range_paths":"/body/p[1]/hyperlink[1][1..4]"}]"#;
+
+    officecli()
+        .args(["batch", &p, batch_json, "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"Ok\": \"created:"))
+        .stdout(predicate::str::contains("DSN_LINK"));
+
+    officecli()
+        .args([
+            "get",
+            &p,
+            "/body/p[1]/hyperlink[1]",
+            "--depth",
+            "3",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("bookmarkStart"))
+        .stdout(predicate::str::contains("bookmarkEnd"))
+        .stdout(predicate::str::contains("bcd"));
+}
+
+#[test]
 fn test_batch_docx_bookmark_range_paths_supports_table_cell_paths() {
     let tmp = temp_dir();
     let path = tmp.path().join("test_batch_table_cell_bookmark.docx");

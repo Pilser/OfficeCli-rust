@@ -117,9 +117,9 @@ fn add_bookmark(
 }
 
 /// Resolve a range-paths segment to paragraph-level path and offsets.
-/// Supports both paragraph-level paths (/body/p[3][5..20]) and
-/// run-level paths (/body/p[3]/r[2][10..15]) which are converted by
-/// finding the run's cumulative offset within the paragraph text.
+/// Supports paragraph-level paths (/body/p[3][5..20]), run-level paths
+/// (/body/p[3]/r[2][10..15]), and hyperlink paths
+/// (/body/p[3]/hyperlink[1][0..5] or /body/p[3]/hyperlink[1]/r[1][0..5]).
 fn resolve_range_to_paragraph(
     dom: &WordDom,
     seg_path: &str,
@@ -137,30 +137,30 @@ fn resolve_range_to_paragraph(
         return Ok((seg_path.to_string(), start, end));
     }
 
-    if node.element_type == WordElementType::Run {
-        // Run-level path — need to convert to paragraph-level offsets
-        // Extract paragraph path by stripping the run suffix: /body/p[3]/r[2] → /body/p[3]
+    if node.element_type == WordElementType::Run || node.element_type == WordElementType::Hyperlink
+    {
+        // Run/hyperlink-level path — convert to paragraph-level offsets.
         let para_path = extract_paragraph_path(seg_path)?;
 
         let para_node = navigate_to_element(dom, &para_path)?;
         if para_node.element_type != WordElementType::Paragraph {
             return Err(HandlerError::InvalidArgument(format!(
-                "cannot find paragraph for run path '{}'",
+                "cannot find paragraph for range path '{}'",
                 seg_path
             )));
         }
 
-        // Calculate cumulative text offset of the target run within the paragraph
-        let run_offset = compute_run_offset_in_paragraph(para_node, seg_path)?;
-        let run_text_len = node.paragraph_text().chars().count();
+        let (node_start, node_end) =
+            compute_text_range_in_paragraph(para_node, &para_path, seg_path)?;
+        let node_text_len = node_end.saturating_sub(node_start);
 
-        let start = run_offset + seg_start.unwrap_or(0);
-        let end = run_offset + seg_end.unwrap_or(run_text_len);
+        let start = node_start + seg_start.unwrap_or(0);
+        let end = node_start + seg_end.unwrap_or(node_text_len);
 
         Ok((para_path, start, end))
     } else {
         Err(HandlerError::InvalidArgument(format!(
-            "range-paths must point to a Paragraph or Run, found: {:?}",
+            "range-paths must point to a Paragraph, Run, Hyperlink, or TableCell, found: {:?}",
             node.element_type
         )))
     }
@@ -195,14 +195,16 @@ fn resolve_segment_to_paragraph_ranges(
         return resolve_cell_range_to_paragraph_ranges(node, &seg.path, seg.start, seg.end);
     }
 
-    if node.element_type == WordElementType::Paragraph || node.element_type == WordElementType::Run
+    if node.element_type == WordElementType::Paragraph
+        || node.element_type == WordElementType::Run
+        || node.element_type == WordElementType::Hyperlink
     {
         let (path, start, end) = resolve_range_to_paragraph(dom, &seg.path, seg.start, seg.end)?;
         return Ok(vec![ParagraphRange { path, start, end }]);
     }
 
     Err(HandlerError::InvalidArgument(format!(
-        "range-paths must point to a Paragraph, Run, or TableCell, found: {:?}",
+        "range-paths must point to a Paragraph, Run, Hyperlink, or TableCell, found: {:?}",
         node.element_type
     )))
 }
@@ -293,82 +295,69 @@ fn cell_text_len(cell: &WordNode) -> usize {
     text_len + para_count.saturating_sub(1)
 }
 
-/// Extract the paragraph path from a run path by stripping the /r[N] suffix
-/// and any enclosing /hyperlink[N].
-fn extract_paragraph_path(run_path: &str) -> Result<String, HandlerError> {
-    // Strip /r[N] suffix first
-    let without_run = if let Some(pos) = run_path.rfind("/r[") {
-        run_path[..pos].to_string()
-    } else {
+/// Extract the enclosing paragraph path from a paragraph/run/hyperlink path.
+fn extract_paragraph_path(path: &str) -> Result<String, HandlerError> {
+    let Some(pos) = path.rfind("/p[") else {
         return Err(HandlerError::InvalidArgument(format!(
             "cannot extract paragraph path from '{}'",
-            run_path
+            path
         )));
     };
-    // If what remains ends with /hyperlink[N], strip that too
-    // e.g. /body/p[3]/hyperlink[1] → /body/p[3]
-    let para_path = if let Some(pos) = without_run.rfind("/hyperlink[") {
-        without_run[..pos].to_string()
-    } else {
-        without_run
+    let rest = &path[pos..];
+    let Some(end) = rest.find(']') else {
+        return Err(HandlerError::InvalidArgument(format!(
+            "malformed paragraph path '{}'",
+            path
+        )));
     };
-    Ok(para_path)
+    Ok(path[..pos + end + 1].to_string())
 }
 
-/// Compute the cumulative character offset of a specific run within its paragraph.
-fn compute_run_offset_in_paragraph(
+/// Compute the cumulative character range of a run or hyperlink within its paragraph.
+fn compute_text_range_in_paragraph(
     para_node: &crate::dom_types::WordNode,
-    run_path: &str,
-) -> Result<usize, HandlerError> {
-    // Walk children, counting until we reach the target run
-    let run_idx = extract_run_index_from_path(run_path)?;
+    para_path: &str,
+    target_path: &str,
+) -> Result<(usize, usize), HandlerError> {
     let mut offset = 0;
-    let mut current_idx = 0;
-
-    for child in &para_node.children {
-        if child.element_type == WordElementType::Run {
-            current_idx += 1;
-            if current_idx == run_idx {
-                return Ok(offset);
-            }
-            offset += child.paragraph_text().chars().count();
-        } else if child.element_type == WordElementType::Hyperlink {
-            for hl_child in &child.children {
-                if hl_child.element_type == WordElementType::Run {
-                    current_idx += 1;
-                    if current_idx == run_idx {
-                        return Ok(offset);
-                    }
-                    offset += hl_child.paragraph_text().chars().count();
-                }
-            }
-        }
+    if let Some(range) = find_text_range_by_path(para_node, para_path, target_path, &mut offset) {
+        return Ok(range);
     }
-
-    Err(HandlerError::InvalidPath(format!(
-        "run index {} not found in paragraph for path '{}'",
-        run_idx, run_path
+    Err(HandlerError::PathNotFound(format!(
+        "range path '{}' was not found in paragraph '{}'",
+        target_path, para_path
     )))
 }
 
-/// Extract 1-based run index from path like /body/p[3]/r[2] → 2
-fn extract_run_index_from_path(path: &str) -> Result<usize, HandlerError> {
-    // Find /r[N] and extract N
-    let rfind_result = path.rfind("/r[");
-    if rfind_result.is_none() {
-        return Err(HandlerError::InvalidPath(format!(
-            "no run index in path '{}'",
-            path
-        )));
+fn find_text_range_by_path(
+    node: &WordNode,
+    current_path: &str,
+    target_path: &str,
+    offset: &mut usize,
+) -> Option<(usize, usize)> {
+    if current_path == target_path {
+        let start = *offset;
+        let len = node.paragraph_text().chars().count();
+        *offset += len;
+        return Some((start, start + len));
     }
-    let start = rfind_result.unwrap() + 3; // after "/r["
-    let rest = &path[start..];
-    let end_pos = rest.find(']').ok_or_else(|| {
-        HandlerError::InvalidPath(format!("malformed run index in path '{}'", path))
-    })?;
-    rest[..end_pos]
-        .parse::<usize>()
-        .map_err(|_| HandlerError::InvalidPath(format!("non-numeric run index in path '{}'", path)))
+
+    if node.element_type == WordElementType::Run {
+        *offset += node.paragraph_text().chars().count();
+        return None;
+    }
+
+    let mut type_counts: HashMap<String, usize> = HashMap::new();
+    for child in &node.children {
+        let name = child.element_type.to_path_name().to_string();
+        let idx = type_counts.entry(name.clone()).or_insert(0);
+        *idx += 1;
+        let child_path = format!("{}/{}[{}]", current_path, name, *idx);
+        if let Some(range) = find_text_range_by_path(child, &child_path, target_path, offset) {
+            return Some(range);
+        }
+    }
+    None
 }
 
 /// Add bookmark using --range-paths: atomically split runs at char offsets
@@ -513,69 +502,19 @@ fn add_bookmark_by_range(
             run_parent.children.splice(last_idx..=last_idx, inserted);
         }
 
-        // Phase 2: Insert bookmarkStart/bookmarkEnd around the inside-range fragments
-        // We need to find the correct positions in the now-modified paragraph.
-        // Walk through all run children, compute cumulative char offset,
-        // find the child whose text starts at target_start → bookmarkStart before it
-        // find the child whose text ends at target_end → bookmarkEnd after it
+        // Phase 2: Insert bookmarkStart/bookmarkEnd around the inside-range fragments.
+        // Recursively locate text boundaries so ranges inside hyperlinks place the
+        // bookmark markers inside the hyperlink rather than around the whole wrapper.
         let para_node = navigate_to_element_mut(dom, &para_path)?;
+        let start_point = find_insertion_point_for_text_offset(para_node, target_start, false);
+        let end_point = find_insertion_point_for_text_offset(para_node, target_end, true);
 
-        let mut cumulative = 0;
-        let mut bk_start_idx: Option<usize> = None;
-        let mut bk_end_idx: Option<usize> = None;
+        // Insert bookmarkEnd first (at the later text boundary) so bookmarkStart
+        // indices stay valid when both markers share a parent.
+        insert_at_text_point(para_node, end_point, bookmark_end.clone(), true);
 
-        for (i, child) in para_node.children.iter().enumerate() {
-            if child.element_type == WordElementType::ParagraphProperties {
-                continue;
-            }
-            if child.element_type == WordElementType::BookmarkStart
-                || child.element_type == WordElementType::BookmarkEnd
-            {
-                continue;
-            }
-
-            let text_len = child.paragraph_text().chars().count();
-            if text_len == 0 {
-                continue;
-            }
-
-            // Check if this run's start falls at or crosses target_start
-            if bk_start_idx.is_none() && cumulative + text_len > target_start {
-                bk_start_idx = Some(i);
-            }
-
-            cumulative += text_len;
-
-            // Check if this run's end reaches target_end
-            if bk_end_idx.is_none() && cumulative >= target_end {
-                bk_end_idx = Some(i + 1); // bookmarkEnd goes AFTER this run
-            }
-        }
-
-        // Insert bookmarkEnd first (at higher index) so bookmarkStart index stays valid
-        if let Some(end_idx) = bk_end_idx {
-            para_node.children.insert(end_idx, bookmark_end.clone());
-        } else {
-            // target_end is at the very end — append bookmarkEnd
-            para_node.children.push(bookmark_end.clone());
-        }
-
-        if let Some(start_idx) = bk_start_idx {
-            // Re-navigate since we just inserted bookmarkEnd
-            let para_node = navigate_to_element_mut(dom, &para_path)?;
-            para_node.children.insert(start_idx, bookmark_start.clone());
-        } else {
-            // target_start is 0 — insert bookmarkStart at first position past pPr
-            let para_node = navigate_to_element_mut(dom, &para_path)?;
-            let past_ppr = if para_node.children.first().map(|c| c.element_type.clone())
-                == Some(WordElementType::ParagraphProperties)
-            {
-                1
-            } else {
-                0
-            };
-            para_node.children.insert(past_ppr, bookmark_start.clone());
-        }
+        let para_node = navigate_to_element_mut(dom, &para_path)?;
+        insert_at_text_point(para_node, start_point, bookmark_start.clone(), false);
 
         let quoted = quote_attr_value_if_needed(&bk_name)?;
         return Ok(format!("{}/bookmarkStart[@name={}]", para_path, quoted));
@@ -1541,6 +1480,108 @@ fn get_node_mut_by_path<'a>(mut node: &'a mut WordNode, path: &[usize]) -> &'a m
         node = &mut node.children[idx];
     }
     node
+}
+
+#[derive(Debug, Clone)]
+struct InsertionPoint {
+    parent_path: Vec<usize>,
+    index: usize,
+}
+
+fn find_insertion_point_for_text_offset(
+    para_node: &WordNode,
+    target: usize,
+    end_boundary: bool,
+) -> Option<InsertionPoint> {
+    let mut cumulative = 0;
+    let mut parent_path = Vec::new();
+    find_insertion_point_recursive(
+        para_node,
+        &mut parent_path,
+        target,
+        end_boundary,
+        &mut cumulative,
+    )
+}
+
+fn find_insertion_point_recursive(
+    node: &WordNode,
+    parent_path: &mut Vec<usize>,
+    target: usize,
+    end_boundary: bool,
+    cumulative: &mut usize,
+) -> Option<InsertionPoint> {
+    for (idx, child) in node.children.iter().enumerate() {
+        if child.element_type == WordElementType::ParagraphProperties
+            || child.element_type == WordElementType::RunProperties
+            || child.element_type == WordElementType::BookmarkStart
+            || child.element_type == WordElementType::BookmarkEnd
+        {
+            continue;
+        }
+
+        if child.element_type == WordElementType::Run {
+            let len = child.paragraph_text().chars().count();
+            if len == 0 {
+                continue;
+            }
+            let start = *cumulative;
+            let end = start + len;
+            if end_boundary {
+                if target > start && target <= end {
+                    return Some(InsertionPoint {
+                        parent_path: parent_path.clone(),
+                        index: idx + 1,
+                    });
+                }
+            } else if target < end {
+                return Some(InsertionPoint {
+                    parent_path: parent_path.clone(),
+                    index: idx,
+                });
+            }
+            *cumulative = end;
+            continue;
+        }
+
+        parent_path.push(idx);
+        if let Some(point) =
+            find_insertion_point_recursive(child, parent_path, target, end_boundary, cumulative)
+        {
+            parent_path.pop();
+            return Some(point);
+        }
+        parent_path.pop();
+    }
+    None
+}
+
+fn insert_at_text_point(
+    para_node: &mut WordNode,
+    point: Option<InsertionPoint>,
+    marker: WordNode,
+    append_when_missing: bool,
+) {
+    if let Some(point) = point {
+        let parent = get_node_mut_by_path(para_node, &point.parent_path);
+        let idx = point.index.min(parent.children.len());
+        parent.children.insert(idx, marker);
+        return;
+    }
+
+    if append_when_missing {
+        para_node.children.push(marker);
+        return;
+    }
+
+    let past_ppr = if para_node.children.first().map(|c| c.element_type.clone())
+        == Some(WordElementType::ParagraphProperties)
+    {
+        1
+    } else {
+        0
+    };
+    para_node.children.insert(past_ppr, marker);
 }
 
 fn merge_run_properties(run: &mut WordNode, format_props: &HashMap<String, String>) {
