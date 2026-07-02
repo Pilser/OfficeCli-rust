@@ -6,6 +6,7 @@ use std::path::PathBuf;
 pub enum ConvertEngine {
     LibreOffice,
     Oxide,
+    PdfText,
 }
 
 impl std::str::FromStr for ConvertEngine {
@@ -14,8 +15,9 @@ impl std::str::FromStr for ConvertEngine {
         match s.to_lowercase().as_str() {
             "libreoffice" | "lo" => Ok(Self::LibreOffice),
             "oxide" => Ok(Self::Oxide),
+            "pdf-text" | "pdf_text" | "text" => Ok(Self::PdfText),
             other => Err(format!(
-                "unknown engine '{}' (choose: libreoffice, oxide)",
+                "unknown engine '{}' (choose: libreoffice, oxide, pdf-text)",
                 other
             )),
         }
@@ -49,6 +51,8 @@ CONVERSION ENGINES:
   Supports PDF -> DOCX                     Same-family only (no PDF support)
   Falls back to extractable PDF text
 
+  pdf-text                                 PDF-only, fastest, extractable text layer -> simple DOCX
+
   Install LibreOffice:
     macOS:  brew install --cask libreoffice
     Ubuntu: sudo apt install libreoffice
@@ -59,6 +63,7 @@ EXAMPLES:
   officecli convert old.xls -o report.xlsx        Convert with custom output name
   officecli convert old.ppt --force               Convert, overwrite existing output
   officecli convert input.pdf -o output.docx      Convert PDF to Word
+  officecli convert input.pdf --engine pdf-text   Fast PDF text-layer conversion
   officecli convert old.doc --engine oxide        Convert via oxide (no LibreOffice needed)")]
 pub struct ConvertCommand {
     /// Input file path (.doc, .xls, .ppt, .docx, .xlsx, .pptx, .pdf)
@@ -72,7 +77,7 @@ pub struct ConvertCommand {
     #[arg(long)]
     pub force: bool,
 
-    /// Conversion engine: libreoffice (default, high fidelity) or oxide (pure Rust, fast)
+    /// Conversion engine: libreoffice (default), oxide, or pdf-text (PDF text layer only)
     #[arg(long, default_value = "libreoffice")]
     pub engine: ConvertEngine,
 }
@@ -254,6 +259,10 @@ pub fn handle_convert(
         ConvertEngine::LibreOffice if input_ext == "pdf" && output_ext == "docx" => {
             convert_pdf_to_docx(&cmd.file, &output_path, target_ext)?
         }
+        ConvertEngine::PdfText if input_ext == "pdf" && output_ext == "docx" => {
+            convert_pdf_text_to_docx(&cmd.file, &output_path)?;
+            "pdf-text"
+        }
         ConvertEngine::LibreOffice => {
             convert_via_libreoffice(&cmd.file, &output_path, target_ext)?;
             "libreoffice"
@@ -261,6 +270,11 @@ pub fn handle_convert(
         ConvertEngine::Oxide => {
             convert_via_oxide(&cmd.file, &output_path)?;
             "oxide"
+        }
+        ConvertEngine::PdfText => {
+            return Err(HandlerError::UnsupportedMode(
+                "--engine pdf-text is only supported for .pdf -> .docx".to_string(),
+            ));
         }
     };
 
@@ -932,13 +946,18 @@ fn validate_conversion(
     }
 
     if input_ext == "pdf" && output_ext == "docx" {
-        if engine != ConvertEngine::LibreOffice {
+        if engine != ConvertEngine::LibreOffice && engine != ConvertEngine::PdfText {
             return Err(HandlerError::UnsupportedMode(
-                "PDF to DOCX conversion requires LibreOffice engine (--engine libreoffice)"
+                "PDF to DOCX conversion requires --engine libreoffice or --engine pdf-text"
                     .to_string(),
             ));
         }
         return Ok(());
+    }
+    if engine == ConvertEngine::PdfText {
+        return Err(HandlerError::UnsupportedMode(
+            "--engine pdf-text is only supported for .pdf -> .docx".to_string(),
+        ));
     }
     if input_ext == "pdf" && output_ext != "docx" {
         return Err(HandlerError::UnsupportedMode(format!(
@@ -1003,8 +1022,19 @@ mod tests {
     }
 
     #[test]
-    fn test_pdf_to_docx_requires_libreoffice() {
+    fn test_valid_pdf_to_docx_with_pdf_text_engine() {
+        assert!(validate_conversion("pdf", "docx", ConvertEngine::PdfText).is_ok());
+    }
+
+    #[test]
+    fn test_pdf_to_docx_rejects_oxide() {
         let result = validate_conversion("pdf", "docx", ConvertEngine::Oxide);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_pdf_text_engine_is_pdf_only() {
+        let result = validate_conversion("doc", "docx", ConvertEngine::PdfText);
         assert!(result.is_err());
     }
 
@@ -1035,6 +1065,10 @@ mod tests {
         assert_eq!(
             ConvertEngine::from_str("oxide").unwrap(),
             ConvertEngine::Oxide
+        );
+        assert_eq!(
+            ConvertEngine::from_str("pdf-text").unwrap(),
+            ConvertEngine::PdfText
         );
         assert!(ConvertEngine::from_str("foo").is_err());
     }
