@@ -1,13 +1,27 @@
 use clap::Args;
 use handler_common::{HandlerError, InsertPosition, OffsetSpan, OutputFormat, TextOffsetMap};
 use std::collections::HashMap;
+use std::io::Read;
 
-/// Execute multiple commands from a batch file
+/// Execute multiple commands from inline JSON, a file, or stdin
 #[derive(Args)]
 pub struct BatchCommand {
     pub file: String,
-    /// JSON string containing an array of operations
-    pub batch_json: String,
+    /// JSON string containing an array of operations.
+    #[arg(
+        value_name = "BATCH_JSON",
+        required_unless_present_any = ["commands_file", "stdin"],
+        conflicts_with_all = ["commands_file", "stdin"]
+    )]
+    pub batch_json: Option<String>,
+
+    /// Read the JSON array of operations from a file.
+    #[arg(long, value_name = "PATH", conflicts_with_all = ["batch_json", "stdin"])]
+    pub commands_file: Option<String>,
+
+    /// Read the JSON array of operations from stdin.
+    #[arg(long, conflicts_with_all = ["batch_json", "commands_file"])]
+    pub stdin: bool,
 
     /// Emit the refreshed text+offset map after the batch (and per op) in JSON output.
     #[arg(long)]
@@ -29,8 +43,9 @@ type RangeOriginals = Vec<(String, usize, usize)>;
 
 pub fn handle_batch(cmd: BatchCommand, format: OutputFormat) -> Result<String, HandlerError> {
     let handler = crate::open_handler(&cmd.file, true)?;
+    let batch_json = read_batch_json(&cmd)?;
 
-    let ops: Vec<BatchOp> = serde_json::from_str(&cmd.batch_json)
+    let ops: Vec<BatchOp> = serde_json::from_str(&batch_json)
         .map_err(|e| HandlerError::InvalidArgument(format!("invalid batch JSON: {}", e)))?;
 
     let mut results = Vec::new();
@@ -108,6 +123,30 @@ pub fn handle_batch(cmd: BatchCommand, format: OutputFormat) -> Result<String, H
     };
 
     Ok(output)
+}
+
+fn read_batch_json(cmd: &BatchCommand) -> Result<String, HandlerError> {
+    if let Some(batch_json) = &cmd.batch_json {
+        return Ok(batch_json.clone());
+    }
+    if let Some(path) = &cmd.commands_file {
+        return std::fs::read_to_string(path).map_err(|e| {
+            HandlerError::OperationFailed(format!(
+                "failed to read batch commands file '{}': {}",
+                path, e
+            ))
+        });
+    }
+    if cmd.stdin {
+        let mut input = String::new();
+        std::io::stdin()
+            .read_to_string(&mut input)
+            .map_err(|e| HandlerError::OperationFailed(format!("failed to read stdin: {}", e)))?;
+        return Ok(input);
+    }
+    Err(HandlerError::InvalidArgument(
+        "batch JSON must be provided inline, by --commands-file, or by --stdin".to_string(),
+    ))
 }
 
 /// Shift an original-coordinate offset by the deltas of edits that end at or

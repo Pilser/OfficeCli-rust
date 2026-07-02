@@ -242,7 +242,7 @@ pub enum Command {
     Dump(DumpCommand),
     /// Convert legacy Office formats (.doc, .xls, .ppt) to modern (.docx, .xlsx, .pptx)
     Convert(ConvertCommand),
-    /// Run commands from a batch file
+    /// Run commands from inline JSON, a file, or stdin
     Batch(BatchCommand),
     /// Show info about the tool or document topics
     Info(InfoCommand),

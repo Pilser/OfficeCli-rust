@@ -235,7 +235,8 @@ officecli close report.docx
 
 # Batch mode — atomic multi-command execution
 echo '[{"command":"set","path":"/slide[1]/shape[1]","props":{"text":"Hello"}}]' \
-  | officecli batch deck.pptx --json
+  | officecli batch deck.pptx --stdin --json
+officecli batch deck.pptx --commands-file batch.json --json
 ```
 
 ### PDF Support

@@ -773,6 +773,50 @@ fn test_batch_docx() {
 }
 
 #[test]
+fn test_batch_docx_from_commands_file() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_batch_file.docx");
+    let p = path.to_string_lossy().to_string();
+    let commands_path = tmp.path().join("batch.json");
+    let commands = r#"[{"command":"add","parent":"/body","type":"paragraph","properties":{"text":"Batch file test"}}]"#;
+    std::fs::write(&commands_path, commands).unwrap();
+    let commands_file = commands_path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args(["batch", &p, "--commands-file", &commands_file])
+        .assert()
+        .success();
+
+    officecli()
+        .args(["view", &p])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Batch file test"));
+}
+
+#[test]
+fn test_batch_docx_from_stdin() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_batch_stdin.docx");
+    let p = path.to_string_lossy().to_string();
+    let commands = r#"[{"command":"add","parent":"/body","type":"paragraph","properties":{"text":"Batch stdin test"}}]"#;
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args(["batch", &p, "--stdin"])
+        .write_stdin(commands)
+        .assert()
+        .success();
+
+    officecli()
+        .args(["view", &p])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Batch stdin test"));
+}
+
+#[test]
 fn test_batch_docx_range_paths_with_props_replaces_text() {
     let tmp = temp_dir();
     let path = tmp.path().join("test_batch_range_paths.docx");

@@ -233,7 +233,8 @@ officecli close report.docx
 
 # 批量模式 — 原子化多命令执行
 echo '[{"command":"set","path":"/slide[1]/shape[1]","props":{"text":"你好"}}]' \
-  | officecli batch deck.pptx --json
+  | officecli batch deck.pptx --stdin --json
+officecli batch deck.pptx --commands-file batch.json --json
 ```
 
 ### PDF 支持
