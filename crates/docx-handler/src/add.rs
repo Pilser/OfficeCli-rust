@@ -189,6 +189,10 @@ fn resolve_segment_to_paragraph_ranges(
     dom: &WordDom,
     seg: &PathRangeSegment,
 ) -> Result<Vec<ParagraphRange>, HandlerError> {
+    if is_virtual_text_offset_path(&seg.path) {
+        return Ok(Vec::new());
+    }
+
     let node = navigate_to_element(dom, &seg.path)?;
 
     if node.element_type == WordElementType::TableCell {
@@ -207,6 +211,10 @@ fn resolve_segment_to_paragraph_ranges(
         "range-paths must point to a Paragraph, Run, Hyperlink, or TableCell, found: {:?}",
         node.element_type
     )))
+}
+
+fn is_virtual_text_offset_path(path: &str) -> bool {
+    path.ends_with("/sep") || path.ends_with("/break")
 }
 
 fn resolve_cell_range_to_paragraph_ranges(

@@ -786,6 +786,10 @@ fn resolve_docx_range_segment(
     dom: &WordDom,
     seg: &PathRangeSegment,
 ) -> Result<Vec<PathRangeSegment>, HandlerError> {
+    if is_virtual_text_offset_path(&seg.path) {
+        return Ok(Vec::new());
+    }
+
     match navigate_to_element(dom, &seg.path) {
         Ok(node) => resolve_existing_range_segment(dom, node, seg),
         Err(path_err) => {
@@ -795,6 +799,10 @@ fn resolve_docx_range_segment(
             Err(path_err)
         }
     }
+}
+
+fn is_virtual_text_offset_path(path: &str) -> bool {
+    path.ends_with("/sep") || path.ends_with("/break")
 }
 
 fn resolve_existing_range_segment(

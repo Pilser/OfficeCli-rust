@@ -1004,6 +1004,68 @@ fn test_batch_docx_bookmark_range_paths_supports_table_cell_paths() {
 }
 
 #[test]
+fn test_batch_docx_bookmark_range_paths_ignores_virtual_table_separators() {
+    let tmp = temp_dir();
+    let path = tmp
+        .path()
+        .join("test_batch_table_cell_separator_bookmark.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args([
+            "add",
+            &p,
+            "--parent",
+            "/body",
+            "--type-name",
+            "table",
+            "--properties",
+            "rows=1",
+            "cols=2",
+            "r1c1=abcdef",
+            "r1c2=uvwxyz",
+        ])
+        .assert()
+        .success();
+
+    let batch_json = r#"[{"command":"add","parent":"/body/p[1]","type":"bookmark","properties":{"name":"DSN_CELL_SEP"},"range_paths":"/body/tbl[1]/tr[1]/tc[1][1..4],/body/tbl[1]/tr[1]/tc[1]/sep,/body/tbl[1]/tr[1]/tc[2][0..3]"}]"#;
+
+    officecli()
+        .args(["batch", &p, batch_json, "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"Ok\": \"created:"))
+        .stdout(predicate::str::contains("DSN_CELL_SEP"));
+
+    officecli()
+        .args([
+            "get",
+            &p,
+            "/body/tbl[1]/tr[1]/tc[1]/p[1]",
+            "--depth",
+            "2",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("bookmarkStart"));
+
+    officecli()
+        .args([
+            "get",
+            &p,
+            "/body/tbl[1]/tr[1]/tc[2]/p[1]",
+            "--depth",
+            "2",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("bookmarkEnd"));
+}
+
+#[test]
 fn test_batch_docx_set_range_paths_supports_span_index_table_cell_paths() {
     let tmp = temp_dir();
     let path = tmp.path().join("test_batch_span_index_table_cell_set.docx");

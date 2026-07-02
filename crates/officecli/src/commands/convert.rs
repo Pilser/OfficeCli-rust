@@ -7,6 +7,7 @@ pub enum ConvertEngine {
     LibreOffice,
     Oxide,
     PdfText,
+    Pdf2Docx,
 }
 
 impl std::str::FromStr for ConvertEngine {
@@ -16,8 +17,9 @@ impl std::str::FromStr for ConvertEngine {
             "libreoffice" | "lo" => Ok(Self::LibreOffice),
             "oxide" => Ok(Self::Oxide),
             "pdf-text" | "pdf_text" | "text" => Ok(Self::PdfText),
+            "pdf2docx" | "pdf-2-docx" | "pdf_2_docx" => Ok(Self::Pdf2Docx),
             other => Err(format!(
-                "unknown engine '{}' (choose: libreoffice, oxide, pdf-text)",
+                "unknown engine '{}' (choose: libreoffice, oxide, pdf-text, pdf2docx)",
                 other
             )),
         }
@@ -29,7 +31,7 @@ pub fn parse_engine(s: &str) -> Result<ConvertEngine, String> {
     s.parse()
 }
 
-/// Convert a legacy Office document (.doc, .xls, .ppt) to modern format (.docx, .xlsx, .pptx)
+/// Convert a legacy Office document or PDF to modern Office format
 #[derive(Args)]
 #[command(after_help = "\
 SUPPORTED CONVERSIONS:
@@ -52,11 +54,16 @@ CONVERSION ENGINES:
   Falls back to extractable PDF text
 
   pdf-text                                 PDF-only, fastest, extractable text layer -> simple DOCX
+  pdf2docx                                 PDF-only, layout parser via Python pdf2docx CLI
 
   Install LibreOffice:
     macOS:  brew install --cask libreoffice
     Ubuntu: sudo apt install libreoffice
     Windows: https://www.libreoffice.org/download/
+
+  Install pdf2docx:
+    python3 -m pip install pdf2docx
+    or set OFFICECLI_PDF2DOCX_BIN=/path/to/pdf2docx
 
 EXAMPLES:
   officecli convert old.doc                       Convert .doc -> .docx via LibreOffice (default)
@@ -64,6 +71,7 @@ EXAMPLES:
   officecli convert old.ppt --force               Convert, overwrite existing output
   officecli convert input.pdf -o output.docx      Convert PDF to Word
   officecli convert input.pdf --engine pdf-text   Fast PDF text-layer conversion
+  officecli convert input.pdf --engine pdf2docx   Convert PDF via Python pdf2docx
   officecli convert old.doc --engine oxide        Convert via oxide (no LibreOffice needed)")]
 pub struct ConvertCommand {
     /// Input file path (.doc, .xls, .ppt, .docx, .xlsx, .pptx, .pdf)
@@ -77,7 +85,7 @@ pub struct ConvertCommand {
     #[arg(long)]
     pub force: bool,
 
-    /// Conversion engine: libreoffice (default), oxide, or pdf-text (PDF text layer only)
+    /// Conversion engine: libreoffice (default), oxide, pdf-text, or pdf2docx
     #[arg(long, default_value = "libreoffice")]
     pub engine: ConvertEngine,
 }
@@ -263,6 +271,10 @@ pub fn handle_convert(
             convert_pdf_text_to_docx(&cmd.file, &output_path)?;
             "pdf-text"
         }
+        ConvertEngine::Pdf2Docx if input_ext == "pdf" && output_ext == "docx" => {
+            convert_via_pdf2docx(&cmd.file, &output_path)?;
+            "pdf2docx"
+        }
         ConvertEngine::LibreOffice => {
             convert_via_libreoffice(&cmd.file, &output_path, target_ext)?;
             "libreoffice"
@@ -274,6 +286,11 @@ pub fn handle_convert(
         ConvertEngine::PdfText => {
             return Err(HandlerError::UnsupportedMode(
                 "--engine pdf-text is only supported for .pdf -> .docx".to_string(),
+            ));
+        }
+        ConvertEngine::Pdf2Docx => {
+            return Err(HandlerError::UnsupportedMode(
+                "--engine pdf2docx is only supported for .pdf -> .docx".to_string(),
             ));
         }
     };
@@ -831,6 +848,138 @@ fn find_soffice() -> Result<String, HandlerError> {
     ))
 }
 
+/// Convert PDF to DOCX via the Python pdf2docx CLI.
+fn convert_via_pdf2docx(
+    input_file: &str,
+    output_path: &std::path::Path,
+) -> Result<(), HandlerError> {
+    let pdf2docx = find_pdf2docx()?;
+
+    if let Some(parent) = output_path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                HandlerError::OperationFailed(format!("cannot create output dir: {}", e))
+            })?;
+        }
+    }
+
+    let output = std::process::Command::new(&pdf2docx)
+        .arg("convert")
+        .arg(input_file)
+        .arg(output_path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| HandlerError::OperationFailed(format!("failed to run pdf2docx CLI: {}", e)))?;
+
+    if !output.status.success() {
+        return Err(HandlerError::OperationFailed(format!(
+            "pdf2docx conversion failed (exit code {}). stdout: {} stderr: {}",
+            output.status.code().unwrap_or(-1),
+            truncate_lossy(&output.stdout, 2000),
+            truncate_lossy(&output.stderr, 2000)
+        )));
+    }
+
+    if !output_path.exists() {
+        return Err(HandlerError::OperationFailed(format!(
+            "pdf2docx did not produce output file '{}'",
+            output_path.display()
+        )));
+    }
+
+    Ok(())
+}
+
+/// Find the pdf2docx executable. The optional OFFICECLI_PDF2DOCX_BIN env var
+/// may point at a full path or at a command available on PATH.
+fn find_pdf2docx() -> Result<String, HandlerError> {
+    if let Ok(bin) = std::env::var("OFFICECLI_PDF2DOCX_BIN") {
+        let bin = bin.trim();
+        if !bin.is_empty() {
+            return resolve_command(bin).ok_or_else(|| {
+                HandlerError::OperationFailed(format!(
+                    "OFFICECLI_PDF2DOCX_BIN is set to '{}' but it was not found",
+                    bin
+                ))
+            });
+        }
+    }
+
+    let candidates = [
+        "pdf2docx",
+        "/usr/local/bin/pdf2docx",
+        "/opt/pdf2docx-venv/bin/pdf2docx",
+    ];
+
+    for candidate in candidates {
+        if let Some(path) = resolve_command(candidate) {
+            return Ok(path);
+        }
+    }
+
+    Err(HandlerError::OperationFailed(
+        "pdf2docx CLI not found.\n\nInstall it:\n  python3 -m pip install pdf2docx\n\nOr set OFFICECLI_PDF2DOCX_BIN=/path/to/pdf2docx".to_string(),
+    ))
+}
+
+fn resolve_command(candidate: &str) -> Option<String> {
+    let is_path = candidate.contains('/') || candidate.contains('\\');
+    if is_path {
+        return std::path::Path::new(candidate)
+            .exists()
+            .then(|| candidate.to_string());
+    }
+
+    #[cfg(unix)]
+    {
+        let output = std::process::Command::new("which")
+            .arg(candidate)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if output.status.success() && !path.is_empty() {
+            return Some(path);
+        }
+        None
+    }
+
+    #[cfg(windows)]
+    {
+        let output = std::process::Command::new("where")
+            .arg(candidate)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        let path = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if output.status.success() && !path.is_empty() {
+            return Some(path);
+        }
+        None
+    }
+}
+
+fn truncate_lossy(bytes: &[u8], max_chars: usize) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let mut out = String::new();
+    for (idx, ch) in text.chars().enumerate() {
+        if idx >= max_chars {
+            out.push_str("...<truncated>");
+            return out;
+        }
+        out.push(ch);
+    }
+    out
+}
+
 /// Convert via office_oxide (pure Rust, lower fidelity).
 fn convert_via_oxide(input_file: &str, output_path: &std::path::Path) -> Result<(), HandlerError> {
     let doc = office_oxide::Document::open(input_file)
@@ -923,7 +1072,7 @@ fn validate_conversion(
     output_ext: &str,
     engine: ConvertEngine,
 ) -> Result<(), HandlerError> {
-    // Cross-family: PDF -> DOCX (LibreOffice only)
+    // Cross-family: PDF -> DOCX (PDF-specific engines only)
     // Foreign target extensions are valid if a plugin exporter exists.
     // Skip the family-rule check below — those only cover native→native.
     if !is_native_office_ext(output_ext) {
@@ -946,18 +1095,27 @@ fn validate_conversion(
     }
 
     if input_ext == "pdf" && output_ext == "docx" {
-        if engine != ConvertEngine::LibreOffice && engine != ConvertEngine::PdfText {
+        if engine != ConvertEngine::LibreOffice
+            && engine != ConvertEngine::PdfText
+            && engine != ConvertEngine::Pdf2Docx
+        {
             return Err(HandlerError::UnsupportedMode(
-                "PDF to DOCX conversion requires --engine libreoffice or --engine pdf-text"
+                "PDF to DOCX conversion requires --engine libreoffice, --engine pdf-text, or --engine pdf2docx"
                     .to_string(),
             ));
         }
         return Ok(());
     }
-    if engine == ConvertEngine::PdfText {
-        return Err(HandlerError::UnsupportedMode(
-            "--engine pdf-text is only supported for .pdf -> .docx".to_string(),
-        ));
+    if engine == ConvertEngine::PdfText || engine == ConvertEngine::Pdf2Docx {
+        let engine_name = if engine == ConvertEngine::PdfText {
+            "pdf-text"
+        } else {
+            "pdf2docx"
+        };
+        return Err(HandlerError::UnsupportedMode(format!(
+            "--engine {} is only supported for .pdf -> .docx",
+            engine_name
+        )));
     }
     if input_ext == "pdf" && output_ext != "docx" {
         return Err(HandlerError::UnsupportedMode(format!(
@@ -1027,6 +1185,11 @@ mod tests {
     }
 
     #[test]
+    fn test_valid_pdf_to_docx_with_pdf2docx_engine() {
+        assert!(validate_conversion("pdf", "docx", ConvertEngine::Pdf2Docx).is_ok());
+    }
+
+    #[test]
     fn test_pdf_to_docx_rejects_oxide() {
         let result = validate_conversion("pdf", "docx", ConvertEngine::Oxide);
         assert!(result.is_err());
@@ -1035,6 +1198,12 @@ mod tests {
     #[test]
     fn test_pdf_text_engine_is_pdf_only() {
         let result = validate_conversion("doc", "docx", ConvertEngine::PdfText);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_pdf2docx_engine_is_pdf_only() {
+        let result = validate_conversion("doc", "docx", ConvertEngine::Pdf2Docx);
         assert!(result.is_err());
     }
 
@@ -1069,6 +1238,10 @@ mod tests {
         assert_eq!(
             ConvertEngine::from_str("pdf-text").unwrap(),
             ConvertEngine::PdfText
+        );
+        assert_eq!(
+            ConvertEngine::from_str("pdf2docx").unwrap(),
+            ConvertEngine::Pdf2Docx
         );
         assert!(ConvertEngine::from_str("foo").is_err());
     }

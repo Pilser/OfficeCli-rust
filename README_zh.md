@@ -207,18 +207,21 @@ officecli watch deck.pptx                # 实时服务 :26315
 
 ### 格式转换
 
-两种引擎支持旧格式转换：
+多种引擎支持旧格式转换和 PDF 转 DOCX：
 
 ```bash
-officecli convert old.doc              # .doc → .docx（LibreOffice，默认）
-officecli convert old.xls -o new.xlsx  # .xls → .xlsx
+officecli convert old.doc              # .doc -> .docx（LibreOffice，默认）
+officecli convert old.xls -o new.xlsx  # .xls -> .xlsx
 officecli convert old.ppt --engine oxide  # 纯 Rust 引擎，无外部依赖
+officecli convert input.pdf --engine pdf2docx  # PDF -> DOCX，使用 Python pdf2docx
 ```
 
 | 引擎 | 保真度 | 速度 | 依赖 |
 |------|--------|------|------|
 | `libreoffice`（默认） | ~1:1 | 较慢（进程启动） | LibreOffice（~700MB） |
 | `oxide` | 较低（可能丢失样式/页眉/对象） | 快（亚秒级） | 无（纯 Rust） |
+| `pdf-text` | 仅文本 | 最快 | 无（纯 Rust） |
+| `pdf2docx` | 版式解析，仅支持 PDF | 通常快于 LO | Python `pdf2docx` CLI |
 
 ### 驻留模式与批量执行
 
@@ -328,7 +331,7 @@ officecli help xlsx cell --json
 | `save` | 保存修改到文件 |
 | `validate` | 验证文档结构 |
 | `extract-text` | 提取文本与偏移→路径映射（`--with-offsets`、`--json`） |
-| `convert` | 转换旧格式（`.doc`/`.xls`/`.ppt`）（`--engine libreoffice|oxide`） |
+| `convert` | 转换旧格式和 PDF（`--engine libreoffice|oxide|pdf-text|pdf2docx`） |
 | `batch` | 单次周期内执行多条操作 |
 | `dump` | 将文档结构序列化为可重放 JSON |
 | `raw` | 查看文档部件的原始 XML |

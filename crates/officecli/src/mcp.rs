@@ -258,16 +258,15 @@ fn get_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "convert".to_string(),
-            description:
-                "Convert legacy Office formats (.doc, .xls, .ppt) to modern (.docx, .xlsx, .pptx)"
-                    .to_string(),
+            description: "Convert legacy Office formats and PDF to modern Office formats"
+                .to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "file": { "type": "string", "description": "Input file path (.doc, .xls, .ppt, .docx, .xlsx, .pptx)" },
+                    "file": { "type": "string", "description": "Input file path (.doc, .xls, .ppt, .docx, .xlsx, .pptx, .pdf)" },
                     "output": { "type": "string", "description": "Output file path (optional, defaults to same path with modern extension)" },
                     "force": { "type": "boolean", "description": "Overwrite output file if it exists" },
-                    "engine": { "type": "string", "enum": ["libreoffice", "oxide"], "default": "libreoffice", "description": "Conversion engine: libreoffice (high fidelity, needs install) or oxide (pure Rust, fast)" },
+                    "engine": { "type": "string", "enum": ["libreoffice", "oxide", "pdf-text", "pdf2docx"], "default": "libreoffice", "description": "Conversion engine: libreoffice, oxide, pdf-text, or pdf2docx" },
                 },
                 "required": ["file"]
             }),
@@ -316,7 +315,7 @@ fn execute_tool(name: &str, params: &HashMap<String, Value>) -> Result<Value, St
             Some("pptx") => "PowerPoint (.pptx): Elements: slide, shape, picture, textbox, table. Paths: /slide[N]/shape[N]",
             Some("pdf") => "PDF: Elements: page, text, image, annotation. Paths: /page[N]",
             Some("offset") => "Text Offset Mapping: Use extract_text tool to get text+offset->path mapping",
-            Some("convert") => "Convert: .doc->.docx, .xls->.xlsx, .ppt->.pptx. Also supports re-saving modern formats.",
+            Some("convert") => "Convert: .doc->.docx, .xls->.xlsx, .ppt->.pptx, .pdf->.docx. Engines: libreoffice, oxide, pdf-text, pdf2docx.",
             None => "OfficeCLI Tools: view, get, query, set, add, remove, move, validate, extract_text, save, raw, convert, info",
             Some(other) => return Err(format!("unknown info topic: {}", other)),
         };

@@ -209,18 +209,21 @@ officecli watch deck.pptx                # live server at :26315
 
 ### Format Conversion
 
-Two engines for legacy format conversion:
+Multiple engines for legacy format conversion and PDF to DOCX:
 
 ```bash
-officecli convert old.doc              # .doc → .docx (LibreOffice, default)
-officecli convert old.xls -o new.xlsx  # .xls → .xlsx
+officecli convert old.doc              # .doc -> .docx (LibreOffice, default)
+officecli convert old.xls -o new.xlsx  # .xls -> .xlsx
 officecli convert old.ppt --engine oxide  # pure-Rust engine, no external deps
+officecli convert input.pdf --engine pdf2docx  # PDF -> DOCX via Python pdf2docx
 ```
 
 | Engine                  | Fidelity                                | Speed                  | Dependency           |
 | ----------------------- | --------------------------------------- | ---------------------- | -------------------- |
 | `libreoffice` (default) | ~1:1                                    | Slower (process spawn) | LibreOffice (~700MB) |
 | `oxide`                 | Lower (may lose styles/headers/objects) | Fast (sub-second)      | None (pure Rust)     |
+| `pdf-text`              | Text only                               | Fastest                | None (pure Rust)     |
+| `pdf2docx`              | Layout parser, PDF-only                 | Usually faster than LO | Python `pdf2docx` CLI |
 
 ### Resident Mode & Batch
 
@@ -330,7 +333,7 @@ Track upstream for the full command reference and wiki: [iOfficeAI/OfficeCLI Wik
 | `save`         | Save changes back to file                                                     |
 | `validate`     | Validate document structure                                                   |
 | `extract-text` | Extract text with offset→path mapping (`--with-offsets`, `--json`)            |
-| `convert`      | Convert legacy formats (`.doc`/`.xls`/`.ppt`) (`--engine libreoffice\|oxide`) |
+| `convert`      | Convert legacy formats and PDF (`--engine libreoffice\|oxide\|pdf-text\|pdf2docx`) |
 | `batch`        | Multiple operations in one cycle                                              |
 | `dump`         | Serialize document structure to replayable JSON                               |
 | `raw`          | View raw XML of a document part                                               |
