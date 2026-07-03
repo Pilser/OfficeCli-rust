@@ -156,13 +156,16 @@ pub fn find_paragraph_by_para_id(dom: &crate::dom_types::WordDom, para_id: &str)
 /// Generate a bookmark ID by finding the max existing w:id across all BookmarkStart
 /// nodes in the document body and incrementing by 1. Returns "1" if no bookmarks exist.
 pub fn generate_bookmark_id(dom: &crate::dom_types::WordDom) -> String {
+    (max_bookmark_id(dom) + 1).to_string()
+}
+
+pub fn max_bookmark_id(dom: &crate::dom_types::WordDom) -> i32 {
     let body = dom
         .root
         .children
         .iter()
         .find(|c| c.element_type == crate::dom_types::WordElementType::Body);
-    let max_id = body.map(max_bookmark_id_in_node).unwrap_or(0);
-    (max_id + 1).to_string()
+    body.map(max_bookmark_id_in_node).unwrap_or(0)
 }
 
 fn max_bookmark_id_in_node(node: &crate::dom_types::WordNode) -> i32 {

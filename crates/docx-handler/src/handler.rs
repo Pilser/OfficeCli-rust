@@ -2,7 +2,7 @@ use handler_common::output_format::{BinaryInfo, RawOptions};
 use handler_common::*;
 use oxml::OxmlPackage;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::add::add_element;
 use crate::dom_types::{WordDom, WordElementType, WordNode};
@@ -34,6 +34,20 @@ const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
 pub struct WordHandler {
     package: RefCell<OxmlPackage>,
     editable: bool,
+}
+
+#[derive(Clone)]
+pub struct AddBatchItem {
+    pub parent: String,
+    pub element_type: String,
+    pub position: InsertPosition,
+    pub properties: HashMap<String, String>,
+    pub wrap: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct SetRangeBatchItem {
+    pub properties: HashMap<String, String>,
 }
 
 impl WordHandler {
@@ -68,6 +82,166 @@ impl WordHandler {
             .write_part_xml(DOCUMENT_PART, &xml)
             .map_err(|e| HandlerError::OperationFailed(e.to_string()))?;
         Ok(())
+    }
+
+    pub fn add_batch(
+        &self,
+        items: &[AddBatchItem],
+    ) -> Result<Vec<Result<String, String>>, HandlerError> {
+        if !self.editable {
+            return Err(HandlerError::OperationFailed(
+                "document opened in read-only mode".to_string(),
+            ));
+        }
+
+        let mut dom = self.parse_dom()?;
+        let mut results = Vec::with_capacity(items.len());
+        let mut has_mutations = false;
+        let mut bookmark_names = collect_bookmark_names(&dom);
+        let mut next_bookmark_id = crate::helpers::max_bookmark_id(&dom) + 1;
+
+        for item in items {
+            if matches!(
+                item.element_type.as_str(),
+                "image" | "drawing" | "picture" | "img" | "chart" | "chartSpace"
+            ) {
+                results.push(Err(format!(
+                    "batch add fast path does not support part-aware element type: {}",
+                    item.element_type
+                )));
+                continue;
+            }
+
+            let mut properties = item.properties.clone();
+            if is_bookmark_add_type(&item.element_type) {
+                match prepare_bookmark_batch_properties(
+                    &properties,
+                    &mut bookmark_names,
+                    &mut next_bookmark_id,
+                ) {
+                    Ok(prepared) => properties = prepared,
+                    Err(e) => {
+                        results.push(Err(e.to_string()));
+                        continue;
+                    }
+                }
+            }
+
+            match add_element(
+                &mut dom,
+                &item.parent,
+                &item.element_type,
+                item.position.clone(),
+                &properties,
+                item.wrap.as_deref(),
+            ) {
+                Ok(path) => {
+                    has_mutations = true;
+                    results.push(Ok(path));
+                }
+                Err(e) => results.push(Err(e.to_string())),
+            }
+        }
+
+        if has_mutations {
+            self.write_dom(&dom)?;
+        }
+        Ok(results)
+    }
+
+    pub fn set_range_batch(
+        &self,
+        items: &[SetRangeBatchItem],
+    ) -> Result<Vec<Result<Vec<String>, String>>, HandlerError> {
+        if !self.editable {
+            return Err(HandlerError::OperationFailed(
+                "document opened in read-only mode".to_string(),
+            ));
+        }
+
+        let mut dom = self.parse_dom()?;
+        let mut results = Vec::with_capacity(items.len());
+        let mut has_mutations = false;
+
+        for item in items {
+            let Some(range_paths_str) = item.properties.get("range_paths") else {
+                results.push(Err("'range_paths' property is required".to_string()));
+                continue;
+            };
+            let segments = match handler_common::parse_range_paths(range_paths_str) {
+                Ok(segments) => segments,
+                Err(e) => {
+                    results.push(Err(format!("invalid range paths: {}", e)));
+                    continue;
+                }
+            };
+            match apply_docx_range_highlights(&mut dom, &item.properties, &segments) {
+                Ok(unsupported) => {
+                    has_mutations = true;
+                    results.push(Ok(unsupported));
+                }
+                Err(e) => results.push(Err(e.to_string())),
+            }
+        }
+
+        if has_mutations {
+            self.write_dom(&dom)?;
+        }
+        Ok(results)
+    }
+}
+
+fn is_bookmark_add_type(element_type: &str) -> bool {
+    matches!(element_type, "bookmark" | "bookmarkStart" | "bookmarkstart")
+}
+
+fn prepare_bookmark_batch_properties(
+    properties: &HashMap<String, String>,
+    bookmark_names: &mut HashSet<String>,
+    next_bookmark_id: &mut i32,
+) -> Result<HashMap<String, String>, HandlerError> {
+    let name = properties.get("name").cloned().unwrap_or_default();
+    crate::helpers::validate_bookmark_name(&name)?;
+    if !bookmark_names.insert(name.clone()) {
+        return Err(HandlerError::InvalidArgument(format!(
+            "bookmark name '{}' already exists; pick a unique name.",
+            name
+        )));
+    }
+
+    let mut prepared = properties.clone();
+    prepared.insert(
+        "__officecliBatchSkipDuplicateCheck".to_string(),
+        "true".to_string(),
+    );
+    if !prepared.contains_key("id") {
+        prepared.insert("id".to_string(), next_bookmark_id.to_string());
+        *next_bookmark_id += 1;
+    }
+    Ok(prepared)
+}
+
+fn collect_bookmark_names(dom: &WordDom) -> HashSet<String> {
+    let mut names = HashSet::new();
+    if let Some(body) = dom
+        .root
+        .children
+        .iter()
+        .find(|c| c.element_type == WordElementType::Body)
+    {
+        collect_bookmark_names_in_node(body, &mut names);
+    }
+    names
+}
+
+fn collect_bookmark_names_in_node(node: &WordNode, names: &mut HashSet<String>) {
+    if node.element_type == WordElementType::BookmarkStart {
+        if let Some(name) = node.attributes.get("name") {
+            names.insert(name.clone());
+        }
+    }
+    for child in &node.children {
+        collect_bookmark_names_in_node(child, names);
     }
 }
 

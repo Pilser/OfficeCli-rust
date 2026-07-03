@@ -381,7 +381,9 @@ fn add_bookmark_by_range(
     validate_bookmark_name(&bk_name)?;
 
     // Reject duplicate names
-    reject_duplicate_bookmark_name(dom, &bk_name)?;
+    if !skip_bookmark_duplicate_check(properties) {
+        reject_duplicate_bookmark_name(dom, &bk_name)?;
+    }
 
     // Resolve bookmark ID
     let bk_id = resolve_bookmark_id(dom, properties)?;
@@ -395,6 +397,7 @@ fn add_bookmark_by_range(
     let mut format_props = properties.clone();
     format_props.remove("name");
     format_props.remove("id");
+    remove_bookmark_batch_hints(&mut format_props);
     format_props.remove("range_paths");
     format_props.remove("endPara");
     format_props.remove("endpara");
@@ -714,7 +717,9 @@ fn add_bookmark_wrap(
     validate_bookmark_name(&bk_name)?;
 
     // Reject duplicate names
-    reject_duplicate_bookmark_name(dom, &bk_name)?;
+    if !skip_bookmark_duplicate_check(properties) {
+        reject_duplicate_bookmark_name(dom, &bk_name)?;
+    }
 
     // Resolve bookmark ID
     let bk_id = resolve_bookmark_id(dom, properties)?;
@@ -780,6 +785,7 @@ fn add_bookmark_wrap(
         let mut format_props = properties.clone();
         format_props.remove("name");
         format_props.remove("id");
+        remove_bookmark_batch_hints(&mut format_props);
         format_props.remove("endPara");
         format_props.remove("endpara");
         if !format_props.is_empty() {
@@ -836,6 +842,7 @@ fn add_bookmark_wrap(
         let mut format_props = properties.clone();
         format_props.remove("name");
         format_props.remove("id");
+        remove_bookmark_batch_hints(&mut format_props);
         format_props.remove("endPara");
         format_props.remove("endpara");
         if !format_props.is_empty() {
@@ -901,7 +908,9 @@ fn add_bookmark_positional(
     validate_bookmark_name(&bk_name)?;
 
     // Reject duplicate names
-    reject_duplicate_bookmark_name(dom, &bk_name)?;
+    if !skip_bookmark_duplicate_check(properties) {
+        reject_duplicate_bookmark_name(dom, &bk_name)?;
+    }
 
     // Resolve bookmark ID
     let bk_id = resolve_bookmark_id(dom, properties)?;
@@ -1078,6 +1087,16 @@ fn find_bookmark_by_name(node: &WordNode, name: &str) -> bool {
         return true;
     }
     node.children.iter().any(|c| find_bookmark_by_name(c, name))
+}
+
+fn skip_bookmark_duplicate_check(properties: &HashMap<String, String>) -> bool {
+    properties
+        .get("__officecliBatchSkipDuplicateCheck")
+        .is_some_and(|v| v.eq_ignore_ascii_case("true") || v == "1")
+}
+
+fn remove_bookmark_batch_hints(properties: &mut HashMap<String, String>) {
+    properties.remove("__officecliBatchSkipDuplicateCheck");
 }
 
 /// Resolve bookmark ID: custom id property or auto-generated.

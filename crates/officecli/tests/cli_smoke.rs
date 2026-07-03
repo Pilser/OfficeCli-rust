@@ -871,6 +871,39 @@ fn test_batch_docx_range_paths_supports_run_paths() {
 }
 
 #[test]
+fn test_batch_docx_set_range_paths_applies_multiple_format_ops() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_batch_range_format.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args(["set", &p, "/body/p[1]", "text=abcdef"])
+        .assert()
+        .success();
+
+    let batch_json = r#"[
+        {"command":"set","range_paths":"/body/p[1][0..2]","props":{"color":"FF4340","bgColor":"FFFDEB"}},
+        {"command":"set","range_paths":"/body/p[1][2..4]","props":{"color":"0070C0","bgColor":"EAF4FF"}}
+    ]"#;
+
+    officecli()
+        .args(["batch", &p, batch_json, "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"Ok\": \"OK\""));
+
+    officecli()
+        .args(["raw", &p, "word/document.xml"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("FF4340"))
+        .stdout(predicate::str::contains("0070C0"))
+        .stdout(predicate::str::contains("FFFDEB"))
+        .stdout(predicate::str::contains("EAF4FF"));
+}
+
+#[test]
 fn test_batch_docx_set_range_paths_supports_hyperlink_paths() {
     let tmp = temp_dir();
     let path = tmp.path().join("test_batch_hyperlink_range_set.docx");
@@ -1001,6 +1034,49 @@ fn test_batch_docx_bookmark_range_paths_supports_table_cell_paths() {
         .stdout(predicate::str::contains("bookmarkStart"))
         .stdout(predicate::str::contains("bookmarkEnd"))
         .stdout(predicate::str::contains("bcd"));
+}
+
+#[test]
+fn test_batch_docx_bookmark_range_paths_applies_multiple_ops() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_batch_multiple_bookmarks.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args([
+            "add",
+            &p,
+            "--parent",
+            "/body",
+            "--type-name",
+            "paragraph",
+            "--properties",
+            "text=abcdef",
+        ])
+        .assert()
+        .success();
+
+    let batch_json = r#"[
+        {"command":"add","parent":"/body/p[2]","type":"bookmark","properties":{"name":"DSN_MULTI_1"},"range_paths":"/body/p[2][0..2]"},
+        {"command":"add","parent":"/body/p[2]","type":"bookmark","properties":{"name":"DSN_MULTI_2"},"range_paths":"/body/p[2][2..4]"}
+    ]"#;
+
+    officecli()
+        .args(["batch", &p, batch_json, "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("DSN_MULTI_1"))
+        .stdout(predicate::str::contains("DSN_MULTI_2"));
+
+    officecli()
+        .args(["get", &p, "/body/p[2]", "--depth", "4", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("bookmarkStart[1]"))
+        .stdout(predicate::str::contains("bookmarkStart[2]"))
+        .stdout(predicate::str::contains("bookmarkEnd[1]"))
+        .stdout(predicate::str::contains("bookmarkEnd[2]"));
 }
 
 #[test]

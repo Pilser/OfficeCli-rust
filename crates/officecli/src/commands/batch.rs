@@ -1,7 +1,10 @@
 use clap::Args;
-use handler_common::{HandlerError, InsertPosition, OffsetSpan, OutputFormat, TextOffsetMap};
+use handler_common::{
+    DocumentHandler, HandlerError, InsertPosition, OffsetSpan, OutputFormat, TextOffsetMap,
+};
 use std::collections::HashMap;
 use std::io::Read;
+use std::path::Path;
 
 /// Execute multiple commands from inline JSON, a file, or stdin
 #[derive(Args)]
@@ -42,11 +45,21 @@ type EditLedger = HashMap<String, Vec<(usize, usize, i64)>>;
 type RangeOriginals = Vec<(String, usize, usize)>;
 
 pub fn handle_batch(cmd: BatchCommand, format: OutputFormat) -> Result<String, HandlerError> {
-    let handler = crate::open_handler(&cmd.file, true)?;
     let batch_json = read_batch_json(&cmd)?;
 
     let ops: Vec<BatchOp> = serde_json::from_str(&batch_json)
         .map_err(|e| HandlerError::InvalidArgument(format!("invalid batch JSON: {}", e)))?;
+
+    if !cmd.emit_map {
+        if let Some(output) = try_handle_docx_range_set_batch(&cmd.file, &ops, format)? {
+            return Ok(output);
+        }
+        if let Some(output) = try_handle_docx_bookmark_add_batch(&cmd.file, &ops, format)? {
+            return Ok(output);
+        }
+    }
+
+    let handler = crate::open_handler(&cmd.file, true)?;
 
     let mut results = Vec::new();
     let mut per_op_maps: Vec<Option<serde_json::Value>> = Vec::new();
@@ -147,6 +160,177 @@ fn read_batch_json(cmd: &BatchCommand) -> Result<String, HandlerError> {
     Err(HandlerError::InvalidArgument(
         "batch JSON must be provided inline, by --commands-file, or by --stdin".to_string(),
     ))
+}
+
+fn try_handle_docx_bookmark_add_batch(
+    file: &str,
+    ops: &[BatchOp],
+    format: OutputFormat,
+) -> Result<Option<String>, HandlerError> {
+    if ops.is_empty() || !is_docx_path(file) || !ops.iter().all(is_bookmark_add_op) {
+        return Ok(None);
+    }
+
+    let items = ops
+        .iter()
+        .map(bookmark_add_item)
+        .collect::<Vec<docx_handler::AddBatchItem>>();
+    let handler = docx_handler::WordHandler::open(file, true)?;
+    let add_results = handler.add_batch(&items)?;
+    let results = add_results
+        .into_iter()
+        .map(|result| BatchResult {
+            op: "add".to_string(),
+            result: result.map(|path| format!("created: {}", path)),
+        })
+        .collect::<Vec<_>>();
+
+    if results.iter().any(|r| r.result.is_ok()) {
+        handler.save()?;
+    }
+
+    let output = if format == OutputFormat::Json {
+        serde_json::to_string_pretty(&results).map_err(HandlerError::JsonError)?
+    } else {
+        results
+            .iter()
+            .map(|r| match &r.result {
+                Ok(val) => format!("{}: OK — {}", r.op, val),
+                Err(e) => format!("{}: ERROR — {}", r.op, e),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    Ok(Some(output))
+}
+
+fn try_handle_docx_range_set_batch(
+    file: &str,
+    ops: &[BatchOp],
+    format: OutputFormat,
+) -> Result<Option<String>, HandlerError> {
+    if ops.is_empty() || !is_docx_path(file) || !ops.iter().all(is_range_format_set_op) {
+        return Ok(None);
+    }
+
+    let items = ops
+        .iter()
+        .map(range_set_item)
+        .collect::<Vec<docx_handler::SetRangeBatchItem>>();
+    let handler = docx_handler::WordHandler::open(file, true)?;
+    let set_results = handler.set_range_batch(&items)?;
+    let results = set_results
+        .into_iter()
+        .map(|result| BatchResult {
+            op: "set".to_string(),
+            result: result.map(format_set_result),
+        })
+        .collect::<Vec<_>>();
+
+    if results.iter().any(|r| r.result.is_ok()) {
+        handler.save()?;
+    }
+
+    let output = if format == OutputFormat::Json {
+        serde_json::to_string_pretty(&results).map_err(HandlerError::JsonError)?
+    } else {
+        results
+            .iter()
+            .map(|r| match &r.result {
+                Ok(val) => format!("{}: OK — {}", r.op, val),
+                Err(e) => format!("{}: ERROR — {}", r.op, e),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    Ok(Some(output))
+}
+
+fn is_docx_path(file: &str) -> bool {
+    Path::new(file)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("docx"))
+}
+
+fn is_range_format_set_op(op: &BatchOp) -> bool {
+    if op.command != "set" {
+        return false;
+    }
+    let properties = range_set_properties(op);
+    properties.contains_key("range_paths") && !properties.contains_key("text")
+}
+
+fn is_bookmark_add_op(op: &BatchOp) -> bool {
+    if op.command != "add" {
+        return false;
+    }
+    let element_type = op
+        .params
+        .get("type")
+        .or_else(|| op.params.get("typeName"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    matches!(element_type, "bookmark" | "bookmarkStart" | "bookmarkstart")
+}
+
+fn range_set_item(op: &BatchOp) -> docx_handler::SetRangeBatchItem {
+    docx_handler::SetRangeBatchItem {
+        properties: range_set_properties(op),
+    }
+}
+
+fn range_set_properties(op: &BatchOp) -> HashMap<String, String> {
+    let mut properties = string_map(&op.params, "properties")
+        .or_else(|| string_map(&op.params, "props"))
+        .unwrap_or_default();
+    if let Some(rp) = op.params.get("range_paths").and_then(|v| v.as_str()) {
+        properties.insert("range_paths".to_string(), rp.to_string());
+    }
+    properties
+}
+
+fn format_set_result(unsupported: Vec<String>) -> String {
+    if unsupported.is_empty() {
+        "OK".to_string()
+    } else if let Some(hint) = handler_common::format_style_hint(&unsupported) {
+        format!("OK ({})", hint)
+    } else {
+        format!("OK (unsupported: {})", unsupported.join(", "))
+    }
+}
+
+fn bookmark_add_item(op: &BatchOp) -> docx_handler::AddBatchItem {
+    let parent = op
+        .params
+        .get("parent")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let element_type = op
+        .params
+        .get("type")
+        .or_else(|| op.params.get("typeName"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let mut properties = string_map(&op.params, "properties")
+        .or_else(|| string_map(&op.params, "props"))
+        .unwrap_or_default();
+    if let Some(rp) = op.params.get("range_paths").and_then(|v| v.as_str()) {
+        properties.insert("range_paths".to_string(), rp.to_string());
+    }
+    docx_handler::AddBatchItem {
+        parent,
+        element_type,
+        position: parse_position(&op.params),
+        properties,
+        wrap: op
+            .params
+            .get("wrap")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+    }
 }
 
 /// Shift an original-coordinate offset by the deltas of edits that end at or

@@ -11,4 +11,4 @@ pub mod raw;
 pub mod text_offset;
 pub mod view;
 
-pub use handler::WordHandler;
+pub use handler::{AddBatchItem, SetRangeBatchItem, WordHandler};
