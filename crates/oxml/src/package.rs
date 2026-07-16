@@ -208,7 +208,7 @@ impl OxmlPackage {
         let file = std::fs::File::create(&tmp_path)?;
         let mut writer = zip::ZipWriter::new(file);
         let options =
-            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
         for (path, content) in &self.parts {
             writer.start_file(path, options)?;
@@ -240,7 +240,7 @@ impl OxmlPackage {
         let file = std::fs::File::create(path)?;
         let mut writer = ZipWriter::new(file);
         let options =
-            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
         for (part_path, content) in &self.parts {
             writer.start_file(part_path, options)?;

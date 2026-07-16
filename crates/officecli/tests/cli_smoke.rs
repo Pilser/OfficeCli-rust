@@ -904,6 +904,44 @@ fn test_batch_docx_set_range_paths_applies_multiple_format_ops() {
 }
 
 #[test]
+fn test_batch_docx_set_range_paths_applies_multiple_text_replacements() {
+    let tmp = temp_dir();
+    let path = tmp.path().join("test_batch_range_replace.docx");
+    let p = path.to_string_lossy().to_string();
+
+    officecli().args(["create", &p]).assert().success();
+    officecli()
+        .args(["set", &p, "/body/p[1]", "text=abcdef"])
+        .assert()
+        .success();
+
+    // Replacements are ordered from the end of the paragraph to the start,
+    // matching the Java adapter's original-coordinate batch contract.
+    let batch_json = r#"[
+        {"command":"set","range_paths":"/body/p[1][4..6]","props":{"text":"Y","color":"FF4340"}},
+        {"command":"set","range_paths":"/body/p[1][1..3]","props":{"text":"X","bgColor":"FFFDEB"}}
+    ]"#;
+
+    officecli()
+        .args(["batch", &p, batch_json, "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"Ok\": \"OK\""));
+
+    officecli()
+        .args(["view", &p])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("aXdY"));
+    officecli()
+        .args(["raw", &p, "word/document.xml"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("FF4340"))
+        .stdout(predicate::str::contains("FFFDEB"));
+}
+
+#[test]
 fn test_batch_docx_set_range_paths_supports_hyperlink_paths() {
     let tmp = temp_dir();
     let path = tmp.path().join("test_batch_hyperlink_range_set.docx");

@@ -209,7 +209,7 @@ fn try_handle_docx_range_set_batch(
     ops: &[BatchOp],
     format: OutputFormat,
 ) -> Result<Option<String>, HandlerError> {
-    if ops.is_empty() || !is_docx_path(file) || !ops.iter().all(is_range_format_set_op) {
+    if ops.is_empty() || !is_docx_path(file) || !ops.iter().all(is_range_set_op) {
         return Ok(None);
     }
 
@@ -253,12 +253,12 @@ fn is_docx_path(file: &str) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("docx"))
 }
 
-fn is_range_format_set_op(op: &BatchOp) -> bool {
+fn is_range_set_op(op: &BatchOp) -> bool {
     if op.command != "set" {
         return false;
     }
     let properties = range_set_properties(op);
-    properties.contains_key("range_paths") && !properties.contains_key("text")
+    properties.contains_key("range_paths")
 }
 
 fn is_bookmark_add_op(op: &BatchOp) -> bool {

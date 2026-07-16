@@ -887,14 +887,26 @@ fn apply_docx_range_highlights(
 
     let segments = resolve_docx_range_segments(dom, segments)?;
 
+    let mut emitted_replacement_groups = HashSet::new();
     for seg in &segments {
+        let replacement_group = new_text.as_ref().map(|_| replacement_group_path(&seg.path));
+        let segment_text = new_text.as_deref().map(|text| {
+            if replacement_group
+                .as_ref()
+                .is_some_and(|group| !emitted_replacement_groups.insert(group.clone()))
+            {
+                ""
+            } else {
+                text
+            }
+        });
         let target_node = navigate_to_element_mut(dom, &seg.path)?;
         match target_node.element_type {
             WordElementType::Paragraph => {
-                apply_docx_paragraph_range(target_node, seg, new_text.as_deref(), &format_props)?;
+                apply_docx_paragraph_range(target_node, seg, segment_text, &format_props)?;
             }
             WordElementType::Run => {
-                apply_docx_run_range(target_node, seg, new_text.as_deref(), &format_props)?;
+                apply_docx_run_range(target_node, seg, segment_text, &format_props)?;
             }
             _ => {
                 return Err(HandlerError::InvalidArgument(format!(
@@ -935,6 +947,10 @@ fn apply_docx_range_highlights(
     }
 
     Ok(unsupported)
+}
+
+fn replacement_group_path(path: &str) -> String {
+    extract_paragraph_path(path).unwrap_or_else(|_| path.to_string())
 }
 
 fn resolve_docx_range_segments(
@@ -1417,11 +1433,39 @@ fn collect_run_locations(
         runs.push((current_path.clone(), node.paragraph_text()));
         return;
     }
+    if is_alternate_content_node(node) {
+        if let Some(preferred_idx) = preferred_alternate_content_child_index(node) {
+            current_path.push(preferred_idx);
+            collect_run_locations(&node.children[preferred_idx], current_path, runs);
+            current_path.pop();
+        }
+        return;
+    }
     for (i, child) in node.children.iter().enumerate() {
         current_path.push(i);
         collect_run_locations(child, current_path, runs);
         current_path.pop();
     }
+}
+
+fn is_alternate_content_node(node: &WordNode) -> bool {
+    matches!(
+        &node.element_type,
+        WordElementType::Unknown(local) if local == "AlternateContent"
+    )
+}
+
+fn preferred_alternate_content_child_index(node: &WordNode) -> Option<usize> {
+    node.children
+        .iter()
+        .position(
+            |child| matches!(&child.element_type, WordElementType::Unknown(n) if n == "Choice"),
+        )
+        .or_else(|| {
+            node.children.iter().position(|child| {
+                matches!(&child.element_type, WordElementType::Unknown(n) if n == "Fallback")
+            })
+        })
 }
 
 fn get_node_mut_by_path<'a>(mut node: &'a mut WordNode, path: &[usize]) -> &'a mut WordNode {
@@ -1982,5 +2026,101 @@ mod tests {
         let serialized = serialize_dom(&dom);
 
         assert!(serialized.contains("<w:pStyle w:val=\"Heading1\" />"));
+    }
+
+    #[test]
+    fn range_text_replacement_emits_text_once_across_segments() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p>
+      <w:r><w:t>A</w:t></w:r>
+      <w:r><w:t>B</w:t></w:r>
+      <w:r><w:t>C</w:t></w:r>
+    </w:p>
+  </w:body>
+</w:document>"#;
+        let mut dom = parse_document_xml(xml).unwrap();
+        let segments =
+            handler_common::parse_range_paths("/body/p[1]/r[1],/body/p[1]/r[2],/body/p[1]/r[3]")
+                .unwrap();
+        let mut properties = HashMap::new();
+        properties.insert("range_paths".to_string(), "unused".to_string());
+        properties.insert("text".to_string(), "[金额]".to_string());
+
+        apply_docx_range_highlights(&mut dom, &properties, &segments).unwrap();
+
+        let paragraph = navigate_to_element(&dom, "/body/p[1]").unwrap();
+        assert_eq!(paragraph.paragraph_text(), "[金额]");
+    }
+
+    #[test]
+    fn range_text_replacement_does_not_merge_across_paragraphs() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>A</w:t></w:r></w:p>
+    <w:p><w:r><w:t>B</w:t></w:r></w:p>
+  </w:body>
+</w:document>"#;
+        let mut dom = parse_document_xml(xml).unwrap();
+        let segments =
+            handler_common::parse_range_paths("/body/p[1]/r[1],/body/p[2]/r[1]").unwrap();
+        let mut properties = HashMap::new();
+        properties.insert("range_paths".to_string(), "unused".to_string());
+        properties.insert("text".to_string(), "[金额]".to_string());
+
+        apply_docx_range_highlights(&mut dom, &properties, &segments).unwrap();
+
+        assert_eq!(
+            navigate_to_element(&dom, "/body/p[1]")
+                .unwrap()
+                .paragraph_text(),
+            "[金额]"
+        );
+        assert_eq!(
+            navigate_to_element(&dom, "/body/p[2]")
+                .unwrap()
+                .paragraph_text(),
+            "[金额]"
+        );
+    }
+
+    #[test]
+    fn range_text_replacement_merges_textbox_runs_in_same_paragraph() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p>
+      <w:r>
+        <w:drawing>
+          <w:txbxContent>
+            <w:p>
+              <w:r><w:t>A</w:t></w:r>
+              <w:r><w:t>B</w:t></w:r>
+              <w:r><w:t>C</w:t></w:r>
+            </w:p>
+          </w:txbxContent>
+        </w:drawing>
+      </w:r>
+    </w:p>
+  </w:body>
+</w:document>"#;
+        let mut dom = parse_document_xml(xml).unwrap();
+        let segments = handler_common::parse_range_paths(
+            "/body/p[1]/r[1]/drawing[1]/txbxContent[1]/p[1]/r[1],\
+             /body/p[1]/r[1]/drawing[1]/txbxContent[1]/p[1]/r[2],\
+             /body/p[1]/r[1]/drawing[1]/txbxContent[1]/p[1]/r[3]",
+        )
+        .unwrap();
+        let mut properties = HashMap::new();
+        properties.insert("range_paths".to_string(), "unused".to_string());
+        properties.insert("text".to_string(), "[金额]".to_string());
+
+        apply_docx_range_highlights(&mut dom, &properties, &segments).unwrap();
+
+        let textbox_para =
+            navigate_to_element(&dom, "/body/p[1]/r[1]/drawing[1]/txbxContent[1]/p[1]").unwrap();
+        assert_eq!(textbox_para.paragraph_text(), "[金额]");
     }
 }
