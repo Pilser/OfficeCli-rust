@@ -1033,6 +1033,15 @@ async fn handle_view(
             .get("cols")
             .map(|c| c.split(',').map(|s| s.to_string()).collect()),
         page: params.get("page").cloned(),
+        range: params.get("range").cloned(),
+        grid: params
+            .get("grid")
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(0),
+        render: params
+            .get("render")
+            .cloned()
+            .unwrap_or_else(|| "auto".to_string()),
     };
 
     let op = match mode.as_str() {

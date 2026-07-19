@@ -66,6 +66,18 @@ pub struct ViewCommand {
     /// Limit number of results (for issues mode)
     #[arg(long)]
     pub limit: Option<usize>,
+
+    /// Restrict output to a region (element path like "/slide[1]/shape[@id=2]" or xlsx cell range "Sheet1!A1:C3")
+    #[arg(long)]
+    pub range: Option<String>,
+
+    /// Zoom factor for --range screenshots (e.g. "2x")
+    #[arg(long)]
+    pub zoom: Option<String>,
+
+    /// Padding in pixels around cropped element
+    #[arg(long, default_value_t = 0)]
+    pub padding: u32,
 }
 
 pub fn handle_view(cmd: ViewCommand, format: OutputFormat) -> Result<String, HandlerError> {
@@ -74,6 +86,13 @@ pub fn handle_view(cmd: ViewCommand, format: OutputFormat) -> Result<String, Han
     // pdf mode: export to PDF via exporter plugin
     if cmd.mode.eq_ignore_ascii_case("pdf") {
         return handle_view_pdf(&cmd, format);
+    }
+
+    // If --range is specified and mode is screenshot, crop to element bbox
+    if let Some(ref range) = cmd.range {
+        if matches!(cmd.mode.as_str(), "screenshot" | "p") {
+            return handle_screenshot_with_range(handler.as_ref(), &cmd, range);
+        }
     }
 
     let opts = ViewOptions {
@@ -85,6 +104,9 @@ pub fn handle_view(cmd: ViewCommand, format: OutputFormat) -> Result<String, Han
             .as_ref()
             .map(|c| c.split(',').map(|s| s.to_string()).collect()),
         page: cmd.page.clone(),
+        range: cmd.range.clone(),
+        grid: cmd.grid,
+        render: cmd.render.clone(),
     };
 
     let browser = cmd.browser;
@@ -224,10 +246,24 @@ fn handle_screenshot(
             .as_ref()
             .map(|c| c.split(',').map(|s| s.to_string()).collect()),
         page: cmd.page.clone(),
+        range: cmd.range.clone(),
+        grid: cmd.grid,
+        render: cmd.render.clone(),
     };
 
-    // Step 1: Render HTML
-    let html = handler.view_as_html(opts)?;
+    // Step 1: Render HTML (with optional grid tiling)
+    let html = if cmd.grid > 0 {
+        let stats = handler.view_as_stats_json()?;
+        let page_count = stats
+            .get("pages")
+            .or(stats.get("slides"))
+            .or(stats.get("sheets"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1) as u32;
+        wrap_in_grid(handler, page_count, cmd.grid)?
+    } else {
+        handler.view_as_html(opts)?
+    };
 
     // Step 2: Write to temp file
     let temp_dir = std::env::temp_dir();
@@ -331,4 +367,109 @@ fn open_path_in_browser(path: &std::path::Path) {
             .args(["/c", "start", &path.to_string_lossy()])
             .spawn();
     }
+}
+
+/// Handle `view -m screenshot --range <path>` — crop screenshot to a single element's bbox.
+fn handle_screenshot_with_range(
+    handler: &dyn handler_common::DocumentHandler,
+    cmd: &ViewCommand,
+    range: &str,
+) -> Result<String, HandlerError> {
+    // 1. Verify element exists
+    let _node = handler.get(range, 0)?;
+
+    // 2. Get text offset map for bbox
+    let text_map = handler.extract_text_with_offsets()?;
+    let spans = text_map.spans_for_path(range);
+
+    // 3. Find first span with bbox
+    let bbox = spans
+        .iter()
+        .find_map(|s| s.bbox.as_ref())
+        .ok_or_else(|| HandlerError::OperationFailed("no bbox data for range".into()))?;
+
+    // 4. Calculate zoom
+    let zoom = parse_zoom(&cmd.zoom).unwrap_or(1.0);
+
+    // 5. Generate HTML for just this element
+    let html = handler.view_as_html(ViewOptions::default())?;
+
+    let crop_w = (bbox.width * zoom + cmd.padding as f32 * 2.0) as u32;
+    let crop_h = (bbox.height * zoom + cmd.padding as f32 * 2.0) as u32;
+
+    let cropped_html = format!(
+        r#"<div style="width:{}px;height:{}px;overflow:hidden;position:relative;">
+            <div style="position:absolute;left:-{}px;top:-{}px;transform:scale({});transform-origin:top left;">
+            {}
+            </div>
+        </div>"#,
+        crop_w, crop_h, bbox.x, bbox.y, zoom, html
+    );
+
+    // 6. Write to temp and capture screenshot
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let temp_dir = std::env::temp_dir();
+    let html_path = temp_dir.join(format!("officecli_range_{}.html", timestamp));
+    std::fs::write(&html_path, &cropped_html)?;
+
+    let out_path = cmd.out.clone().unwrap_or_else(|| {
+        let stem = std::path::Path::new(&cmd.file)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("range");
+        temp_dir
+            .join(format!("officecli_range_{}.png", stem))
+            .to_string_lossy()
+            .to_string()
+    });
+
+    let result = crate::screenshot::capture(&html_path.to_string_lossy(), &out_path, crop_w, crop_h)
+        .map_err(|e| HandlerError::OperationFailed(e))?;
+
+    let _ = std::fs::remove_file(&html_path);
+
+    Ok(format!("Range screenshot saved: {}", result.output_path))
+}
+
+/// Wrap multiple pages/slides into a grid layout for --grid screenshots.
+fn wrap_in_grid(
+    handler: &dyn handler_common::DocumentHandler,
+    page_count: u32,
+    grid_cols: u32,
+) -> Result<String, HandlerError> {
+    let cols = grid_cols.max(1);
+    let mut table = String::from("<table style=\"border-collapse:collapse;width:100%;\">");
+    for i in 0..page_count {
+        if i % cols == 0 {
+            table.push_str("<tr>");
+        }
+        let page_opts = ViewOptions {
+            page: Some((i + 1).to_string()),
+            ..Default::default()
+        };
+        let page_html = handler.view_as_html(page_opts)?;
+        table.push_str(&format!(
+            "<td style=\"border:1px solid #ccc;vertical-align:top;padding:4px;\"><div class=\"tile\">{}</div></td>",
+            page_html
+        ));
+        if i % cols == cols - 1 || i == page_count - 1 {
+            table.push_str("</tr>");
+        }
+    }
+    table.push_str("</table>");
+    Ok(table)
+}
+
+/// Parse a zoom string like "2x" or "3.0" into a float multiplier.
+fn parse_zoom(zoom: &Option<String>) -> Option<f32> {
+    zoom.as_ref().and_then(|z| {
+        if let Some(v) = z.strip_suffix('x') {
+            v.parse::<f32>().ok()
+        } else {
+            z.parse::<f32>().ok()
+        }
+    })
 }
