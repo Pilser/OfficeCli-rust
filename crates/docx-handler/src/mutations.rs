@@ -242,9 +242,46 @@ fn set_paragraph_properties(
         }
     }
 
-    // Recognized = text + all PARA_LEVEL_KEYS + all RUN_LEVEL_KEYS
+    // Handle pageBreak property: insert <w:r><w:br w:type="page"/></w:r>
+    // at the beginning of the paragraph content (after pPr).
+    if let Some(val) = properties
+        .get("pageBreak")
+        .or_else(|| properties.get("page-break"))
+    {
+        if val == "true" || val == "1" {
+            // Remove any existing page break run we may have inserted before
+            para.children.retain(|c| {
+                if c.element_type != WordElementType::Run {
+                    return true;
+                }
+                let is_page_break = c.children.len() == 1
+                    && c.children[0].element_type == WordElementType::Break
+                    && c.children[0].attributes.get("type").map(|s| s.as_str()) == Some("page");
+                !is_page_break
+            });
+
+            let br_node = WordNode::new(WordElementType::Break)
+                .with_attribute("type", "page");
+            let run = WordNode::new(WordElementType::Run)
+                .with_children(vec![br_node]);
+
+            // Insert after pPr if it exists, otherwise at position 0
+            let insert_pos = if para
+                .children
+                .first()
+                .map_or(false, |c| c.element_type == WordElementType::ParagraphProperties)
+            {
+                1
+            } else {
+                0
+            };
+            para.children.insert(insert_pos, run);
+        }
+    }
+
+    // Recognized = text + pageBreak + page-break + all PARA_LEVEL_KEYS + all RUN_LEVEL_KEYS
     let recognized: Vec<&str> = {
-        let mut v = vec!["text"];
+        let mut v = vec!["text", "pageBreak", "page-break"];
         v.extend_from_slice(PARA_LEVEL_KEYS);
         v.extend_from_slice(RUN_LEVEL_KEYS);
         v
@@ -3433,7 +3470,9 @@ fn parse_emu(s: &str) -> i64 {
             .map(|n| (n * 9525.0) as i64)
             .unwrap_or(3_657_600)
     } else {
-        s.parse::<i64>().unwrap_or(3_657_600)
+        s.trim().parse::<f64>()
+            .map(|n| (n * 12700.0) as i64)
+            .unwrap_or(3_657_600)
     }
 }
 

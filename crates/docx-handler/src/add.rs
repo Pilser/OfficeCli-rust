@@ -1840,6 +1840,12 @@ fn add_table(
                     .with_attribute("val", style.as_str()),
             );
         }
+        if let Some(caption) = properties.get("title").or_else(|| properties.get("caption")) {
+            children.push(
+                WordNode::new(WordElementType::Unknown("tblCaption".to_string()))
+                    .with_attribute("val", caption.as_str()),
+            );
+        }
         if let Some(width) = properties.get("width") {
             children.push(
                 WordNode::new(WordElementType::Unknown("tblW".to_string()))
@@ -1893,10 +1899,20 @@ fn add_table(
     // Add tblGrid if multiple columns
     if cols > 1 {
         let mut grid = WordNode::new(WordElementType::Unknown("tblGrid".to_string()));
-        for _ in 0..cols {
-            grid.children.push(WordNode::new(WordElementType::Unknown(
-                "gridCol".to_string(),
-            )));
+        let widths: Vec<&str> = properties
+            .get("colWidths")
+            .or_else(|| properties.get("colWidth"))
+            .map(|s| s.split(',').collect())
+            .unwrap_or_default();
+        for col_idx in 0..cols {
+            let mut gc = WordNode::new(WordElementType::Unknown("gridCol".to_string()));
+            if let Some(w) = widths.get(col_idx) {
+                if let Ok(pt) = w.trim().parse::<f64>() {
+                    let twips = (pt * 20.0) as i64;
+                    gc = gc.with_attribute("w", &twips.to_string());
+                }
+            }
+            grid.children.push(gc);
         }
         table.children.push(grid);
     }

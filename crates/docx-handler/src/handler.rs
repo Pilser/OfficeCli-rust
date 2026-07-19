@@ -771,6 +771,22 @@ impl DocumentHandler for WordHandler {
             });
         }
 
+        // Check for empty media files under word/media/
+        for part_path in pkg.list_parts() {
+            if part_path.starts_with("word/media/") {
+                if let Ok(bytes) = pkg.read_part_bytes(part_path) {
+                    if bytes.is_empty() {
+                        errors.push(ValidationError {
+                            error_type: "broken-reference".to_string(),
+                            description: format!("media file '{}' is empty (0 bytes)", part_path),
+                            path: None,
+                            part: Some(part_path.clone()),
+                        });
+                    }
+                }
+            }
+        }
+
         Ok(errors)
     }
 
