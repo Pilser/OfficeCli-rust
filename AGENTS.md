@@ -6,38 +6,20 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 OfficeCLI is a single-binary, pure-Rust CLI for creating, reading, modifying, and rendering Office documents (.docx, .xlsx, .pptx) and PDFs. No Office installation needed. It also includes an MCP server for AI agent integration and a watch server for live HTML previews.
 
-## 🔴 CRITICAL RULE: NO BUILDING
+## Build & Development Commands
 
-**Only the human (pilser) runs `cargo build`, `cargo check`, `cargo test`, `cargo clippy`, `cargo fmt`, `make smoke`, `make lint`, or any compilation command.**
-
-Agents must **never** run any build/check/lint/test command. Write code only. The human will:
-1. Build the project manually
-2. Report compilation errors to the agent
-3. The agent fixes the errors
-4. Repeat until clean
-
-## Code Review Mode
-
-Agents verify code by manual inspection only:
-- Check types match, imports are correct
-- Verify function signatures align with trait definitions
-- Ensure error handling covers all paths
-- Confirm new code follows existing patterns
-- Use `cargo metadata` and read `Cargo.toml` files to check dependency availability (read-only)
-- Inspect `src/` files with `read` tool to verify correctness
-
-**Never run `cargo build`, `cargo check`, `cargo test`, `cargo clippy`, `cargo fmt`, `make`, or any binary.**
-
-## Build & Development Commands (for human reference only)
-
-## Verification Without Building
-
-When reviewing code, agents verify correctness by:
-1. **Cross-referencing imports** — Check every `use` statement exists in the target crate's `Cargo.toml` dependencies
-2. **Trait conformance** — Compare new type signatures against trait definitions in `handler-common/src/document_handler.rs` and `handler-common/src/text_map.rs`
-3. **Pattern matching** — Follow existing code patterns from neighboring files (e.g., `pptx-handler/src/html_preview.rs` for `a:xfrm` parsing, `pdf-handler/src/text_extract.rs` for bbox patterns)
-4. **File structure** — Verify new files match the module structure in `crates/*/src/lib.rs`
-5. **Workspace registration** — Confirm new crates are added to root `Cargo.toml` `[workspace] members`
+```bash
+cargo build                     # Debug build
+cargo build --release           # Release build
+cargo check                     # Fast compile check (no binary)
+cargo test                      # Run all tests (inline unit tests only, no integration test dirs)
+cargo clippy --all-targets -- -D warnings  # Lint
+cargo fmt -- --check            # Check formatting
+cargo fmt                       # Auto-fix formatting
+cargo run -- <ARGS>             # Run with CLI args
+make smoke                      # Smoke test: create + view a doc, verify binary works
+make lint                       # fmt + clippy combined
+```
 
 Tests are inline (`#[test]` within source files), not in separate `tests/` directories. No integration tests exist.
 
