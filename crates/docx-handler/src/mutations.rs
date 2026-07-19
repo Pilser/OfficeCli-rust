@@ -854,7 +854,12 @@ fn set_table_properties(
                 children.push(shd);
             }
             "border" | "borders" | "tblBorders" => {
-                let borders = build_table_borders(value);
+                let color = properties.get("borderColor")
+                    .or_else(|| properties.get("tblBorderColor"))
+                    .or_else(|| properties.get("bdrColor"))
+                    .map(|s| s.as_str())
+                    .unwrap_or("000000");
+                let borders = build_table_borders(value, color);
                 children.push(borders);
             }
             _ => {}
@@ -888,6 +893,9 @@ fn set_table_properties(
         "border",
         "borders",
         "tblBorders",
+        "borderColor",
+        "tblBorderColor",
+        "bdrColor",
     ];
     let unsupported: Vec<String> = properties
         .keys()
@@ -921,7 +929,7 @@ pub fn build_shd_node(value: &str) -> WordNode {
         .with_attribute("fill", fill)
 }
 
-pub fn build_table_borders(value: &str) -> WordNode {
+pub fn build_table_borders(value: &str, color: &str) -> WordNode {
     let mut tbl_bdr = WordNode::new(WordElementType::Unknown("tblBorders".to_string()));
     let mut children = Vec::new();
     // Format: "top=single;bottom=single;left=none;right=none;insideH=single;insideV=single"
@@ -933,7 +941,7 @@ pub fn build_table_borders(value: &str) -> WordNode {
                     .with_attribute("val", "none")
                     .with_attribute("sz", "0")
                     .with_attribute("space", "0")
-                    .with_attribute("color", "auto"),
+                    .with_attribute("color", color),
             );
         }
     } else if value.starts_with("all=") || value == "all" || value == "single" || value == "thin" {
@@ -944,7 +952,7 @@ pub fn build_table_borders(value: &str) -> WordNode {
                     .with_attribute("val", style)
                     .with_attribute("sz", "4")
                     .with_attribute("space", "0")
-                    .with_attribute("color", "auto"),
+                    .with_attribute("color", color),
             );
         }
     } else {
@@ -964,7 +972,7 @@ pub fn build_table_borders(value: &str) -> WordNode {
                         .with_attribute("val", style)
                         .with_attribute("sz", sz)
                         .with_attribute("space", "0")
-                        .with_attribute("color", "auto"),
+                        .with_attribute("color", color),
                 );
             }
         }
@@ -2990,7 +2998,7 @@ pub fn add_image_part_aware(
     // docPr id — use the image index so it stays unique across the document.
     let doc_pr_id = image_idx;
     let drawing_xml = format!(
-        r#"<w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{w}" cy="{h}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="{id}" name="{name}" descr="{alt}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="{id}" name="{name}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="{rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{w}" cy="{h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#,
+        r#"<w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{w}" cy="{h}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="{id}" name="{name}" descr="{alt}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="{id}" name="{name}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="{rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{w}" cy="{h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#,
         w = width_emu,
         h = height_emu,
         id = doc_pr_id,
@@ -3089,7 +3097,7 @@ pub fn add_chart_part_aware(
     let (width_emu, height_emu) = parse_image_dimensions_emu(properties);
     let doc_pr_id = chart_idx;
     let drawing_xml = format!(
-        r#"<w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{w}" cy="{h}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="{id}" name="Chart {idx}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="{rid}"/></a:graphicData></a:graphic></wp:inline></w:drawing>"#,
+        r#"<w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{w}" cy="{h}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="{id}" name="Chart {idx}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="{rid}"/></a:graphicData></a:graphic></wp:inline></w:drawing>"#,
         w = width_emu,
         h = height_emu,
         id = doc_pr_id,
@@ -3231,14 +3239,17 @@ fn update_docx_content_types_for_chart(
         "<Override PartName=\"/{}\" ContentType=\"application/vnd.openxmlformats-officedocument.drawingml.chart+xml\"/>",
         chart_path
     );
-    let new_xml = if let Some(close) = xml.find('>') {
+    // Find the closing `>` of `<Types ...>` — skip past `<?xml ...?>`
+    let types_start = xml.find("<Types").unwrap_or(0);
+    let new_xml = if let Some(close) = xml[types_start..].find('>') {
+        let insert_at = types_start + close + 1;
         let mut out = String::with_capacity(xml.len() + override_xml.len());
-        out.push_str(&xml[..close + 1]);
+        out.push_str(&xml[..insert_at]);
         out.push_str(&override_xml);
-        out.push_str(&xml[close + 1..]);
+        out.push_str(&xml[insert_at..]);
         out
     } else {
-        format!("<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">{}</Types>", override_xml)
+        format!("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">{}</Types>", override_xml)
     };
     package
         .write_part_xml("[Content_Types].xml", &new_xml)
@@ -3326,15 +3337,20 @@ fn update_docx_content_types_for_image(
         "<Default Extension=\"{}\" ContentType=\"{}\"/>",
         ext, content_type
     );
-    let new_xml = if let Some(close) = xml.find('>') {
-        // Insert Default right after <Types ...>.
+    // Find the closing `>` of `<Types ...>` — skip past `<?xml ...?>`
+    let types_start = xml.find("<Types").unwrap_or(0);
+    let new_xml = if let Some(close) = xml[types_start..].find('>') {
+        let insert_at = types_start + close + 1;
         let mut out = String::with_capacity(xml.len() + default_xml.len());
-        out.push_str(&xml[..close + 1]);
+        out.push_str(&xml[..insert_at]);
         out.push_str(&default_xml);
-        out.push_str(&xml[close + 1..]);
+        out.push_str(&xml[insert_at..]);
         out
     } else {
-        xml.replace("</Types>", &format!("{}{}</Types>", default_xml, ""))
+        let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">");
+        out.push_str(&default_xml);
+        out.push_str("</Types>");
+        out
     };
     package
         .write_part_xml("[Content_Types].xml", &new_xml)

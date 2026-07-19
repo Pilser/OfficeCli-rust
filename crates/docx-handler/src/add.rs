@@ -1854,7 +1854,12 @@ fn add_table(
             );
         }
         if let Some(border) = properties.get("border") {
-            children.push(crate::mutations::build_table_borders(border));
+            let color = properties.get("borderColor")
+                .or_else(|| properties.get("tblBorderColor"))
+                .or_else(|| properties.get("bdrColor"))
+                .map(|s| s.as_str())
+                .unwrap_or("000000");
+            children.push(crate::mutations::build_table_borders(border, color));
         }
         if let Some(shading) = properties.get("shading").or_else(|| properties.get("shd")) {
             children.push(crate::mutations::build_shd_node(shading));
