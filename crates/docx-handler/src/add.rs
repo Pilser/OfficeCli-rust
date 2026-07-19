@@ -1868,10 +1868,10 @@ fn add_table(
 
     // Build table grid
     let mut rows_nodes = Vec::new();
-    for _ in 0..rows {
+    for row in 0..rows {
         let mut cells = Vec::new();
         for col_idx in 0..cols {
-            let text = properties.get(&format!("r{}c{}", col_idx + 1, 1)).cloned();
+            let text = properties.get(&format!("r{}c{}", row + 1, col_idx + 1)).cloned();
             let mut cell = WordNode::new(WordElementType::TableCell);
             if let Some(text) = text {
                 let para = WordNode::new(WordElementType::Paragraph)
@@ -2140,9 +2140,11 @@ fn add_image(
     let _src = properties
         .get("src")
         .or_else(|| properties.get("path"))
+        .or_else(|| properties.get("file"))
         .ok_or_else(|| {
             HandlerError::InvalidArgument(
-                "image requires 'src' or 'path' property pointing to image file".to_string(),
+                "image requires 'src', 'path', or 'file' property pointing to image file"
+                    .to_string(),
             )
         })?;
 

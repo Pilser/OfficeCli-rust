@@ -639,7 +639,7 @@ fn add_picture(
 ) -> Result<String, HandlerError> {
     use std::path::Path;
 
-    let src = properties.get("src").or_else(|| properties.get("path"));
+    let src = properties.get("src").or_else(|| properties.get("path")).or_else(|| properties.get("file"));
 
     // Resolve image extension — explicit property takes priority, then derive
     // from `src` filename extension. Default to png.
