@@ -373,7 +373,7 @@ pub fn set_cell_properties(
 
     for (key, value) in properties {
         match key.as_str() {
-            "value" => {
+            "value" | "text" => {
                 modified_xml = set_cell_value(
                     &modified_xml,
                     &cell_ref_str,

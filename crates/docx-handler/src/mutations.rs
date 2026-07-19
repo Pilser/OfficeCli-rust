@@ -899,7 +899,7 @@ pub fn build_table_borders(value: &str) -> WordNode {
                     .with_attribute("color", "auto"),
             );
         }
-    } else if value.starts_with("all=") || value == "single" || value == "thin" {
+    } else if value.starts_with("all=") || value == "all" || value == "single" || value == "thin" {
         let style = value.strip_prefix("all=").unwrap_or("single");
         for border_name in ["top", "bottom", "left", "right", "insideH", "insideV"] {
             children.push(
@@ -2882,6 +2882,7 @@ pub fn add_image_part_aware(
             properties
                 .get("src")
                 .or_else(|| properties.get("path"))
+                .or_else(|| properties.get("file"))
                 .and_then(|p| Path::new(p).extension())
                 .and_then(|e| e.to_str())
         })
@@ -2917,7 +2918,7 @@ pub fn add_image_part_aware(
     let media_path = format!("word/media/image{}.{}", image_idx, ext_norm);
 
     // Write image binary — priority: src file > payloadBase64 > payloadHex > empty stub.
-    let bytes_written = if let Some(src) = properties.get("src").or_else(|| properties.get("path"))
+    let bytes_written = if let Some(src) = properties.get("src").or_else(|| properties.get("path")).or_else(|| properties.get("file"))
     {
         std::fs::read(src).ok()
     } else if let Some(b64) = properties.get("payloadBase64") {
