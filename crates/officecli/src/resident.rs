@@ -481,6 +481,19 @@ fn view_opts_from_params(params: &HashMap<String, serde_json::Value>) -> ViewOpt
             .get("page")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
+        range: params
+            .get("range")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        grid: params
+            .get("grid")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32,
+        render: params
+            .get("render")
+            .and_then(|v| v.as_str())
+            .unwrap_or("auto")
+            .to_string(),
     }
 }
 

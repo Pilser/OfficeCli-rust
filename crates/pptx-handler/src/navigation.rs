@@ -211,12 +211,48 @@ fn parse_shape_node(sp: &roxmltree::Node) -> Option<Shape> {
         }
     }
 
+    // Parse <a:xfrm> for bounding box
+    let bbox = sp
+        .descendants()
+        .find(|n| n.has_tag_name("xfrm"))
+        .and_then(|xfrm| {
+            let off = xfrm.children().find(|n| n.has_tag_name("off"))?;
+            let ext = xfrm.children().find(|n| n.has_tag_name("ext"))?;
+            let x = off
+                .attribute("x")
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0)
+                / 12700.0;
+            let y = off
+                .attribute("y")
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0)
+                / 12700.0;
+            let cx = ext
+                .attribute("cx")
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0)
+                / 12700.0;
+            let cy = ext
+                .attribute("cy")
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0)
+                / 12700.0;
+            Some(handler_common::BBoxSpan {
+                x: x as f32,
+                y: y as f32,
+                width: cx as f32,
+                height: cy as f32,
+            })
+        });
+
     Some(Shape {
         name,
         id,
         placeholder_type,
         text: full_text,
         paragraphs,
+        bbox,
     })
 }
 

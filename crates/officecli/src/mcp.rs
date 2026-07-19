@@ -360,6 +360,19 @@ fn execute_tool(name: &str, params: &HashMap<String, Value>) -> Result<Value, St
                     .and_then(|v| v.as_str())
                     .map(|c| c.split(',').map(|s| s.to_string()).collect()),
                 page: None,
+                range: params
+                    .get("range")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                grid: params
+                    .get("grid")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32,
+                render: params
+                    .get("render")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("auto")
+                    .to_string(),
             };
 
             let result = match mode {

@@ -1,16 +1,19 @@
 use crate::dom_types::{WordDom, WordElementType};
-use handler_common::{HandlerError, TextOffsetMap};
+use crate::layout::{self, DocxLayout};
+use handler_common::{BBoxSpan, HandlerError, TextOffsetMap};
 use std::collections::HashMap;
 
-/// Build a TextOffsetMap from the Word DOM.
-/// Each paragraph contributes its text, and each run gets its own span.
-/// Paragraph breaks are represented as separate "paragraph-break" spans.
 pub fn extract_text_with_offsets(dom: &WordDom) -> Result<TextOffsetMap, HandlerError> {
     let mut map = TextOffsetMap::empty("docx");
+    let mut layout = DocxLayout::new();
 
     let body = dom
         .body()
         .ok_or_else(|| HandlerError::OperationFailed("body element not found".to_string()))?;
+
+    layout.read_section_properties(&dom.root);
+    // Also check body's last child for sectPr (body-level placement)
+    layout.read_section_properties(body);
 
     let mut para_idx = 0;
     let mut content_idx = 0;
@@ -23,12 +26,9 @@ pub fn extract_text_with_offsets(dom: &WordDom) -> Result<TextOffsetMap, Handler
                 para_idx += 1;
                 content_idx += 1;
                 let para_path = format!("/body/p[{}]", para_idx);
-                // Stable anchor: the paragraph's w14:paraId survives run splits and
-                // index shifts, so callers can re-locate the paragraph after edits.
                 let para_id = child.attributes.get("paraId").cloned();
 
                 if content_idx > 1 {
-                    // Add paragraph separator (newline) between paragraphs
                     map.push_span_with_id(
                         "\n",
                         &format!("/body/p[{}]/break", para_idx),
@@ -40,10 +40,32 @@ pub fn extract_text_with_offsets(dom: &WordDom) -> Result<TextOffsetMap, Handler
                 let before_spans = map.spans.len();
                 collect_text_spans(child, &para_path, &mut map, para_id.clone());
 
-                // If paragraph has no text, still add an empty span for navigation
                 let para_text = child.paragraph_text();
                 if para_text.is_empty() && map.spans.len() == before_spans {
                     map.push_span_with_id("", &para_path, "paragraph", para_id.clone());
+                }
+
+                let bbox = if let Some((w, h)) = layout::drawing_extent_in_para(child) {
+                    Some(BBoxSpan {
+                        x: layout.margin_left,
+                        y: layout.current_y,
+                        width: w,
+                        height: h,
+                    })
+                } else {
+                    let info = layout::calc_para_layout(child, &mut layout);
+                    Some(BBoxSpan {
+                        x: info.x,
+                        y: info.y,
+                        width: info.width,
+                        height: info.height,
+                    })
+                };
+
+                if let Some(bbox) = bbox {
+                    for span in &mut map.spans[before_spans..] {
+                        span.bbox = Some(bbox.clone());
+                    }
                 }
             }
             WordElementType::Table => {
@@ -59,6 +81,7 @@ pub fn extract_text_with_offsets(dom: &WordDom) -> Result<TextOffsetMap, Handler
                     );
                 }
 
+                let tbl_layout = layout::calc_table_layout(child, &mut layout);
                 let mut row_idx = 0;
                 for tbl_child in &child.children {
                     if tbl_child.element_type == WordElementType::TableRow {
@@ -73,10 +96,25 @@ pub fn extract_text_with_offsets(dom: &WordDom) -> Result<TextOffsetMap, Handler
 
                                 let cell_text = extract_cell_text(tr_child);
                                 if !cell_text.is_empty() {
-                                    map.push_span(&cell_text, &cell_path, "cell");
+                                    let cell_bbox = tbl_layout
+                                        .rows
+                                        .get(row_idx - 1)
+                                        .and_then(|r| r.cells.get(cell_idx - 1))
+                                        .map(|c| BBoxSpan {
+                                            x: c.x,
+                                            y: c.y,
+                                            width: c.width,
+                                            height: c.height,
+                                        });
+                                    map.push_span_with_metadata(
+                                        &cell_text,
+                                        &cell_path,
+                                        "cell",
+                                        cell_bbox,
+                                        None,
+                                    );
                                 }
 
-                                // Tab separator between cells in same row
                                 if cell_idx < count_cells_in_row(&tbl_child.children) {
                                     map.push_span(
                                         "\t",
@@ -87,7 +125,6 @@ pub fn extract_text_with_offsets(dom: &WordDom) -> Result<TextOffsetMap, Handler
                             }
                         }
 
-                        // Newline between rows
                         if row_idx < count_rows_in_table(&child.children) {
                             map.push_span(
                                 "\n",
@@ -116,6 +153,28 @@ pub fn extract_text_with_offsets(dom: &WordDom) -> Result<TextOffsetMap, Handler
                 if map.spans.len() == before_spans {
                     map.push_span("", &sdt_path, "sdt");
                 }
+
+                let inner_para = child
+                    .children
+                    .iter()
+                    .find(|c| c.element_type == WordElementType::SdtContent)
+                    .and_then(|sc| {
+                        sc.children
+                            .iter()
+                            .find(|c| c.element_type == WordElementType::Paragraph)
+                    });
+                if let Some(para) = inner_para {
+                    let info = layout::calc_para_layout(para, &mut layout);
+                    let bbox = BBoxSpan {
+                        x: info.x,
+                        y: info.y,
+                        width: info.width,
+                        height: info.height,
+                    };
+                    for span in &mut map.spans[before_spans..] {
+                        span.bbox = Some(bbox.clone());
+                    }
+                }
             }
             _ => {}
         }
@@ -124,11 +183,6 @@ pub fn extract_text_with_offsets(dom: &WordDom) -> Result<TextOffsetMap, Handler
     Ok(map)
 }
 
-/// Recursively collect run-level text spans in document order.
-///
-/// PDF-to-DOCX conversion often places visible text in text boxes under
-/// w:drawing/w:txbxContent. Those runs are nested several levels below the
-/// outer paragraph run, so direct-child scanning misses them.
 fn collect_text_spans(
     node: &crate::dom_types::WordNode,
     current_path: &str,
@@ -161,8 +215,6 @@ fn collect_text_spans(
     }
 }
 
-/// Collect direct text in a run while still descending into nested drawing,
-/// field, or text-box content in the correct child order.
 fn collect_run_text_fragments(
     run: &crate::dom_types::WordNode,
     run_path: &str,
@@ -242,7 +294,6 @@ fn collect_preferred_alternate_content(
     }
 }
 
-/// Extract text from a table cell (w:tc).
 fn extract_cell_text(cell: &crate::dom_types::WordNode) -> String {
     let mut result = String::new();
     let mut para_count = 0;
@@ -258,7 +309,6 @@ fn extract_cell_text(cell: &crate::dom_types::WordNode) -> String {
     result
 }
 
-/// Count cells in a table row.
 fn count_cells_in_row(children: &[crate::dom_types::WordNode]) -> usize {
     children
         .iter()
@@ -266,7 +316,6 @@ fn count_cells_in_row(children: &[crate::dom_types::WordNode]) -> usize {
         .count()
 }
 
-/// Count rows in a table.
 fn count_rows_in_table(children: &[crate::dom_types::WordNode]) -> usize {
     children
         .iter()
@@ -342,5 +391,26 @@ mod tests {
 
         assert_eq!(map.full_text, "Choice text");
         assert!(map.spans.iter().all(|span| !span.text.contains("Fallback")));
+    }
+
+    #[test]
+    fn paragraphs_have_bbox() {
+        let dom = WordDom::new(WordNode::new(WordElementType::Document).with_children(vec![
+            WordNode::new(WordElementType::Body).with_children(vec![
+                WordNode::new(WordElementType::Paragraph).with_children(vec![text_run("Hello")]),
+                WordNode::new(WordElementType::Paragraph).with_children(vec![text_run("World")]),
+            ]),
+        ]));
+
+        let map = extract_text_with_offsets(&dom).unwrap();
+        let spans_with_bbox: Vec<&handler_common::OffsetSpan> =
+            map.spans.iter().filter(|s| s.bbox.is_some()).collect();
+
+        assert!(!spans_with_bbox.is_empty(), "expected at least one span with bbox");
+        for span in &spans_with_bbox {
+            let bbox = span.bbox.as_ref().unwrap();
+            assert!(bbox.width > 0.0, "bbox width should be positive");
+            assert!(bbox.height > 0.0, "bbox height should be positive");
+        }
     }
 }

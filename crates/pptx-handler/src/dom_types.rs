@@ -27,6 +27,8 @@ pub struct Shape {
     pub text: String,
     /// Individual paragraphs in the shape's text body
     pub paragraphs: Vec<Paragraph>,
+    /// Bounding box from <a:xfrm> (position/size in EMU, converted to points)
+    pub bbox: Option<handler_common::BBoxSpan>,
 }
 
 /// A paragraph within a shape's text body.

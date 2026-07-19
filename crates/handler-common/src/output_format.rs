@@ -17,6 +17,12 @@ pub struct ViewOptions {
     pub cols: Option<Vec<String>>,
     /// Page filter string (e.g. "1", "2-5", "1,3,5"). Parsed by each handler.
     pub page: Option<String>,
+    /// Element path or cell range to restrict output (e.g. "/slide[1]/shape[@id=2]" or "Sheet1!A1:C3")
+    pub range: Option<String>,
+    /// Grid columns for thumbnail contact sheet (0 = off)
+    pub grid: u32,
+    /// Rendering backend: "auto", "native", "html"
+    pub render: String,
 }
 
 /// Options for raw commands.

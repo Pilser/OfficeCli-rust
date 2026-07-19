@@ -25,8 +25,8 @@ pub fn extract_text_with_offsets(
 
             let shape_path = format!("/slide[{}]/shape[{}]", slide.index, si + 1);
 
-            // Push shape text as a single span
-            map.push_span(&shape.text, &shape_path, "shape");
+            // Push shape text as a single span with bbox metadata
+            map.push_span_with_metadata(&shape.text, &shape_path, "shape", shape.bbox.clone(), None);
 
             // Also push individual paragraph spans for finer granularity
             for (pi, para) in shape.paragraphs.iter().enumerate() {

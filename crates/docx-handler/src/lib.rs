@@ -3,6 +3,7 @@ pub mod dom_types;
 pub mod handler;
 pub mod helpers;
 pub mod html_preview;
+pub mod layout;
 pub mod mutations;
 pub mod navigation;
 pub mod para_id;

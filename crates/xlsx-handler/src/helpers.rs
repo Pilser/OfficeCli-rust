@@ -147,8 +147,13 @@ pub fn parse_sheet(
         std::collections::HashMap::new();
     let mut max_col: usize = 0;
     let mut max_row: usize = 0;
+    let mut col_widths: std::collections::HashMap<usize, f64> =
+        std::collections::HashMap::new();
+    let mut row_heights: std::collections::HashMap<usize, f64> =
+        std::collections::HashMap::new();
 
     let mut in_cell = false;
+    let mut in_cols = false;
     let mut cell_ref_str = String::new();
     let mut cell_value_type = CellValueType::Number;
     let mut cell_style_index: Option<usize> = None;
@@ -164,6 +169,45 @@ pub fn parse_sheet(
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) => match e.local_name().as_ref() {
+                b"cols" => in_cols = true,
+                b"col" if in_cols => {
+                    let mut min = 0usize;
+                    let mut max = 0usize;
+                    let mut width = 0.0_f64;
+                    for attr in e.attributes().filter_map(|a| a.ok()) {
+                        let key = attr.key.as_ref();
+                        let val = String::from_utf8_lossy(attr.value.as_ref());
+                        if key == b"min" {
+                            min = val.parse().unwrap_or(0);
+                        } else if key == b"max" {
+                            max = val.parse().unwrap_or(0);
+                        } else if key == b"width" {
+                            width = val.parse().unwrap_or(0.0);
+                        }
+                    }
+                    if min > 0 && max >= min {
+                        let width_pt = width * 7.0;
+                        for col in min..=max {
+                            col_widths.insert(col, width_pt);
+                        }
+                    }
+                }
+                b"row" => {
+                    let mut r = 0usize;
+                    let mut ht = 15.0_f64;
+                    for attr in e.attributes().filter_map(|a| a.ok()) {
+                        let key = attr.key.as_ref();
+                        let val = String::from_utf8_lossy(attr.value.as_ref());
+                        if key == b"r" {
+                            r = val.parse().unwrap_or(0);
+                        } else if key == b"ht" {
+                            ht = val.parse().unwrap_or(15.0);
+                        }
+                    }
+                    if r > 0 {
+                        row_heights.insert(r, ht);
+                    }
+                }
                 b"c" => {
                     in_cell = true;
                     cell_ref_str.clear();
@@ -218,6 +262,7 @@ pub fn parse_sheet(
                 }
             }
             Ok(Event::End(e)) => match e.local_name().as_ref() {
+                b"cols" => in_cols = false,
                 b"v" => in_v = false,
                 b"f" => in_f = false,
                 b"t" if in_is_t => in_is_t = false,
@@ -258,6 +303,29 @@ pub fn parse_sheet(
                 _ => {}
             },
             Ok(Event::Empty(e)) => {
+                // Handle <col/> elements inside <cols>
+                if e.local_name().as_ref() == b"col" && in_cols {
+                    let mut min = 0usize;
+                    let mut max = 0usize;
+                    let mut width = 0.0_f64;
+                    for attr in e.attributes().filter_map(|a| a.ok()) {
+                        let key = attr.key.as_ref();
+                        let val = String::from_utf8_lossy(attr.value.as_ref());
+                        if key == b"min" {
+                            min = val.parse().unwrap_or(0);
+                        } else if key == b"max" {
+                            max = val.parse().unwrap_or(0);
+                        } else if key == b"width" {
+                            width = val.parse().unwrap_or(0.0);
+                        }
+                    }
+                    if min > 0 && max >= min {
+                        let width_pt = width * 7.0;
+                        for col in min..=max {
+                            col_widths.insert(col, width_pt);
+                        }
+                    }
+                }
                 // Handle <c r="A1"/> cells without v or f children
                 if e.local_name().as_ref() == b"c" {
                     cell_ref_str.clear();
@@ -321,6 +389,8 @@ pub fn parse_sheet(
         cells,
         max_col,
         max_row,
+        col_widths,
+        row_heights,
     })
 }
 

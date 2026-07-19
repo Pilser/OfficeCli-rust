@@ -129,6 +129,10 @@ pub struct Worksheet {
     pub max_col: usize,
     /// Maximum row that has data (1-based)
     pub max_row: usize,
+    /// Column widths in points, keyed by 1-based column number
+    pub col_widths: HashMap<usize, f64>,
+    /// Row heights in points, keyed by 1-based row number
+    pub row_heights: HashMap<usize, f64>,
 }
 
 /// Workbook model: sheets + shared strings.
