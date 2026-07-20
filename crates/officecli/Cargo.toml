@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 handler-common = { path = "../handler-common" }
+document-diff = { path = "../document-diff" }
 oxml = { path = "../oxml" }
 docx-handler = { path = "../docx-handler" }
 xlsx-handler = { path = "../xlsx-handler" }
@@ -31,6 +32,14 @@ async-stream = "0.3"
 office_oxide = { workspace = true }
 pulldown-cmark = { workspace = true }
 image = { workspace = true }
+image-toolkit = { path = "../image-toolkit" }
+ascii-render = { path = "../ascii-render" }
+arboard = { workspace = true }
+workflow-runner = { path = "../workflow-runner" }
+template-merger = { path = "../template-merger" }
+layout-engine = { path = "../layout-engine" }
+render-pdf = { path = "../render-pdf" }
+
 
 [dev-dependencies]
 assert_cmd = "2"

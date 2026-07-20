@@ -51,6 +51,18 @@ pub struct ViewCommand {
     #[arg(long, default_value_t = 0)]
     pub grid: u32,
 
+    /// Overlay a coordinate grid on the screenshot (CSS-based, no deps)
+    #[arg(long)]
+    pub grid_coords: bool,
+
+    /// Grid step in pixels (default 100)
+    #[arg(long, default_value_t = 100)]
+    pub grid_step: u32,
+
+    /// Show pixel number labels along rulers
+    #[arg(long)]
+    pub grid_labels: bool,
+
     /// Screenshot rendering path (docx only): auto, native, html
     #[arg(long, default_value = "auto")]
     pub render: String,
@@ -265,7 +277,14 @@ fn handle_screenshot(
         handler.view_as_html(opts)?
     };
 
-    // Step 2: Write to temp file
+    // Step 2: Inject coordinate grid overlay if requested
+    let html = if cmd.grid_coords {
+        inject_grid_overlay(&html, cmd)
+    } else {
+        html
+    };
+
+    // Step 3: Write to temp file
     let temp_dir = std::env::temp_dir();
     let html_path = temp_dir.join(format!(
         "officecli_screenshot_{}.html",
@@ -472,4 +491,74 @@ fn parse_zoom(zoom: &Option<String>) -> Option<f32> {
             z.parse::<f32>().ok()
         }
     })
+}
+
+/// Inject a CSS-based coordinate grid overlay into the screenshot HTML.
+fn inject_grid_overlay(html: &str, cmd: &ViewCommand) -> String {
+    let w = cmd.screenshot_width;
+    let h = cmd.screenshot_height;
+    let step = cmd.grid_step.max(1);
+
+    let mut labels_html = String::new();
+    if cmd.grid_labels {
+        // Top-edge labels
+        let mut x = 0u32;
+        while x <= w {
+            labels_html.push_str(&format!(
+                "<div style=\"position:absolute;left:{}px;top:0;font-size:10px;color:rgba(0,0,0,0.5);line-height:1;\">{}</div>",
+                x, x
+            ));
+            x += step;
+        }
+        // Left-edge labels
+        let mut y = 0u32;
+        while y <= h {
+            labels_html.push_str(&format!(
+                "<div style=\"position:absolute;left:0;top:{}px;font-size:10px;color:rgba(0,0,0,0.5);line-height:1;\">{}</div>",
+                y, y
+            ));
+            y += step;
+        }
+    }
+
+    let style = format!(
+        r#"<style>
+.grid-overlay {{
+    position:absolute;
+    top:0;left:0;
+    width:{}px;height:{}px;
+    pointer-events:none;
+    z-index:9999;
+    background-image:
+        repeating-linear-gradient(
+            to right,
+            transparent {}px,
+            transparent {}px,
+            rgba(0,0,0,0.12) {}px,
+            rgba(0,0,0,0.12) {}px
+        ),
+        repeating-linear-gradient(
+            to bottom,
+            transparent {}px,
+            transparent {}px,
+            rgba(0,0,0,0.12) {}px,
+            rgba(0,0,0,0.12) {}px
+        );
+}}
+</style>"#,
+        w, h,
+        step - 1, step - 1, step, step,
+        step - 1, step - 1, step, step,
+    );
+
+    let grid_div = format!(
+        r#"<div class="grid-overlay">{}</div>"#,
+        labels_html
+    );
+
+    format!(
+        r#"<div style="width:{}px;height:{}px;position:relative;">
+{}{}{}</div>"#,
+        w, h, style, html, grid_div
+    )
 }

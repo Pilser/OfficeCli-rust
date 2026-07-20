@@ -1,0 +1,13 @@
+[package]
+name = "image-toolkit"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+handler-common = { path = "../handler-common" }
+image = { workspace = true }
+oxipng = { version = "9", optional = true }
+
+[features]
+default = []
+png-optimize = ["oxipng"]

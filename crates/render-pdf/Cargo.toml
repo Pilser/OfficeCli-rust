@@ -1,10 +1,9 @@
 [package]
-name = "template-merger"
+name = "render-pdf"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-oxml = { path = "../oxml" }
+layout-engine = { path = "../layout-engine" }
 handler-common = { path = "../handler-common" }
-regex = "1"
-serde_json = { workspace = true }
+pdf-writer = { workspace = true }

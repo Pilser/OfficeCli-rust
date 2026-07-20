@@ -1,13 +1,20 @@
 mod add;
 mod add_part;
+mod ascii;
 mod batch;
 mod convert;
 mod create;
+mod export;
+mod clipboard_cmd;
+mod diff_cmd;
 mod dump;
+mod template_cmd;
+mod workflow_cmd;
 mod extract_text;
 mod format_handler_session;
 mod get;
 mod help;
+mod image;
 mod import;
 mod info;
 mod install;
@@ -50,13 +57,20 @@ pub fn offset_map_value(handler: &dyn DocumentHandler) -> Option<serde_json::Val
 
 pub use add::AddCommand;
 pub use add_part::AddPartCommand;
+pub use ascii::{handle_ascii, AsciiCommand};
 pub use batch::BatchCommand;
 pub use convert::{parse_engine, ConvertCommand};
 pub use create::CreateCommand;
+pub use clipboard_cmd::{handle_clipboard, ClipboardCommand};
+pub use diff_cmd::DiffCommand;
 pub use dump::DumpCommand;
+pub use export::{handle_export, ExportCommand};
+pub use template_cmd::{handle_template, TemplateCommand};
+pub use workflow_cmd::{handle_workflow, WorkflowCommand};
 pub use extract_text::ExtractTextCommand;
 pub use get::GetCommand;
 pub use help::HelpCommand;
+pub use image::{handle_image, ImageCommand};
 pub use import::ImportCommand;
 pub use info::InfoCommand;
 pub use install::InstallCommand;
@@ -218,6 +232,8 @@ pub enum Command {
     Set(SetCommand),
     /// Add a new element (paragraph, table, slide, image)
     Add(AddCommand),
+    /// Render document layout as ASCII art
+    Ascii(AsciiCommand),
     /// Create a new document part and return its relationship ID
     AddPart(AddPartCommand),
     /// Remove an element at a path
@@ -244,14 +260,24 @@ pub enum Command {
     Dump(DumpCommand),
     /// Convert legacy Office formats (.doc, .xls, .ppt) to modern (.docx, .xlsx, .pptx)
     Convert(ConvertCommand),
+    /// Export document to PDF via rendering pipeline
+    Export(ExportCommand),
     /// Run commands from inline JSON, a file, or stdin
     Batch(BatchCommand),
     /// Show info about the tool or document topics
     Info(InfoCommand),
+    /// Manipulate images (extract, compress, resize, convert)
+    Image(ImageCommand),
     /// Merge template placeholders with JSON data
     Merge(MergeCommand),
+    /// Advanced template engine with loops and conditionals
+    Template(TemplateCommand),
     /// Show schema-driven capability reference
     Help(HelpCommand),
+    /// Compare two documents and show differences
+    Diff(DiffCommand),
+    /// Copy/paste document content to/from the system clipboard
+    Clipboard(ClipboardCommand),
     /// Import CSV/TSV data into an Excel sheet
     Import(ImportCommand),
     /// Manage and inspect installed plugins
@@ -285,6 +311,8 @@ pub enum Command {
     _SocketPath(SocketPathCommand),
     /// Start an MCP stdio server for AI agent integration
     Mcp(McpCommand),
+    /// Run, list, or validate YAML-based workflow automation
+    Workflow(WorkflowCommand),
 }
 
 // Re-export handler functions
@@ -293,6 +321,7 @@ pub use add_part::handle_add_part;
 pub use batch::handle_batch;
 pub use convert::handle_convert;
 pub use create::handle_create;
+pub use diff_cmd::handle_diff;
 pub use dump::handle_dump;
 pub use extract_text::handle_extract_text;
 pub use get::handle_get;

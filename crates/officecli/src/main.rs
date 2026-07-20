@@ -4,6 +4,7 @@
     clippy::let_and_return
 )]
 
+mod clipboard;
 mod commands;
 mod mcp;
 #[cfg(unix)]
@@ -131,6 +132,7 @@ fn main() {
         commands::Command::Query(cmd) => commands::handle_query(cmd, format),
         commands::Command::Set(cmd) => commands::handle_set(cmd, format),
         commands::Command::Add(cmd) => commands::handle_add(cmd, format),
+        commands::Command::Ascii(cmd) => commands::handle_ascii(cmd, format),
         commands::Command::AddPart(cmd) => commands::handle_add_part(cmd, format),
         commands::Command::Remove(cmd) => commands::handle_remove(cmd, format),
         commands::Command::Move(cmd) => commands::handle_move(cmd, format),
@@ -144,10 +146,15 @@ fn main() {
         commands::Command::Create(cmd) => commands::handle_create(cmd, format),
         commands::Command::Dump(cmd) => commands::handle_dump(cmd, format),
         commands::Command::Convert(cmd) => commands::handle_convert(cmd, format),
+        commands::Command::Export(cmd) => commands::handle_export(cmd, format),
         commands::Command::Batch(cmd) => commands::handle_batch(cmd, format),
         commands::Command::Info(cmd) => commands::handle_info(cmd, format),
+        commands::Command::Image(cmd) => commands::handle_image(cmd, format),
         commands::Command::Merge(cmd) => commands::handle_merge(cmd, format),
+        commands::Command::Template(cmd) => commands::handle_template(cmd, format),
         commands::Command::Help(cmd) => commands::handle_help(cmd, cli.json),
+        commands::Command::Diff(cmd) => commands::handle_diff(cmd, format),
+        commands::Command::Clipboard(cmd) => commands::handle_clipboard(cmd, format),
         commands::Command::Import(cmd) => commands::handle_import(cmd, format),
         commands::Command::Plugins(cmd) => commands::handle_plugins(cmd, format),
         commands::Command::Install(cmd) => commands::handle_install(cmd, format),
@@ -162,6 +169,7 @@ fn main() {
         commands::Command::Goto(cmd) => commands::handle_goto(cmd, cli.json),
         commands::Command::Mcp(_) => handle_mcp(),
         commands::Command::_SocketPath(cmd) => handle_socket_path(cmd),
+        commands::Command::Workflow(cmd) => commands::handle_workflow(cmd, format),
     };
 
     match result {

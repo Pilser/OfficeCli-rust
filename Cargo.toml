@@ -9,6 +9,12 @@ members = [
     "crates/pdf-handler",
     "crates/handler-common",
     "crates/template-merger",
+    "crates/ascii-render",
+    "crates/document-diff",
+    "crates/workflow-runner",
+    "crates/layout-engine",
+    "crates/render-png",
+    "crates/render-pdf",
 ]
 
 [workspace.package]
@@ -83,3 +89,16 @@ svgtypes = "0.15"
 # Font discovery and parsing
 fontdb = "0.18"
 ttf-parser = "0.24"
+
+# Clipboard support
+arboard = "3"
+
+# YAML parsing (workflow automation)
+serde_yaml = "0.9"
+
+# Text layout and rendering (Phase 2 — embedded rendering)
+tiny-skia = "0.11"
+rustybuzz = "0.14"
+fontdue = "0.9"
+pdf-writer = "0.11"
+resvg = "0.43"

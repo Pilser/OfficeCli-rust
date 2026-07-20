@@ -1,0 +1,10 @@
+[package]
+name = "render-png"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+layout-engine = { path = "../layout-engine" }
+handler-common = { path = "../handler-common" }
+tiny-skia = { workspace = true }
+image = { workspace = true }
