@@ -853,6 +853,32 @@ fn remove_sect_markers(pc: &str) -> String {
     result
 }
 
+fn read_header_footer_fallback(package: &OxmlPackage, is_header: bool) -> String {
+    let prefix = if is_header { "header" } else { "footer" };
+    let div_class = if is_header { "doc-header" } else { "doc-footer" };
+
+    for i in 1..=10 {
+        let part_path = format!("word/{}{}.xml", prefix, i);
+        if let Ok(xml) = package.read_part_xml(&part_path) {
+            if let Ok(doc) = roxmltree::Document::parse(&xml) {
+                let mut text = String::new();
+                for t_node in doc.descendants().filter(|n| n.has_tag_name("t")) {
+                    if let Some(txt) = t_node.text() {
+                        text.push_str(txt);
+                    }
+                }
+                if !text.is_empty() {
+                    let inner = html_escape(&text).replace('\n', "<br>");
+                    return format!("<div class=\"{}\">{}</div>", div_class, inner);
+                }
+            }
+        } else {
+            break;
+        }
+    }
+    String::new()
+}
+
 /// Render the Word document as HTML for browser preview.
 pub fn view_as_html(package: &OxmlPackage) -> Result<String, HandlerError> {
     let doc_xml = package.read_part_xml("word/document.xml").map_err(|e| {
@@ -906,6 +932,10 @@ pub fn view_as_html(package: &OxmlPackage) -> Result<String, HandlerError> {
     let page_layout = get_page_layout_for(first_sect);
 
     let has_math = doc_xml.contains("<m:oMath") || doc_xml.contains("<oMath");
+
+    // Fallback header/footer content (direct read without relationships)
+    let header_fallback = read_header_footer_fallback(package, true);
+    let footer_fallback = read_header_footer_fallback(package, false);
 
     // Header/Footer pre-rendering
     let section_headers = build_section_hf_bundles(
@@ -1127,7 +1157,7 @@ pub fn view_as_html(package: &OxmlPackage) -> Result<String, HandlerError> {
         let num_pages_str = pages.len().to_string();
 
         let header_html = if per_page_header.is_empty() {
-            "".to_string()
+            header_fallback.clone()
         } else {
             per_page_header
                 .replace("<!--PAGE_NUM-->", &page_num_str)
@@ -1135,7 +1165,7 @@ pub fn view_as_html(package: &OxmlPackage) -> Result<String, HandlerError> {
         };
 
         let footer_html = if per_page_footer.is_empty() {
-            "".to_string()
+            footer_fallback.clone()
         } else {
             per_page_footer
                 .replace("<!--PAGE_NUM-->", &page_num_str)
@@ -1451,7 +1481,7 @@ table {{
     margin-bottom: 12px;
 }}
 td, th {{
-    border: none;
+    border: 1px solid #ccc;
     padding: 0 5.4pt;
     vertical-align: top;
     text-align: inherit;
@@ -3129,7 +3159,7 @@ fn render_table(
             c_idx += 1;
             let cell_path = format!("{}/tc[{}]", row_path, c_idx);
             let tc_pr = cell.children().find(|n| n.has_tag_name("tcPr"));
-            let mut span_attrs = String::new();
+            let mut td_attrs = String::new();
 
             if let Some(tp) = tc_pr.as_ref() {
                 if let Some(gs) = tp.children().find(|n| n.has_tag_name("gridSpan")) {
@@ -3137,12 +3167,24 @@ fn render_table(
                         .attribute((W_NS, "val"))
                         .or_else(|| gs.attribute("w:val"))
                     {
-                        span_attrs.push_str(&format!(" colspan=\"{}\"", val));
+                        td_attrs.push_str(&format!(" colspan=\"{}\"", val));
+                    }
+                }
+                if let Some(shd) = tp.children().find(|n| n.has_tag_name("shd")) {
+                    if let Some(fill) = get_node_attr(&shd, "fill") {
+                        if fill != "auto" && !fill.is_empty() {
+                            let bg = if fill.starts_with('#') {
+                                fill.to_string()
+                            } else {
+                                format!("#{}", fill)
+                            };
+                            td_attrs.push_str(&format!(" style=\"background-color:{}\"", bg));
+                        }
                     }
                 }
             }
 
-            output.push_str(&format!("<td data-path=\"{}\"{}>", cell_path, span_attrs));
+            output.push_str(&format!("<td data-path=\"{}\"{}>", cell_path, td_attrs));
 
             let mut cell_child_counts = HashMap::new();
             for child in cell.children() {
