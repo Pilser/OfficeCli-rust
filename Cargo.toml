@@ -72,3 +72,6 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # CSS parsing
 cssparser = "0.37"
+
+# Chart rendering
+plotters = { version = "0.3", default-features = false, features = ["svg_backend", "bitmap_backend", "line_series", "point_series"] }

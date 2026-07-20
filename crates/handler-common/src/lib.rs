@@ -1,3 +1,4 @@
+pub mod chart;
 pub mod image_ops;
 pub mod attribute_filter;
 pub mod color;
@@ -40,4 +41,5 @@ pub use style_unsupported_hints::{
     format as format_style_hint, suggest_property, KNOWN_STYLE_PROPS,
 };
 pub use text_map::{BBoxSpan, OffsetSpan, StyleSpan, TextMapMeta, TextOffsetMap};
+pub use chart::{render_chart_png, render_chart_svg, ChartConfig, ChartType};
 pub use validation_error::ValidationError;
