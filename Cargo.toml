@@ -75,3 +75,7 @@ cssparser = "0.37"
 
 # Chart rendering
 plotters = { version = "0.3", default-features = false, features = ["svg_backend", "bitmap_backend", "line_series", "point_series"] }
+
+# SVG parsing and manipulation
+usvg = { version = "0.44", default-features = false, features = ["text"] }
+svgtypes = "0.15"
