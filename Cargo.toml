@@ -79,3 +79,7 @@ plotters = { version = "0.3", default-features = false, features = ["svg_backend
 # SVG parsing and manipulation
 usvg = { version = "0.44", default-features = false, features = ["text"] }
 svgtypes = "0.15"
+
+# Font discovery and parsing
+fontdb = "0.18"
+ttf-parser = "0.24"

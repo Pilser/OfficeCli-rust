@@ -1,4 +1,5 @@
 pub mod chart;
+pub mod fonts;
 pub mod image_ops;
 pub mod svg_ops;
 pub mod attribute_filter;

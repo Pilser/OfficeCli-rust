@@ -15,3 +15,5 @@ cssparser = { workspace = true }
 plotters = { workspace = true }
 usvg = { workspace = true }
 svgtypes = { workspace = true }
+fontdb = { workspace = true }
+ttf-parser = { workspace = true }
