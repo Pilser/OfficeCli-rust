@@ -453,6 +453,36 @@ pub fn build_run_properties(props: &std::collections::HashMap<String, String>) -
                     )));
                 }
             }
+            "vertAlign" | "verticalAlign" => {
+                if value == "superscript" || value == "subscript" {
+                    children.push(
+                        WordNode::new(WordElementType::Unknown("vertAlign".to_string()))
+                            .with_attribute("val", value.as_str()),
+                    );
+                }
+            }
+            "dstrike" | "doubleStrike" => {
+                if value == "true" || value == "1" {
+                    children.push(WordNode::new(WordElementType::Unknown(
+                        "dstrike".to_string(),
+                    )));
+                }
+            }
+            "position" => {
+                if let Ok(pos) = value.parse::<i32>() {
+                    children.push(
+                        WordNode::new(WordElementType::Unknown("position".to_string()))
+                            .with_attribute("val", pos.to_string().as_str()),
+                    );
+                }
+            }
+            "noProof" => {
+                if value == "true" || value == "1" {
+                    children.push(WordNode::new(WordElementType::Unknown(
+                        "noProof".to_string(),
+                    )));
+                }
+            }
             _ => {}
         }
     }
@@ -589,9 +619,99 @@ pub fn build_paragraph_properties(
                 // Parse border format: "top=single;bottom=single;..." or "all=single" or "none"
                 border_entries = build_pborder_children(value);
             }
+            "borderBottom" => {
+                let mut node = WordNode::new(WordElementType::Unknown("bottom".to_string()));
+                node.attributes = parse_border_side_value(value);
+                border_entries.push(node);
+            }
+            "borderTop" => {
+                let mut node = WordNode::new(WordElementType::Unknown("top".to_string()));
+                node.attributes = parse_border_side_value(value);
+                border_entries.push(node);
+            }
+            "borderLeft" => {
+                let mut node = WordNode::new(WordElementType::Unknown("left".to_string()));
+                node.attributes = parse_border_side_value(value);
+                border_entries.push(node);
+            }
+            "borderRight" => {
+                let mut node = WordNode::new(WordElementType::Unknown("right".to_string()));
+                node.attributes = parse_border_side_value(value);
+                border_entries.push(node);
+            }
+            "borderAround" => {
+                let attrs = parse_border_side_value(value);
+                for side in ["top", "bottom", "left", "right"] {
+                    let mut node = WordNode::new(WordElementType::Unknown(side.to_string()));
+                    node.attributes = attrs.clone();
+                    border_entries.push(node);
+                }
+            }
             "shading" | "shd" => {
                 has_shading = true;
                 shading_val = value.as_str();
+            }
+            "tabs" => {
+                let mut tabs_node = WordNode::new(WordElementType::Unknown("tabs".to_string()));
+                for tab_spec in value.split('|') {
+                    let tab_spec = tab_spec.trim();
+                    if tab_spec.is_empty() {
+                        continue;
+                    }
+                    let mut pos_val = "1440";
+                    let mut align_val = "left";
+                    let mut leader_val = "none";
+                    for pair in tab_spec.split(';') {
+                        if let Some(eq) = pair.find('=') {
+                            let k = pair[..eq].trim();
+                            let v = pair[eq + 1..].trim();
+                            match k {
+                                "pos" | "position" => pos_val = v,
+                                "align" | "alignment" => align_val = v,
+                                "leader" => leader_val = v,
+                                _ => {}
+                            }
+                        }
+                    }
+                    tabs_node.children.push(
+                        WordNode::new(WordElementType::Unknown("tab".to_string()))
+                            .with_attribute("val", align_val)
+                            .with_attribute("pos", pos_val)
+                            .with_attribute("leader", leader_val),
+                    );
+                }
+                if !tabs_node.children.is_empty() {
+                    children.push(tabs_node);
+                }
+            }
+            "textAlignment" | "vertAlign" => {
+                if matches!(value.as_str(), "auto" | "top" | "center" | "baseline" | "bottom") {
+                    children.push(
+                        WordNode::new(WordElementType::Unknown("textAlignment".to_string()))
+                            .with_attribute("val", value.as_str()),
+                    );
+                }
+            }
+            "contextualSpacing" => {
+                if value == "true" || value == "1" {
+                    children.push(WordNode::new(WordElementType::Unknown(
+                        "contextualSpacing".to_string(),
+                    )));
+                }
+            }
+            "suppressLineNumbers" => {
+                if value == "true" || value == "1" {
+                    children.push(WordNode::new(WordElementType::Unknown(
+                        "suppressLineNumbers".to_string(),
+                    )));
+                }
+            }
+            "suppressAutoHyphens" => {
+                if value == "true" || value == "1" {
+                    children.push(WordNode::new(WordElementType::Unknown(
+                        "suppressAutoHyphens".to_string(),
+                    )));
+                }
             }
             _ => {}
         }
@@ -658,6 +778,40 @@ pub fn build_paragraph_properties(
 
     ppr.children = children;
     Some(ppr)
+}
+
+/// Parse a border side value string into OOXML attribute map.
+/// Format: "color=1F4E79;size=8;space=1;val=single"
+/// All keys are optional; defaults are applied for missing fields.
+fn parse_border_side_value(value: &str) -> std::collections::HashMap<String, String> {
+    let mut attrs = std::collections::HashMap::new();
+    attrs.insert("val".to_string(), "single".to_string());
+    attrs.insert("sz".to_string(), "4".to_string());
+    attrs.insert("space".to_string(), "1".to_string());
+    attrs.insert("color".to_string(), "000000".to_string());
+
+    for pair in value.split(';') {
+        if let Some(eq) = pair.find('=') {
+            let k = pair[..eq].trim();
+            let v = pair[eq + 1..].trim();
+            match k {
+                "val" => {
+                    attrs.insert("val".to_string(), v.to_string());
+                }
+                "size" => {
+                    attrs.insert("sz".to_string(), v.to_string());
+                }
+                "space" => {
+                    attrs.insert("space".to_string(), v.to_string());
+                }
+                "color" => {
+                    attrs.insert("color".to_string(), v.to_string());
+                }
+                _ => {}
+            }
+        }
+    }
+    attrs
 }
 
 fn build_pborder_children(value: &str) -> Vec<WordNode> {

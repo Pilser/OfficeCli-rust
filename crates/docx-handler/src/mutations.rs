@@ -1,6 +1,7 @@
 use crate::dom_types::{WordDom, WordElementType, WordNode};
 use crate::helpers::{build_paragraph_properties, build_run_properties};
 use crate::navigation::{navigate_to_element, navigate_to_element_mut, parse_path};
+use handler_common::PathSegment;
 use handler_common::{
     self, extract_find_replace_props, replace_in_string, FindReplaceOptions, HandlerError,
     InsertPosition,
@@ -146,10 +147,20 @@ fn set_paragraph_properties(
         "numLevel",
         "listStyle",
         "border",
+        "borderBottom",
+        "borderTop",
+        "borderLeft",
+        "borderRight",
+        "borderAround",
         "shading",
         "shd",
         "pageBreakBefore",
         "widowControl",
+        "tabs",
+        "textAlignment",
+        "contextualSpacing",
+        "suppressLineNumbers",
+        "suppressAutoHyphens",
     ];
 
     // Run-level keys (forwarded to runs)
@@ -426,8 +437,46 @@ fn merge_ppr_into_props(
                 }
             }
             "pBdr" => {
-                // Preserve existing border if not overwritten
-                if !new_props.contains_key("border") {
+                // Preserve existing border sides if not overwritten
+                let mut any_side_preserved = false;
+                for side_child in &child.children {
+                    let side_name = match &side_child.element_type {
+                        WordElementType::Unknown(n) => n.as_str(),
+                        _ => continue,
+                    };
+                    let prop_key = match side_name {
+                        "bottom" => "borderBottom",
+                        "top" => "borderTop",
+                        "left" => "borderLeft",
+                        "right" => "borderRight",
+                        _ => continue,
+                    };
+                    if new_props.contains_key(prop_key)
+                        || new_props.contains_key("border")
+                        || new_props.contains_key("borderAround")
+                    {
+                        continue;
+                    }
+                    let mut parts = Vec::new();
+                    if let Some(v) = side_child.attributes.get("val") {
+                        parts.push(format!("val={}", v));
+                    }
+                    if let Some(sz) = side_child.attributes.get("sz") {
+                        parts.push(format!("size={}", sz));
+                    }
+                    if let Some(space) = side_child.attributes.get("space") {
+                        parts.push(format!("space={}", space));
+                    }
+                    if let Some(color) = side_child.attributes.get("color") {
+                        parts.push(format!("color={}", color));
+                    }
+                    if !parts.is_empty() {
+                        merged.insert(prop_key.to_string(), parts.join(";"));
+                        any_side_preserved = true;
+                    }
+                }
+                // Fallback: preserve as generic "border" if no sides were individually preserved
+                if !any_side_preserved && !new_props.contains_key("border") && !new_props.contains_key("borderAround") {
                     merged.insert("border".to_string(), "preserve".to_string());
                 }
             }
@@ -445,6 +494,33 @@ fn merge_ppr_into_props(
                         .cloned()
                         .unwrap_or("auto".to_string());
                     merged.insert("shd".to_string(), format!("{};{};{}", pat, fill, clr));
+                }
+            }
+            "tabs" => {
+                if !new_props.contains_key("tabs") {
+                    merged.insert("tabs".to_string(), "preserve".to_string());
+                }
+            }
+            "textAlignment" => {
+                if let Some(val) = child.attributes.get("val") {
+                    if !new_props.contains_key("textAlignment") {
+                        merged.insert("textAlignment".to_string(), val.clone());
+                    }
+                }
+            }
+            "contextualSpacing" => {
+                if !new_props.contains_key("contextualSpacing") {
+                    merged.insert("contextualSpacing".to_string(), "true".to_string());
+                }
+            }
+            "suppressLineNumbers" => {
+                if !new_props.contains_key("suppressLineNumbers") {
+                    merged.insert("suppressLineNumbers".to_string(), "true".to_string());
+                }
+            }
+            "suppressAutoHyphens" => {
+                if !new_props.contains_key("suppressAutoHyphens") {
+                    merged.insert("suppressAutoHyphens".to_string(), "true".to_string());
                 }
             }
             _ => {}
@@ -597,6 +673,12 @@ fn set_run_properties(
         "font.underline",
         "font.strike",
         "font.name",
+        "vertAlign",
+        "verticalAlign",
+        "dstrike",
+        "doubleStrike",
+        "position",
+        "noProof",
     ];
     let unsupported: Vec<String> = properties
         .keys()
@@ -735,6 +817,30 @@ fn merge_rpr_into_props(
                     }
                 }
             }
+            "vertAlign" => {
+                if let Some(val) = child.attributes.get("val") {
+                    if !new_props.contains_key("vertAlign") && !new_props.contains_key("verticalAlign") {
+                        merged.insert("vertAlign".to_string(), val.clone());
+                    }
+                }
+            }
+            "dstrike" => {
+                if !new_props.contains_key("dstrike") && !new_props.contains_key("doubleStrike") {
+                    merged.insert("dstrike".to_string(), "true".to_string());
+                }
+            }
+            "position" => {
+                if let Some(val) = child.attributes.get("val") {
+                    if !new_props.contains_key("position") {
+                        merged.insert("position".to_string(), val.clone());
+                    }
+                }
+            }
+            "noProof" => {
+                if !new_props.contains_key("noProof") {
+                    merged.insert("noProof".to_string(), "true".to_string());
+                }
+            }
             _ => {}
         }
     }
@@ -862,6 +968,44 @@ fn set_table_properties(
                 let borders = build_table_borders(value, color);
                 children.push(borders);
             }
+            "cellMargins" | "tblCellMar" => {
+                let mut cell_mar = WordNode::new(WordElementType::Unknown("tblCellMar".to_string()));
+                for pair in value.split(';') {
+                    let pair = pair.trim();
+                    if pair.is_empty() {
+                        continue;
+                    }
+                    if let Some(eq) = pair.find('=') {
+                        let side = pair[..eq].trim();
+                        let val = pair[eq + 1..].trim();
+                        let child = WordNode::new(WordElementType::Unknown(side.to_string()))
+                            .with_attribute("w", val)
+                            .with_attribute("type", "dxa");
+                        cell_mar.children.push(child);
+                    }
+                }
+                if !cell_mar.children.is_empty() {
+                    children.push(cell_mar);
+                }
+            }
+            "widthType" | "tblWidthType" => {
+                // Modify existing tblW to use this type, or create one
+                let existing_w = children.iter_mut().find(|c| {
+                    if let WordElementType::Unknown(n) = &c.element_type {
+                        n == "tblW"
+                    } else {
+                        false
+                    }
+                });
+                if let Some(tbl_w) = existing_w {
+                    tbl_w.attributes.insert("type".to_string(), value.clone());
+                } else {
+                    let tbl_w = WordNode::new(WordElementType::Unknown("tblW".to_string()))
+                        .with_attribute("w", "5000")
+                        .with_attribute("type", value.as_str());
+                    children.push(tbl_w);
+                }
+            }
             _ => {}
         }
     }
@@ -896,6 +1040,10 @@ fn set_table_properties(
         "borderColor",
         "tblBorderColor",
         "bdrColor",
+        "cellMargins",
+        "tblCellMar",
+        "widthType",
+        "tblWidthType",
     ];
     let unsupported: Vec<String> = properties
         .keys()
@@ -1085,9 +1233,21 @@ fn set_cell_properties(
         let mut children = Vec::new();
 
         if let Some(width) = cell_props.get("width") {
+            let (w_val, type_val) = if let Some(semi) = width.find(';') {
+                let w = &width[..semi];
+                let rest = &width[semi + 1..];
+                let t = if let Some(tag) = rest.strip_prefix("type=") {
+                    tag
+                } else {
+                    "dxa"
+                };
+                (w, t)
+            } else {
+                (width.as_str(), "dxa")
+            };
             let tc_w = WordNode::new(WordElementType::Unknown("tcW".to_string()))
-                .with_attribute("w", width.as_str())
-                .with_attribute("type", "dxa");
+                .with_attribute("w", w_val)
+                .with_attribute("type", type_val);
             children.push(tc_w);
         }
 
@@ -1097,6 +1257,11 @@ fn set_cell_properties(
         }
 
         if let Some(val) = cell_props.get("shd") {
+            let shd = build_shd_node(val);
+            children.push(shd);
+        }
+
+        if let Some(val) = cell_props.get("bgColor") {
             let shd = build_shd_node(val);
             children.push(shd);
         }
@@ -1147,6 +1312,36 @@ fn set_cell_properties(
             children.push(td);
         }
 
+        if let Some(val) = cell_props.get("cellMargin").or_else(|| cell_props.get("tcMar")) {
+            let mut tc_mar = WordNode::new(WordElementType::Unknown("tcMar".to_string()));
+            for pair in val.split(';') {
+                let pair = pair.trim();
+                if pair.is_empty() {
+                    continue;
+                }
+                if let Some(eq) = pair.find('=') {
+                    let side = pair[..eq].trim();
+                    let v = pair[eq + 1..].trim();
+                    let side_node = WordNode::new(WordElementType::Unknown(side.to_string()))
+                        .with_attribute("w", v)
+                        .with_attribute("type", "dxa");
+                    tc_mar.children.push(side_node);
+                }
+            }
+            if !tc_mar.children.is_empty() {
+                children.push(tc_mar);
+            }
+        }
+
+        if let Some(val) = cell_props.get("hMerge").or_else(|| cell_props.get("horizontalMerge")) {
+            if val == "restart" || val == "continue" {
+                children.push(
+                    WordNode::new(WordElementType::Unknown("hMerge".to_string()))
+                        .with_attribute("val", val.as_str()),
+                );
+            }
+        }
+
         if !children.is_empty() {
             tc_pr.children = children;
             cell.children.insert(0, tc_pr);
@@ -1155,6 +1350,7 @@ fn set_cell_properties(
 
     let recognized = [
         "text",
+        "bgColor",
         "width",
         "shading",
         "shd",
@@ -1164,6 +1360,10 @@ fn set_cell_properties(
         "gridSpan",
         "noWrap",
         "textDirection",
+        "cellMargin",
+        "tcMar",
+        "hMerge",
+        "horizontalMerge",
     ];
     let unsupported: Vec<String> = properties
         .keys()
@@ -1776,11 +1976,54 @@ fn set_section_properties(
                     .insert("gutter".to_string(), value.clone());
             }
             "columns" => {
-                // Number of columns (integer)
+                // Number of columns (integer), or "colWidth=1440;colWidth=2880;colWidth=1440"
                 let cols = find_or_create_child(sect_pr, "cols");
-                cols.attributes.insert("num".to_string(), value.clone());
-                cols.attributes
-                    .insert("space".to_string(), "720".to_string()); // Default column spacing
+                if value.contains(';') {
+                    // Individual column widths
+                    let num_val = value.split(';').filter(|s| s.contains('=')).count();
+                    cols.attributes.insert("num".to_string(), num_val.to_string());
+                    cols.attributes.insert("space".to_string(), "720".to_string());
+                    // Add individual col elements
+                    for pair in value.split(';') {
+                        let pair = pair.trim();
+                        if let Some(eq) = pair.find('=') {
+                            let k = pair[..eq].trim();
+                            let v = pair[eq + 1..].trim();
+                            if k == "colWidth" {
+                                let col = WordNode::new(WordElementType::Unknown("col".to_string()))
+                                    .with_attribute("w", v);
+                                cols.children.push(col);
+                            }
+                        }
+                    }
+                } else {
+                    cols.attributes.insert("num".to_string(), value.clone());
+                    cols.attributes.insert("space".to_string(), "720".to_string());
+                }
+            }
+            "type" | "sectionType" => {
+                let valid = matches!(value.as_str(), "nextPage" | "continuous" | "oddPage" | "evenPage");
+                if valid {
+                    let tp = WordNode::new(WordElementType::Unknown("type".to_string()))
+                        .with_attribute("val", value.as_str());
+                    sect_pr.children.push(tp);
+                }
+            }
+            "pgNumType" | "pageNumberFormat" => {
+                // Page number format: decimal, upperRoman, lowerRoman, upperLetter, lowerLetter
+                let pg_num = find_or_create_child(sect_pr, "pgNumType");
+                pg_num.attributes.insert("fmt".to_string(), value.clone());
+            }
+            "pgNumStart" | "pageStart" => {
+                let pg_num = find_or_create_child(sect_pr, "pgNumType");
+                pg_num.attributes.insert("start".to_string(), value.clone());
+            }
+            "titlePg" | "differentFirstPage" => {
+                if value == "true" || value == "1" {
+                    sect_pr.children.push(WordNode::new(WordElementType::Unknown(
+                        "titlePg".to_string(),
+                    )));
+                }
             }
             _ => {}
         }
@@ -1798,6 +2041,14 @@ fn set_section_properties(
         "footerDistance",
         "gutter",
         "columns",
+        "type",
+        "sectionType",
+        "pgNumType",
+        "pageNumberFormat",
+        "pgNumStart",
+        "pageStart",
+        "titlePg",
+        "differentFirstPage",
     ];
     let unsupported: Vec<String> = properties
         .keys()
@@ -2325,6 +2576,11 @@ const PARAGRAPH_STYLE_KEYS: &[&str] = &[
     "listStyle",
     "pageBreakBefore",
     "widowControl",
+    "tabs",
+    "textAlignment",
+    "contextualSpacing",
+    "suppressLineNumbers",
+    "suppressAutoHyphens",
 ];
 
 /// Run-style keys — applied inside <w:rPr>.
@@ -2346,8 +2602,9 @@ const RUN_STYLE_KEYS: &[&str] = &[
     "bgColor",
     "highlight",
     "bg",
-    "shading",
-    "shd",
+        "bgColor",
+        "shading",
+        "shd",
     "caps",
     "smallCaps",
     "vanish",
@@ -2355,6 +2612,12 @@ const RUN_STYLE_KEYS: &[&str] = &[
     "spacing",
     "characterSpacing",
     "lang",
+    "vertAlign",
+    "verticalAlign",
+    "dstrike",
+    "doubleStrike",
+    "position",
+    "noProof",
 ];
 
 /// Build the <w:pPr> children XML for the given paragraph properties.
@@ -3015,6 +3278,56 @@ pub fn add_image_part_aware(
     Ok(format!("{}/drawing[{}]", parent, image_idx))
 }
 
+pub fn build_anchored_drawing_xml(
+    rid: &str,
+    id: u32,
+    name: &str,
+    alt: &str,
+    width_emu: i64,
+    height_emu: i64,
+    position: &str,
+    wrap: &str,
+    behind_doc: bool,
+    x: i64,
+    y: i64,
+) -> String {
+    let behind = if behind_doc { "1" } else { "0" };
+
+    let wrap_xml = match wrap {
+        "square" => "<wp:wrapSquare wrapText=\"both\"/>",
+        "tight" => "<wp:wrapTight wrapText=\"both\"/>",
+        "through" => "<wp:wrapThrough wrapText=\"both\"/>",
+        "topAndBottom" => "<wp:wrapTopAndBottom/>",
+        "none" => "<wp:wrapNone/>",
+        _ => "<wp:wrapSquare wrapText=\"both\"/>",
+    };
+
+    let pos_h = if position == "absolute" {
+        format!("<wp:positionH relativeFrom=\"column\"><wp:posOffset>{}</wp:posOffset></wp:positionH>", x)
+    } else {
+        "<wp:positionH relativeFrom=\"column\"><wp:pctPos>0</wp:pctPos></wp:positionH>".to_string()
+    };
+
+    let pos_v = if position == "absolute" {
+        format!("<wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>{}</wp:posOffset></wp:positionV>", y)
+    } else {
+        "<wp:positionV relativeFrom=\"paragraph\"><wp:pctPos>0</wp:pctPos></wp:positionV>".to_string()
+    };
+
+    format!(
+        r#"<w:drawing><wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="251658240" behindDoc="{behind}" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>{pos_h}{pos_v}<wp:extent cx="{w}" cy="{h}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>{wrap_xml}<wp:docPr id="{id}" name="{name}" descr="{alt}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="{id}" name="{name}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="{rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{w}" cy="{h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing>"#,
+        behind = behind,
+        pos_h = pos_h,
+        pos_v = pos_v,
+        w = width_emu,
+        h = height_emu,
+        id = id,
+        name = escape_attr(name),
+        alt = escape_attr(alt),
+        rid = rid,
+    )
+}
+
 /// Add a chart to a Word document. Mirrors `WordHandler.Add.Misc.cs /
 /// WordHandler.Helpers.Chart.cs` from the C# upstream: writes
 /// `word/charts/chartN.xml` (ChartSpace with inline literal data so the
@@ -3366,17 +3679,20 @@ fn insert_drawing_in_paragraph(
     parent: &str,
     drawing_xml: &str,
 ) -> Result<String, HandlerError> {
-    let target = if parent == "/" || parent == "/body" || parent.is_empty() {
+    // Wrap drawing in a run (required by OOXML — <w:drawing> must be inside <w:r>)
+    let wrapped = format!("<w:r>{}</w:r>", drawing_xml);
+
+    if parent == "/" || parent == "/body" || parent.is_empty() {
         // Append to last <w:p>...</w:p>, creating one if none exists.
         if let Some(close_idx) = doc_xml.rfind("</w:p>") {
-            let mut out = String::with_capacity(doc_xml.len() + drawing_xml.len());
+            let mut out = String::with_capacity(doc_xml.len() + wrapped.len());
             out.push_str(&doc_xml[..close_idx]);
-            out.push_str(drawing_xml);
+            out.push_str(&wrapped);
             out.push_str(&doc_xml[close_idx..]);
             return Ok(out);
         }
         // No paragraphs: inject one right before </w:body>.
-        let wrap = format!("<w:p>{}{}</w:p>", drawing_xml, "");
+        let wrap = format!("<w:p>{}{}</w:p>", wrapped, "");
         if let Some(body_end) = doc_xml.find("</w:body>") {
             let mut out = String::with_capacity(doc_xml.len() + wrap.len());
             out.push_str(&doc_xml[..body_end]);
@@ -3387,8 +3703,47 @@ fn insert_drawing_in_paragraph(
         return Err(HandlerError::OperationFailed(
             "could not locate body for image insertion".to_string(),
         ));
+    }
+
+    // Handle paths like /body/p[N] or /body/tbl[N]/row[N]/cell[N]/p[N]
+    let segments = crate::navigation::parse_path(parent).map_err(|_| {
+        HandlerError::InvalidPath(format!("invalid parent path: {}", parent))
+    })?;
+
+    // If the path includes a table cell, find the paragraph within that cell.
+    // Otherwise, find the Nth paragraph globally.
+    let has_cell = segments.iter().any(|s| s.name == "cell" || s.name == "tc");
+
+    let target = if has_cell {
+        // Navigate through table → row → cell using string-based element finding
+        let cell_offset = find_cell_offset_in_xml(doc_xml, &segments).ok_or_else(|| {
+                HandlerError::PathNotFound("could not locate cell element in document".to_string())
+            })?;
+        // cell_offset is the byte offset of the cell's opening <w:tc>.
+        // Find the cell's closing </w:tc> by balancing tags.
+        let cell_close = find_matching_close_tag(doc_xml, cell_offset, "<w:tc", "</w:tc>")
+            .ok_or_else(|| {
+                HandlerError::InvalidPath("could not find cell closing tag".to_string())
+            })?;
+        let cell_content = &doc_xml[cell_offset..cell_close];
+        // Extract paragraph index from the last segment (e.g., p[2] -> 2)
+        let p_idx = segments
+            .last()
+            .and_then(|s| s.index)
+            .ok_or_else(|| {
+                HandlerError::InvalidPath("parent path must end with paragraph index".to_string())
+            })?;
+        // Find the Nth <w:p> within the cell content
+        locate_nth_w_p_in_str(cell_content, p_idx)
+            .map(|rel_offset| cell_offset + rel_offset)
+            .ok_or_else(|| {
+                HandlerError::PathNotFound(format!(
+                    "paragraph index {} not found in cell",
+                    p_idx
+                ))
+            })?
     } else {
-        // Parent is like /body/p[N] — find the Nth <w:p>.
+        // Parent is like /body/p[N] — find the Nth <w:p> globally.
         let p_idx = parse_paragraph_index_from_parent(parent).ok_or_else(|| {
             HandlerError::InvalidPath(format!(
                 "image add expects '/body/p[N]' parent, got '{}'",
@@ -3400,12 +3755,127 @@ fn insert_drawing_in_paragraph(
         })?
     };
 
-    // target points at the position right before the matching </w:p>.
-    let mut out = String::with_capacity(doc_xml.len() + drawing_xml.len());
+    let mut out = String::with_capacity(doc_xml.len() + wrapped.len());
     out.push_str(&doc_xml[..target]);
-    out.push_str(drawing_xml);
+    out.push_str(&wrapped);
     out.push_str(&doc_xml[target..]);
     Ok(out)
+}
+
+/// Find the byte offset of a table cell element (<w:tc>) following path segments
+/// like tbl[N], row[N], cell[N].
+fn find_cell_offset_in_xml(xml: &str, segments: &[PathSegment]) -> Option<usize> {
+    // Collect only navigation-relevant segments (tbl → row → cell)
+    let nav_segs: Vec<&PathSegment> = segments
+        .iter()
+        .filter(|s| {
+            matches!(s.name.as_str(), "tbl" | "table" | "row" | "tr" | "cell" | "tc")
+        })
+        .collect();
+
+    let mut search_from = 0usize;
+
+    for seg in &nav_segs {
+        let tag = match seg.name.as_str() {
+            "tbl" | "table" => "<w:tbl",
+            "row" | "tr" => "<w:tr",
+            "cell" | "tc" => "<w:tc",
+            _ => unreachable!(),
+        };
+        let idx = seg.index.unwrap_or(1);
+        let search_in = &xml[search_from..];
+        let elem_abs = locate_nth_element_offset(search_in, tag, idx)?;
+        search_from += elem_abs;
+
+        if seg.name == "cell" || seg.name == "tc" {
+            return Some(search_from);
+        }
+        // Advance search past this element's opening tag to search INSIDE it
+        // by moving past the `>` of the opening tag.
+        let rest = &xml[search_from..];
+        if let Some(gt) = rest.find('>') {
+            search_from += gt + 1;
+        }
+    }
+    None
+}
+
+/// Locate the Nth occurrence of an opening tag (e.g., "<w:tbl") in XML.
+/// Returns the byte offset of the opening tag relative to `xml`.
+fn locate_nth_element_offset(xml: &str, tag: &str, n: usize) -> Option<usize> {
+    let mut count = 0;
+    let mut i = 0;
+    let bytes = xml.as_bytes();
+    let tag_bytes = tag.as_bytes();
+
+    while i + tag_bytes.len() <= bytes.len() {
+        if &bytes[i..i + tag_bytes.len()] == tag_bytes {
+            let next = bytes.get(i + tag_bytes.len()).copied().unwrap_or(0);
+            if next == b'>' || next == b' ' || next == b'\t' || next == b'\n' || next == b'/' {
+                count += 1;
+                if count == n {
+                    return Some(i);
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Find the matching closing tag for an opening tag at `open_offset`.
+/// Returns the byte offset of the '<' in the closing tag.
+fn find_matching_close_tag(xml: &str, open_offset: usize, open_tag: &str, close_tag: &str) -> Option<usize> {
+    let rest = &xml[open_offset..];
+    let mut depth = 1;
+    let mut i = open_tag.len(); // skip the opening tag itself
+    let bytes = rest.as_bytes();
+    let open_bytes = open_tag.as_bytes();
+    let close_bytes = close_tag.as_bytes();
+
+    while i + close_bytes.len() <= bytes.len() {
+        // Check for opening tag (nested)
+        if i + open_bytes.len() <= bytes.len() && &bytes[i..i + open_bytes.len()] == open_bytes {
+            let next = bytes.get(i + open_bytes.len()).copied().unwrap_or(0);
+            if next == b'>' || next == b' ' || next == b'\t' || next == b'\n' || next == b'/' {
+                depth += 1;
+                i += open_bytes.len();
+                continue;
+            }
+        }
+        // Check for closing tag
+        if &bytes[i..i + close_bytes.len()] == close_bytes {
+            depth -= 1;
+            if depth == 0 {
+                return Some(open_offset + i);
+            }
+            i += close_bytes.len();
+            continue;
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Find the closing `</w:p>` for the Nth `<w:p>` within a given XML string.
+/// Returns the byte offset of `</w:p>` (relative to `xml`).
+fn locate_nth_w_p_in_str(xml: &str, n: usize) -> Option<usize> {
+    let bytes = xml.as_bytes();
+    let mut count = 0;
+    let mut i = 0;
+    while i + 3 < bytes.len() {
+        if bytes[i] == b'<' && bytes[i + 1] == b'w' && bytes[i + 2] == b':' && bytes[i + 3] == b'p' {
+            let next = bytes.get(i + 4).copied().unwrap_or(0);
+            if next == b'>' || next == b' ' || next == b'\t' || next == b'\n' {
+                count += 1;
+                if count == n {
+                    return xml[i..].find("</w:p>").map(|p| i + p);
+                }
+            }
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Parse "/body/p[3]" → Some(3).
