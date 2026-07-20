@@ -60,3 +60,6 @@ uuid = { version = "1", features = ["v4"] }
 
 # Legacy Office format conversion
 office_oxide = { version = "0.1.2" }
+
+# Markdown parsing
+pulldown-cmark = "0.13"

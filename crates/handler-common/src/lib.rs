@@ -1,6 +1,7 @@
 pub mod attribute_filter;
 pub mod color;
 pub mod css;
+pub mod markdown;
 pub mod document_handler;
 pub mod document_issue;
 pub mod document_node;
