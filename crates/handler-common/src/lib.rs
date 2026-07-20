@@ -1,3 +1,4 @@
+pub mod image_ops;
 pub mod attribute_filter;
 pub mod color;
 pub mod css;

@@ -64,5 +64,8 @@ office_oxide = { version = "0.1.2" }
 # Markdown parsing
 pulldown-cmark = "0.13"
 
+# Image processing
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+
 # Date/time handling
 chrono = { version = "0.4", features = ["serde"] }

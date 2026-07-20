@@ -193,6 +193,7 @@ pub fn date_diff(date1: &str, date2: &str) -> Result<i64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Datelike;
 
     #[test]
     fn test_parse_date_iso() {
