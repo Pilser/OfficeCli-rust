@@ -6,10 +6,13 @@ pub mod handler;
 pub mod helpers;
 pub mod html_preview;
 pub mod import;
+pub mod layout;
 pub mod mutations;
 pub mod navigation;
 pub mod query;
 pub mod raw;
+pub mod sheets;
+pub mod styles;
 pub mod text_offset;
 pub mod view;
 

@@ -1,6 +1,7 @@
 /// Add operations for xlsx documents: add cells, rows, sheets.
 use crate::dom_types::*;
 use crate::helpers;
+use crate::styles;
 use handler_common::{HandlerError, InsertPosition};
 use oxml::OxmlPackage;
 use std::collections::HashMap;
@@ -105,12 +106,32 @@ fn add_cell(
         ("".to_string(), "".to_string())
     };
 
+    // Determine if there are style-related properties
+    let style_keys = ["bold", "italic", "underline", "font", "fontName", "fontSize", "size",
+        "color", "fontColor", "fill", "bgColor", "bg", "backgroundColor",
+        "border", "borderColor", "alignment", "align", "valign", "vertical",
+        "wrap", "wrapText", "indent", "rotation", "textRotation",
+        "numberformat", "numberFormat", "numFmt", "style"];
+    let has_style_props = properties.keys().any(|k| style_keys.contains(&k.as_str()));
+    let mut s_attr = String::new();
+
+    if has_style_props {
+        let mut styles_model = styles::ensure_styles_part(package)?;
+        let xf_id = styles::register_style(&mut styles_model, properties);
+        let styles_xml = styles::serialize_styles_xml(&styles_model);
+        package
+            .write_part_xml("xl/styles.xml", &styles_xml)
+            .map_err(|e| HandlerError::SaveError(e.to_string()))?;
+        s_attr = format!(" s=\"{}\"", xf_id);
+    }
+
     // Build the cell XML
     let cell_xml = if let Some(f) = &formula {
         let mut cell = format!("<c r=\"{}\"", ref_str);
         if !t_attr.is_empty() {
             cell.push_str(&format!(" {}", t_attr));
         }
+        cell.push_str(&s_attr);
         cell.push_str(&format!("><f>{}</f>", f));
         if !v_content.is_empty() {
             cell.push_str(&format!("<v>{}</v>", v_content));
@@ -118,12 +139,13 @@ fn add_cell(
         cell.push_str("</c>");
         cell
     } else if v_content.is_empty() {
-        format!("<c r=\"{}\"/>", ref_str)
+        format!("<c r=\"{}\"{} />", ref_str, s_attr)
     } else {
         let mut cell = format!("<c r=\"{}\"", ref_str);
         if !t_attr.is_empty() {
             cell.push_str(&format!(" {}", t_attr));
         }
+        cell.push_str(&s_attr);
         cell.push_str(&format!("><v>{}</v></c>", v_content));
         cell
     };

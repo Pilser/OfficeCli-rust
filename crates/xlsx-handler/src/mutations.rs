@@ -1,7 +1,10 @@
 /// Mutation operations for xlsx documents: set cell values, formulas, remove, move, copy.
 use crate::dom_types::*;
 use crate::helpers;
+use crate::layout;
 use crate::navigation;
+use crate::sheets;
+use crate::styles;
 use handler_common::{
     self, extract_find_replace_props, replace_in_string, FindReplaceOptions, HandlerError,
 };
@@ -28,7 +31,7 @@ pub fn remove_element(
             )))
         }
         (Some(sheet_name), None) => {
-            remove_sheet(package, &sheet_name)?;
+            sheets::delete_sheet(package, &sheet_name)?;
             Ok(Some(format!("removed sheet {}", sheet_name)))
         }
         (None, None) => Err(HandlerError::InvalidPath(
@@ -71,45 +74,6 @@ fn remove_cell(
         result.push_str(&xml[cell_end..]);
         package
             .write_part_xml(&part_path, &result)
-            .map_err(|e| HandlerError::SaveError(e.to_string()))?;
-    }
-
-    Ok(())
-}
-
-/// Remove a sheet from the workbook.
-fn remove_sheet(package: &mut OxmlPackage, sheet_name: &str) -> Result<(), HandlerError> {
-    let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
-
-    let ws = model
-        .sheets
-        .iter()
-        .find(|s| s.name == sheet_name)
-        .ok_or_else(|| HandlerError::PathNotFound(format!("sheet '{}'", sheet_name)))?;
-
-    // Remove the sheet part from the package
-    if package.has_part(&ws.part_path) {
-        package
-            .write_part(&ws.part_path, Vec::<u8>::new())
-            .map_err(|e| HandlerError::OperationFailed(e.to_string()))?;
-    }
-
-    // Remove the <sheet> entry from workbook.xml
-    let wb_xml = package
-        .read_part_xml("xl/workbook.xml")
-        .map_err(|e| HandlerError::OperationFailed(e.to_string()))?;
-
-    // Find the sheet entry by name
-    let sheet_entry_pattern = format!("name=\"{}\"", sheet_name);
-    if let Some(name_pos) = wb_xml.find(&sheet_entry_pattern) {
-        // Find the <sheet .../> element containing this name
-        let element_start = wb_xml[..name_pos].rfind("<sheet").unwrap_or(0);
-        let element_end = find_element_end(&wb_xml, element_start, "sheet");
-        let mut result = wb_xml[..element_start].to_string();
-        result.push_str(&wb_xml[element_end..]);
-
-        package
-            .write_part_xml("xl/workbook.xml", &result)
             .map_err(|e| HandlerError::SaveError(e.to_string()))?;
     }
 
@@ -301,6 +265,7 @@ pub fn swap_cells(
 }
 
 /// Find the end position of an XML element (handles both self-closing and regular closing tags).
+#[allow(dead_code)]
 fn find_element_end(xml: &str, start: usize, tag: &str) -> usize {
     // Check if self-closing: look for /> before >
     let first_gt = xml[start..]
@@ -366,10 +331,9 @@ pub fn set_cell_properties(
     let mut modified_xml = xml.clone();
     let mut unsupported = Vec::new();
 
-    // Build a style string from all style-related properties so a single
-    // style-id update carries every format key at once (matching C# which
-    // merges font/fill/border/alignment into one cellXfs entry).
-    let mut style_parts: Vec<String> = Vec::new();
+    // Collect style-related properties for styles::register_style
+    let mut style_props: HashMap<String, String> = HashMap::new();
+    let mut has_style_props = false;
 
     for (key, value) in properties {
         match key.as_str() {
@@ -386,62 +350,30 @@ pub fn set_cell_properties(
                 modified_xml = set_cell_formula(&modified_xml, &cell_ref_str, value, &p)?;
             }
             "style" => {
-                style_parts.push(value.clone());
+                style_props.insert(key.clone(), value.clone());
+                has_style_props = true;
             }
-            "numberformat" | "numberFormat" | "numFmt" => {
-                style_parts.push(format!("numberformat={}", value));
-            }
-            "font" | "fontName" | "font.name" => {
-                style_parts.push(format!("font={}", value));
-            }
-            "fontSize" | "size" | "font.size" => {
-                style_parts.push(format!("fontSize={}", value));
-            }
-            "color" | "fontColor" | "font.color" => {
-                style_parts.push(format!("fontColor={}", value));
-            }
-            "bold" | "b" | "font.bold" => {
-                if value == "true" || value == "1" {
-                    style_parts.push("bold=true".to_string());
-                }
-            }
-            "italic" | "i" | "font.italic" => {
-                if value == "true" || value == "1" {
-                    style_parts.push("italic=true".to_string());
-                }
-            }
-            "underline" | "u" | "font.underline" => {
-                style_parts.push(format!("underline={}", value));
-            }
-            "fill" | "bgColor" | "bg" | "backgroundColor" => {
-                style_parts.push(format!("fill={}", value));
-            }
-            "fontColor2" | "color2" => {
-                style_parts.push(format!("fontColor={}", value));
-            }
-            "border" | "borderColor" => {
-                style_parts.push(format!("border={}", value));
-            }
-            "alignment" | "align" => {
-                style_parts.push(format!("alignment={}", value));
-            }
-            "valign" | "verticalAlignment" => {
-                style_parts.push(format!("valign={}", value));
-            }
-            "wrap" | "wrapText" => {
-                if value == "true" || value == "1" {
-                    style_parts.push("wrap=true".to_string());
-                }
-            }
-            "indent" => {
-                style_parts.push(format!("indent={}", value));
-            }
-            "rotation" | "textRotation" => {
-                style_parts.push(format!("rotation={}", value));
+            "numberformat" | "numberFormat" | "numFmt"
+            | "font" | "fontName" | "font.name"
+            | "fontSize" | "size" | "font.size"
+            | "color" | "fontColor" | "font.color"
+            | "bold" | "b" | "font.bold"
+            | "italic" | "i" | "font.italic"
+            | "underline" | "u" | "font.underline"
+            | "fill" | "bgColor" | "bg" | "backgroundColor"
+            | "fontColor2" | "color2"
+            | "border" | "borderColor"
+            | "alignment" | "align"
+            | "valign" | "verticalAlignment"
+            | "wrap" | "wrapText"
+            | "indent"
+            | "rotation" | "textRotation" => {
+                style_props.insert(key.clone(), value.clone());
+                has_style_props = true;
             }
             "type" => {
-                // Cell type: n (number), s (string), b (boolean), str (formula string)
-                style_parts.push(format!("cellType={}", value));
+                style_props.insert(key.clone(), value.clone());
+                has_style_props = true;
             }
             _ => {
                 unsupported.push(key.clone());
@@ -449,16 +381,134 @@ pub fn set_cell_properties(
         }
     }
 
-    // Apply combined style if any style-related keys were collected
-    if !style_parts.is_empty() {
-        let combined = style_parts.join(";");
-        modified_xml = set_cell_style(&modified_xml, &cell_ref_str, &combined, &p)?;
+    // Register style and update cell if style properties were provided
+    if has_style_props {
+        let mut styles_model = styles::ensure_styles_part(package)?;
+        let xf_id = styles::register_style(&mut styles_model, &style_props);
+        let styles_xml = styles::serialize_styles_xml(&styles_model);
+        package
+            .write_part_xml("xl/styles.xml", &styles_xml)
+            .map_err(|e| HandlerError::SaveError(e.to_string()))?;
+        modified_xml = set_cell_style(&modified_xml, &cell_ref_str, &xf_id.to_string(), &p)?;
     }
 
     // Write back the modified XML
     package
         .write_part_xml(&part_path, &modified_xml)
         .map_err(|e| HandlerError::SaveError(e.to_string()))?;
+
+    Ok(unsupported)
+}
+
+/// Set sheet-level properties (column widths, row heights, freeze panes, etc.).
+pub fn set_sheet_properties(
+    package: &mut OxmlPackage,
+    path: &str,
+    properties: &HashMap<String, String>,
+) -> Result<Vec<String>, HandlerError> {
+    let pc = navigation::parse_path(path)?;
+    let sheet_name = pc.sheet_name.ok_or_else(|| {
+        HandlerError::InvalidPath("set requires a sheet name in the path".to_string())
+    })?;
+
+    let model = helpers::build_workbook_model(package).map_err(HandlerError::OperationFailed)?;
+    let ws = model
+        .sheets
+        .iter()
+        .find(|s| s.name == sheet_name)
+        .ok_or_else(|| HandlerError::PathNotFound(format!("sheet '{}'", sheet_name)))?;
+    let part_path = ws.part_path.clone();
+
+    let sheet_xml = package
+        .read_part_xml(&part_path)
+        .map_err(|e| HandlerError::OperationFailed(e.to_string()))?;
+
+    let mut modified_sheet = sheet_xml.clone();
+    let mut unsupported = Vec::new();
+
+    for (key, value) in properties {
+        match key.as_str() {
+            "columnWidth" | "colWidth" => {
+                if let Ok(w) = value.parse::<f64>() {
+                    let col = pc.cell_ref.as_ref()
+                        .and_then(|c| Some(c.col as u32))
+                        .unwrap_or(1);
+                    modified_sheet = layout::set_column_width(&modified_sheet, col, w);
+                }
+            }
+            "rowHeight" => {
+                if let Ok(h) = value.parse::<f64>() {
+                    let row = pc.cell_ref.as_ref()
+                        .and_then(|c| Some(c.row as u32))
+                        .unwrap_or(1);
+                    modified_sheet = layout::set_row_height(&modified_sheet, row, h);
+                }
+            }
+            "freeze" | "freezePanes" => {
+                modified_sheet = layout::freeze_panes(&modified_sheet, value);
+            }
+            "autoFilter" => {
+                modified_sheet = layout::set_auto_filter(&modified_sheet, value);
+            }
+            "rename" => {
+                let wb_xml = package.read_part_xml("xl/workbook.xml")
+                    .map_err(|e| HandlerError::OperationFailed(e.to_string()))?;
+                let new_wb = sheets::rename_sheet(&wb_xml, &sheet_name, value)
+                    .map_err(HandlerError::OperationFailed)?;
+                package.write_part_xml("xl/workbook.xml", &new_wb)
+                    .map_err(|e| HandlerError::SaveError(e.to_string()))?;
+            }
+            "hideSheet" => {
+                let wb_xml = package.read_part_xml("xl/workbook.xml")
+                    .map_err(|e| HandlerError::OperationFailed(e.to_string()))?;
+                let hidden = value == "true" || value == "1";
+                let new_wb = sheets::set_sheet_visibility(&wb_xml, &sheet_name, hidden)
+                    .map_err(HandlerError::OperationFailed)?;
+                package.write_part_xml("xl/workbook.xml", &new_wb)
+                    .map_err(|e| HandlerError::SaveError(e.to_string()))?;
+            }
+            "tabColor" => {
+                let wb_xml = package.read_part_xml("xl/workbook.xml")
+                    .map_err(|e| HandlerError::OperationFailed(e.to_string()))?;
+                let new_wb = sheets::set_tab_color(&wb_xml, &sheet_name, value)
+                    .map_err(HandlerError::OperationFailed)?;
+                package.write_part_xml("xl/workbook.xml", &new_wb)
+                    .map_err(|e| HandlerError::SaveError(e.to_string()))?;
+            }
+            "insertRow" => {
+                if let Ok(r) = value.parse::<u32>() {
+                    modified_sheet = sheets::insert_row(&modified_sheet, r)
+                        .map_err(HandlerError::OperationFailed)?;
+                }
+            }
+            "deleteRow" => {
+                if let Ok(r) = value.parse::<u32>() {
+                    modified_sheet = sheets::delete_row(&modified_sheet, r)
+                        .map_err(HandlerError::OperationFailed)?;
+                }
+            }
+            "insertColumn" => {
+                if let Ok(c) = value.parse::<u32>() {
+                    modified_sheet = sheets::insert_column(&modified_sheet, c)
+                        .map_err(HandlerError::OperationFailed)?;
+                }
+            }
+            "deleteColumn" => {
+                if let Ok(c) = value.parse::<u32>() {
+                    modified_sheet = sheets::delete_column(&modified_sheet, c)
+                        .map_err(HandlerError::OperationFailed)?;
+                }
+            }
+            _ => {
+                unsupported.push(key.clone());
+            }
+        }
+    }
+
+    if modified_sheet != sheet_xml {
+        package.write_part_xml(&part_path, &modified_sheet)
+            .map_err(|e| HandlerError::SaveError(e.to_string()))?;
+    }
 
     Ok(unsupported)
 }
@@ -707,30 +757,13 @@ fn extract_existing_value(cell_xml: &str, p: &str) -> String {
 
 /// Modify the s= attribute in a cell element's XML.
 fn modify_style_in_cell(cell_xml: &str, new_style: &str) -> String {
-    // If the style is just a number, treat it as a style index (legacy behavior).
-    // Otherwise (contains '=' or ';'), treat as a property-style key-value spec
-    // and synthesize a stable style key for now.
-    let resolved_style = if new_style.chars().all(|c| c.is_ascii_digit()) || new_style.is_empty() {
-        new_style.to_string()
-    } else {
-        // Style properties string — for now, use a hash placeholder.
-        // A future PR will register the style in styles.xml and return its id.
-        let hash = new_style
-            .bytes()
-            .fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
-        // We can't actually register here without access to styles.xml,
-        // so we emit a comment marker that downstream raw-set can interpret.
-        // For now, return the parsed numeric portion if any.
-        extract_style_id_from_spec(new_style).unwrap_or_else(|| (hash % 100).to_string())
-    };
-
     let s_pattern = "s=\"";
     if let Some(s_start) = cell_xml.find(s_pattern) {
         let val_start = s_start + s_pattern.len();
         if let Some(val_end) = cell_xml[val_start..].find('"') {
             let full_val_end = val_start + val_end;
             let mut result = cell_xml[..s_start].to_string();
-            result.push_str(&format!("s=\"{}\"", resolved_style));
+            result.push_str(&format!("s=\"{}\"", new_style));
             result.push_str(&cell_xml[full_val_end + 1..]);
             return result;
         }
@@ -741,64 +774,9 @@ fn modify_style_in_cell(cell_xml: &str, new_style: &str) -> String {
         .or_else(|| cell_xml.find('>'))
         .unwrap_or(cell_xml.len());
     let mut result = cell_xml[..insert_pos].to_string();
-    result.push_str(&format!(" s=\"{}\"", resolved_style));
+    result.push_str(&format!(" s=\"{}\"", new_style));
     result.push_str(&cell_xml[insert_pos..]);
     result
-}
-
-/// Parse a style spec string ("bold=true;fontColor=FF0000;...") and return
-/// a deterministic style index. This is a simplified mapping that converts
-/// well-known property combinations into numeric style IDs.
-/// Full implementation would register styles in xl/styles.xml.
-fn extract_style_id_from_spec(spec: &str) -> Option<String> {
-    // Map common style specs to predefined style indices.
-    // In a full implementation this would parse styles.xml and add new entries.
-    let parts: Vec<&str> = spec.split(';').collect();
-
-    let mut has_bold = false;
-    let mut has_italic = false;
-    let mut has_fill = false;
-    let mut has_color = false;
-    let mut has_border = false;
-
-    for part in &parts {
-        let lower = part.to_lowercase();
-        if lower.starts_with("bold=true") {
-            has_bold = true;
-        } else if lower.starts_with("italic=true") {
-            has_italic = true;
-        } else if lower.starts_with("fill=") {
-            has_fill = true;
-        } else if lower.starts_with("fontcolor=") || lower.starts_with("color=") {
-            has_color = true;
-        } else if lower.starts_with("border=") {
-            has_border = true;
-        }
-    }
-
-    // Simple deterministic mapping
-    let mut id = 0;
-    if has_bold {
-        id += 1;
-    }
-    if has_italic {
-        id += 2;
-    }
-    if has_fill {
-        id += 4;
-    }
-    if has_color {
-        id += 8;
-    }
-    if has_border {
-        id += 16;
-    }
-
-    if id == 0 {
-        None
-    } else {
-        Some(id.to_string())
-    }
 }
 
 /// Insert a new <c> element into the <sheetData> section.

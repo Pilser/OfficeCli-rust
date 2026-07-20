@@ -5,10 +5,13 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::add;
+
 use crate::mutations;
 use crate::navigation;
 use crate::query;
 use crate::raw;
+
+use crate::styles;
 use crate::text_offset;
 use crate::view;
 
@@ -178,6 +181,13 @@ impl DocumentHandler for ExcelHandler {
                 HandlerError::InvalidArgument(format!("invalid range paths: {}", e))
             })?;
             mutations::apply_xlsx_range_highlights(&mut pkg, properties, &segments)
+        } else if properties.keys().any(|k| matches!(k.as_str(),
+            "columnWidth" | "colWidth" | "rowHeight"
+            | "freeze" | "freezePanes" | "autoFilter"
+            | "rename" | "hideSheet" | "tabColor"
+            | "insertRow" | "deleteRow" | "insertColumn" | "deleteColumn"
+        )) {
+            mutations::set_sheet_properties(&mut pkg, path, properties)
         } else {
             mutations::set_cell_properties(&mut pkg, path, properties)
         }
@@ -371,6 +381,19 @@ impl DocumentHandler for ExcelHandler {
             ));
         }
         let mut pkg = self.package.borrow_mut();
+        // Serialize styles.xml from the in-memory model before saving
+        {
+            let model = styles::ensure_styles_part(&mut pkg)?;
+            // Only write if there are custom style entries beyond defaults
+            if model.cell_xfs.len() > 1 || model.fonts.len() > 1
+                || model.fills.len() > 2 || model.borders.len() > 1
+                || !model.num_fmts.is_empty()
+            {
+                let xml = styles::serialize_styles_xml(&model);
+                pkg.write_part_xml("xl/styles.xml", &xml)
+                    .map_err(|e| HandlerError::SaveError(e.to_string()))?;
+            }
+        }
         pkg.save()
             .map_err(|e| HandlerError::SaveError(e.to_string()))
     }
