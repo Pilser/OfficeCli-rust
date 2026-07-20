@@ -90,6 +90,92 @@ impl DocumentHandler for PptxHandler {
     }
 
     fn get(&self, path: &str, depth: usize) -> Result<DocumentNode, HandlerError> {
+        let segments = crate::navigation::parse_path(path);
+        // Check if this is a table cell path
+        if segments.len() >= 4
+            && segments[0].name == "slide"
+            && segments[1].name == "shape"
+            && segments[2].name == "tbl"
+        {
+            let slide_idx = segments[0].index.unwrap_or(1);
+            let shape_idx = segments[1].index.unwrap_or(1);
+
+            if segments.len() >= 5 && segments[3].name == "row" && segments[4].name == "cell" {
+                let row_idx = segments[3].index.unwrap_or(1);
+                let col_idx = segments[4].index.unwrap_or(1);
+                let text = crate::table_ops::get_cell_text(
+                    &self.package.borrow(),
+                    slide_idx,
+                    shape_idx,
+                    row_idx,
+                    col_idx,
+                )?;
+                return Ok(DocumentNode::new(path, "cell").with_text(&text));
+            }
+
+            if segments.len() >= 4 && segments[3].name == "row" {
+                let row_idx = segments[3].index.unwrap_or(1);
+                let table = crate::navigation::resolve_table(
+                    &self.package.borrow(),
+                    &format!("ppt/slides/slide{}.xml", slide_idx),
+                    shape_idx,
+                )?
+                .ok_or_else(|| {
+                    HandlerError::PathNotFound(format!("table at path '{}'", path))
+                })?;
+                let row = crate::navigation::get_table_row(&table, row_idx).ok_or_else(|| {
+                    HandlerError::PathNotFound(format!("row[{}] in table", row_idx))
+                })?;
+                let text: Vec<String> = row.cells.iter().map(|c| c.text.clone()).collect();
+                let mut node = DocumentNode::new(path, "row");
+                if depth > 0 {
+                    let mut children = Vec::new();
+                    for (ci, cell) in row.cells.iter().enumerate() {
+                        let cell_path = format!("{}/cell[{}]", path, ci + 1);
+                        children.push(DocumentNode::new(&cell_path, "cell").with_text(&cell.text));
+                    }
+                    node = node.with_children(children);
+                }
+                node.text = Some(text.join("\t"));
+                return Ok(node);
+            }
+
+            // Table-level
+            let table = crate::navigation::resolve_table(
+                &self.package.borrow(),
+                &format!("ppt/slides/slide{}.xml", slide_idx),
+                shape_idx,
+            )?
+            .ok_or_else(|| HandlerError::PathNotFound(format!("table at path '{}'", path)))?;
+            let mut node = DocumentNode::new(path, "table");
+            if depth > 0 {
+                let mut children = Vec::new();
+                for (ri, row) in table.rows.iter().enumerate() {
+                    let row_path = format!("{}/row[{}]", path, ri + 1);
+                    let mut row_node = DocumentNode::new(&row_path, "row");
+                    if depth > 1 {
+                        let mut cell_nodes = Vec::new();
+                        for (ci, cell) in row.cells.iter().enumerate() {
+                            let cell_path = format!("{}/cell[{}]", row_path, ci + 1);
+                            cell_nodes
+                                .push(DocumentNode::new(&cell_path, "cell").with_text(&cell.text));
+                        }
+                        row_node = row_node.with_children(cell_nodes);
+                    }
+                    let row_text: Vec<String> = row.cells.iter().map(|c| c.text.clone()).collect();
+                    row_node.text = Some(row_text.join("\t"));
+                    children.push(row_node);
+                }
+                node = node.with_children(children);
+            }
+            node.text = Some(format!(
+                "table: {} rows x {} cols",
+                table.rows.len(),
+                table.grid_col_count
+            ));
+            return Ok(node);
+        }
+
         crate::view::get_node(&self.package.borrow(), path, depth)
     }
 
@@ -121,7 +207,30 @@ impl DocumentHandler for PptxHandler {
                 &segments,
             )
         } else {
-            crate::view::set_shape_text(&mut self.package.borrow_mut(), path, properties)
+            let segments = crate::navigation::parse_path(path);
+            // Route table cell paths to table set
+            if segments.len() >= 5
+                && segments[0].name == "slide"
+                && segments[1].name == "shape"
+                && segments[2].name == "tbl"
+                && segments[3].name == "row"
+                && segments[4].name == "cell"
+            {
+                let slide_idx = segments[0].index.unwrap_or(1);
+                let shape_idx = segments[1].index.unwrap_or(1);
+                let row_idx = segments[3].index.unwrap_or(1);
+                let col_idx = segments[4].index.unwrap_or(1);
+                crate::mutations::set_table_cell(
+                    &mut self.package.borrow_mut(),
+                    slide_idx,
+                    shape_idx,
+                    row_idx,
+                    col_idx,
+                    properties,
+                )
+            } else {
+                crate::view::set_shape_text(&mut self.package.borrow_mut(), path, properties)
+            }
         }
     }
 

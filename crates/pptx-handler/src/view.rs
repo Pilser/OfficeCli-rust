@@ -52,8 +52,13 @@ pub fn view_as_outline(package: &oxml::OxmlPackage) -> Result<String, HandlerErr
             let shape_type = shape.placeholder_type.as_deref().unwrap_or("shape");
             let preview = if shape.text.chars().count() > 60 {
                 truncate_str(&shape.text, 60)
-            } else if shape.text.is_empty() {
+            } else if shape.text.is_empty() && !shape.is_table {
                 "(no text)".to_string()
+            } else if shape.is_table {
+                let table = shape.table.as_ref();
+                let rows = table.map(|t| t.rows.len()).unwrap_or(0);
+                let cols = table.map(|t| t.grid_col_count).unwrap_or(0);
+                format!("(table: {} rows x {} cols)", rows, cols)
             } else {
                 shape.text.clone()
             };
@@ -97,6 +102,26 @@ pub fn view_as_annotated(
                 label,
                 shape.text
             ));
+            if let Some(table) = &shape.table {
+                for (ri, row) in table.rows.iter().enumerate() {
+                    lines.push(format!(
+                        "  [/slide[{}]/shape[{}]/tbl[1]/row[{}]]",
+                        slide.index,
+                        si + 1,
+                        ri + 1,
+                    ));
+                    for (ci, cell) in row.cells.iter().enumerate() {
+                        lines.push(format!(
+                            "    [/slide[{}]/shape[{}]/tbl[1]/row[{}]/cell[{}]]: \"{}\"",
+                            slide.index,
+                            si + 1,
+                            ri + 1,
+                            ci + 1,
+                            cell.text
+                        ));
+                    }
+                }
+            }
         }
     }
 
@@ -1143,7 +1168,12 @@ fn make_shape_node(
     include_children: bool,
 ) -> DocumentNode {
     let path = format!("/slide[{}]/shape[{}]", slide_idx, shape_idx);
-    let mut node = DocumentNode::new(&path, shape.placeholder_type.as_deref().unwrap_or("shape"));
+    let element_type = if shape.is_table {
+        "table"
+    } else {
+        shape.placeholder_type.as_deref().unwrap_or("shape")
+    };
+    let mut node = DocumentNode::new(&path, element_type);
     node.text = Some(shape.text.clone());
     node.preview = Some(truncate_str(&shape.text, 80));
     node = node.with_format("name", serde_json::Value::String(shape.name.clone()));
@@ -1153,19 +1183,53 @@ fn make_shape_node(
     }
 
     if include_children {
-        let mut para_nodes = Vec::new();
-        for (pi, para) in shape.paragraphs.iter().enumerate() {
-            let para_path = format!(
-                "/slide[{}]/shape[{}]/paragraph[{}]",
-                slide_idx,
-                shape_idx,
-                pi + 1
-            );
-            para_nodes.push(DocumentNode::new(&para_path, "paragraph").with_text(&para.text));
+        if shape.is_table {
+            if let Some(table) = &shape.table {
+                let mut table_nodes = Vec::new();
+                let tbl_path = format!("{}/tbl[1]", path);
+                let mut tbl_node = DocumentNode::new(&tbl_path, "table");
+
+                let mut row_nodes = Vec::new();
+                for (ri, row) in table.rows.iter().enumerate() {
+                    let row_path = format!("{}/row[{}]", tbl_path, ri + 1);
+                    let mut row_node = DocumentNode::new(&row_path, "row");
+                    let mut cell_nodes = Vec::new();
+                    for (ci, cell) in row.cells.iter().enumerate() {
+                        let cell_path = format!("{}/cell[{}]", row_path, ci + 1);
+                        cell_nodes.push(
+                            DocumentNode::new(&cell_path, "cell").with_text(&cell.text),
+                        );
+                    }
+                    let row_text: Vec<String> =
+                        row.cells.iter().map(|c| c.text.clone()).collect();
+                    row_node.text = Some(row_text.join("\t"));
+                    row_node = row_node.with_children(cell_nodes);
+                    row_nodes.push(row_node);
+                }
+                tbl_node = tbl_node.with_children(row_nodes);
+                table_nodes.push(tbl_node);
+                node = node.with_children(table_nodes);
+            }
+        } else {
+            let mut para_nodes = Vec::new();
+            for (pi, para) in shape.paragraphs.iter().enumerate() {
+                let para_path = format!(
+                    "/slide[{}]/shape[{}]/paragraph[{}]",
+                    slide_idx,
+                    shape_idx,
+                    pi + 1
+                );
+                para_nodes
+                    .push(DocumentNode::new(&para_path, "paragraph").with_text(&para.text));
+            }
+            node = node.with_children(para_nodes);
         }
-        node = node.with_children(para_nodes);
     } else {
-        node.child_count = shape.paragraphs.len();
+        node.child_count = if shape.is_table {
+            shape.table.as_ref().map(|t| t.rows.len()).unwrap_or(0)
+        } else {
+            shape.paragraphs.len()
+        };
     }
 
     node

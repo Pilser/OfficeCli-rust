@@ -1,6 +1,7 @@
 use handler_common::HandlerError;
 use handler_common::InsertPosition;
 use oxml::OxmlPackage;
+use std::collections::HashMap;
 
 /// Remove an element from the PPTX presentation.
 pub fn remove_element(
@@ -13,19 +14,107 @@ pub fn remove_element(
         remove_slide(package, slide_num)?;
         Ok(Some(format!("removed slide {}", slide_num)))
     } else if path.contains("/shape") {
-        // Remove a shape from a slide
-        let slide_num = parse_slide_num_from_full_path(path)?;
-        let shape_idx = parse_shape_idx(path)?;
-        remove_shape(package, slide_num, shape_idx)?;
-        Ok(Some(format!(
-            "removed shape {} from slide {}",
-            shape_idx, slide_num
-        )))
+        let segments = crate::navigation::parse_path(path);
+        if segments.len() >= 3 && crate::navigation::is_table_segment(&segments[2].name) {
+            // Table element remove
+            let slide_num = parse_slide_num_from_full_path(path)?;
+            let shape_idx = parse_shape_idx(path)?;
+            remove_table_element(package, slide_num, shape_idx, &segments[2..])
+        } else {
+            // Remove a shape from a slide
+            let slide_num = parse_slide_num_from_full_path(path)?;
+            let shape_idx = parse_shape_idx(path)?;
+            remove_shape(package, slide_num, shape_idx)?;
+            Ok(Some(format!(
+                "removed shape {} from slide {}",
+                shape_idx, slide_num
+            )))
+        }
     } else {
         Err(HandlerError::InvalidPath(format!(
             "PPTX remove path must be /slide[N] or /slide[N]/shape[M]: {}",
             path
         )))
+    }
+}
+
+/// Handle set operations on table paths.
+/// Supports: setting cell text on paths like /slide[1]/shape[2]/tbl[1]/row[1]/cell[1]
+pub fn set_table_cell(
+    package: &mut OxmlPackage,
+    slide_idx: usize,
+    shape_idx: usize,
+    row_idx: usize,
+    col_idx: usize,
+    properties: &HashMap<String, String>,
+) -> Result<Vec<String>, HandlerError> {
+    let mut unsupported = Vec::new();
+
+    if let Some(text) = properties.get("text") {
+        crate::table_ops::set_cell_text(package, slide_idx, shape_idx, row_idx, col_idx, text)?;
+    } else {
+        return Err(HandlerError::InvalidArgument(
+            "table cell set requires 'text' property".to_string(),
+        ));
+    }
+
+    for key in properties.keys() {
+        if key != "text" {
+            unsupported.push(key.clone());
+        }
+    }
+
+    Ok(unsupported)
+}
+
+/// Handle remove operations on table elements (row, column).
+pub fn remove_table_element(
+    package: &mut OxmlPackage,
+    slide_num: usize,
+    shape_idx: usize,
+    path_parts: &[handler_common::PathSegment],
+) -> Result<Option<String>, HandlerError> {
+    if path_parts.is_empty() {
+        return Err(HandlerError::InvalidPath(
+            "table remove requires sub-path".to_string(),
+        ));
+    }
+
+    let seg = &path_parts[0];
+    match seg.name.as_str() {
+        "tbl" => {
+            if path_parts.len() >= 2 {
+                let sub = &path_parts[1];
+                match sub.name.as_str() {
+                    "row" | "tr" => {
+                        let row_idx = sub.index.unwrap_or(1);
+                        crate::table_ops::remove_row(package, slide_num, shape_idx, row_idx)?;
+                        Ok(Some(format!(
+                            "removed row[{}] from shape[{}] on slide {}",
+                            row_idx, shape_idx, slide_num
+                        )))
+                    }
+                    "cell" | "tc" => {
+                        // Removing individual cells from tables is not directly supported
+                        Err(HandlerError::InvalidPath(
+                            "direct cell removal not supported; use row removal instead".to_string(),
+                        ))
+                    }
+                    _ => Err(HandlerError::InvalidPath(format!(
+                        "unexpected table sub-element '{}'",
+                        sub.name
+                    ))),
+                }
+            } else {
+                Err(HandlerError::InvalidPath(
+                    "table path requires deeper element (row)".to_string(),
+                ))
+            }
+        }
+        _ => Err(HandlerError::InvalidPath(format!(
+            "unexpected table element '{}'",
+            seg.name
+        ))),
     }
 }
 

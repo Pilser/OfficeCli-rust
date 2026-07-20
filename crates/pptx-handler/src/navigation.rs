@@ -1,4 +1,4 @@
-use crate::dom_types::{Paragraph, Presentation, Run, Shape, Slide, NS_A, NS_P, NS_R};
+use crate::dom_types::{Paragraph, Presentation, Run, Shape, Slide, TableCell, TableNode, TableRow, NS_A, NS_P, NS_R};
 use handler_common::PathSegment;
 
 /// Parse a pptx path string into segments.
@@ -151,18 +151,117 @@ pub fn parse_slide_shapes(xml: &str) -> Vec<Shape> {
 
     if let Some(tree) = sp_tree {
         for child in tree.children() {
-            // Look for <p:sp> (shape) elements
-            if child.has_tag_name((NS_P, "sp")) || child.has_tag_name("sp") {
-                if let Some(shape) = parse_shape_node(&child) {
-                    shapes.push(shape);
+            let tag_name = child.tag_name().name();
+            match tag_name {
+                "sp" => {
+                    if let Some(shape) = parse_shape_node(&child) {
+                        shapes.push(shape);
+                    }
+                }
+                "graphicFrame" => {
+                    if child.descendants().any(|n| n.has_tag_name("tbl")) {
+                        if let Some(shape) = parse_table_shape_node(&child) {
+                            shapes.push(shape);
+                        }
+                    }
+                }
+                _ => {
+                    // Other element types (pic, grpSp, cxnSp, AlternateContent, etc.)
+                    // Create a minimal shape entry so shape indexing is consistent.
+                    let name = child
+                        .descendants()
+                        .find(|n| n.has_tag_name("cNvPr"))
+                        .and_then(|n| n.attribute("name"))
+                        .unwrap_or(tag_name)
+                        .to_string();
+                    let id = child
+                        .descendants()
+                        .find(|n| n.has_tag_name("cNvPr"))
+                        .and_then(|n| n.attribute("id"))
+                        .unwrap_or("0")
+                        .to_string();
+                    shapes.push(Shape {
+                        name,
+                        id,
+                        placeholder_type: None,
+                        text: String::new(),
+                        paragraphs: Vec::new(),
+                        bbox: None,
+                        is_table: false,
+                        table: None,
+                    });
                 }
             }
-            // Also look for <p:graphicFrame> (tables, charts, etc.)
-            // and <p:pic> (pictures) — skip those for now, focus on text shapes
         }
     }
 
     shapes
+}
+
+/// Parse a single <p:graphicFrame> element into a Shape representing a table.
+fn parse_table_shape_node(gf: &roxmltree::Node) -> Option<Shape> {
+    let nv_gf_pr = gf.descendants().find(|n| n.has_tag_name("nvGraphicFramePr"))?;
+    let c_nv_pr = nv_gf_pr.descendants().find(|n| n.has_tag_name("cNvPr"))?;
+    let name = c_nv_pr.attribute("name").unwrap_or("Table").to_string();
+    let id = c_nv_pr.attribute("id").unwrap_or("0").to_string();
+
+    let tbl = gf.descendants().find(|n| n.has_tag_name("tbl"))?;
+
+    let tbl_grid = tbl.children().find(|n| n.has_tag_name("tblGrid"));
+    let grid_col_count = tbl_grid
+        .map(|g| g.children().filter(|c| c.has_tag_name("gridCol")).count() as u32)
+        .unwrap_or(0);
+
+    let mut rows = Vec::new();
+    let mut full_text = String::new();
+
+    for (ri, tr) in tbl.children().filter(|n| n.has_tag_name("tr")).enumerate() {
+        let height = tr.attribute("h").and_then(|s| s.parse::<i64>().ok());
+        let mut cells = Vec::new();
+        for (ci, tc) in tr.children().filter(|n| n.has_tag_name("tc")).enumerate() {
+            let mut cell_text = String::new();
+            for t_node in tc.descendants().filter(|n| n.has_tag_name("t")) {
+                if let Some(t) = t_node.text() {
+                    cell_text.push_str(t);
+                }
+            }
+            let col_span = tc
+                .attribute("gridSpan")
+                .and_then(|s| s.parse::<u32>().ok());
+            let row_span = tc.attribute("rowSpan").and_then(|s| s.parse::<u32>().ok());
+
+            if !full_text.is_empty() {
+                full_text.push('\t');
+            }
+            full_text.push_str(&cell_text);
+
+            cells.push(TableCell {
+                text: cell_text,
+                col_span,
+                row_span,
+                col_idx: ci as u32,
+                row_idx: ri as u32,
+            });
+        }
+        rows.push(TableRow { cells, height });
+    }
+
+    let table = Some(TableNode {
+        grid_col_count,
+        name: Some(name.clone()),
+        rows: rows.clone(),
+    });
+
+    Some(Shape {
+        name,
+        id,
+        placeholder_type: Some("table".to_string()),
+        text: full_text,
+        paragraphs: Vec::new(),
+        bbox: None,
+        is_table: true,
+        table,
+    })
 }
 
 /// Parse a single <p:sp> element into a Shape.
@@ -253,6 +352,8 @@ fn parse_shape_node(sp: &roxmltree::Node) -> Option<Shape> {
         text: full_text,
         paragraphs,
         bbox,
+        is_table: false,
+        table: None,
     })
 }
 
@@ -379,4 +480,113 @@ fn detect_morph_transition(slide_xml: &str) -> (bool, usize) {
     }
 
     (true, candidates)
+}
+
+/// Check if a path segment refers to a table element.
+pub fn is_table_segment(name: &str) -> bool {
+    matches!(name, "tbl" | "row" | "cell" | "tr" | "tc")
+}
+
+/// Resolve a table within a shape by parsing the slide XML.
+/// shape_idx is 1-based within the slide's spTree (all elements).
+pub fn resolve_table(
+    package: &oxml::OxmlPackage,
+    slide_part_path: &str,
+    shape_idx: usize,
+) -> Result<Option<TableNode>, handler_common::HandlerError> {
+    let slide_xml = package.read_part_xml(slide_part_path).map_err(|e| {
+        handler_common::HandlerError::OperationFailed(e.to_string())
+    })?;
+
+    let doc = roxmltree::Document::parse(&slide_xml).map_err(|e| {
+        handler_common::HandlerError::OperationFailed(format!("roxmltree parse error: {}", e))
+    })?;
+
+    let sp_tree = doc
+        .descendants()
+        .find(|n| n.has_tag_name((NS_P, "spTree")))
+        .or_else(|| doc.descendants().find(|n| n.has_tag_name("spTree")));
+
+    let tree = match sp_tree {
+        Some(t) => t,
+        None => return Ok(None),
+    };
+
+    let mut shape_count = 0;
+    for child in tree.children() {
+        let tag = child.tag_name().name();
+        if tag == "sp" || tag == "graphicFrame" || tag == "pic" || tag == "grpSp" || tag == "cxnSp" || tag == "AlternateContent" {
+            shape_count += 1;
+            if shape_count == shape_idx {
+                // Look for a table anywhere inside this shape (including inside AlternateContent)
+                if let Some(tbl) = child.descendants().find(|n| n.has_tag_name("tbl")) {
+                    return Ok(Some(parse_table_from_node(&tbl)));
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+/// Parse a `<a:tbl>` roxmltree node into a TableNode.
+fn parse_table_from_node(tbl: &roxmltree::Node) -> TableNode {
+    let tbl_grid = tbl.children().find(|n| n.has_tag_name("tblGrid"));
+    let grid_col_count = tbl_grid
+        .map(|g| g.children().filter(|c| c.has_tag_name("gridCol")).count() as u32)
+        .unwrap_or(0);
+
+    let mut rows = Vec::new();
+    for (ri, tr) in tbl.children().filter(|n| n.has_tag_name("tr")).enumerate() {
+        let height = tr.attribute("h").and_then(|s| s.parse::<i64>().ok());
+        let mut cells = Vec::new();
+        for (ci, tc) in tr.children().filter(|n| n.has_tag_name("tc")).enumerate() {
+            let mut cell_text = String::new();
+            for t_node in tc.descendants().filter(|n| n.has_tag_name("t")) {
+                if let Some(t) = t_node.text() {
+                    cell_text.push_str(t);
+                }
+            }
+            let col_span = tc.attribute("gridSpan").and_then(|s| s.parse::<u32>().ok());
+            let row_span = tc.attribute("rowSpan").and_then(|s| s.parse::<u32>().ok());
+            cells.push(TableCell {
+                text: cell_text,
+                col_span,
+                row_span,
+                col_idx: ci as u32,
+                row_idx: ri as u32,
+            });
+        }
+        rows.push(TableRow { cells, height });
+    }
+
+    let name = tbl
+        .ancestors()
+        .find(|n| n.has_tag_name("graphicFrame"))
+        .and_then(|gf| gf.descendants().find(|n| n.has_tag_name("cNvPr")))
+        .and_then(|n| n.attribute("name"))
+        .map(|s| s.to_string());
+
+    TableNode {
+        rows,
+        grid_col_count,
+        name,
+    }
+}
+
+/// Get a table cell by 1-based row and column indices.
+pub fn get_table_cell<'a>(table: &'a TableNode, row: usize, col: usize) -> Option<&'a TableCell> {
+    if row == 0 || row > table.rows.len() {
+        return None;
+    }
+    let table_row = &table.rows[row - 1];
+    table_row.cells.iter().find(|c| c.col_idx == (col - 1) as u32)
+}
+
+/// Get a table row by 1-based index.
+pub fn get_table_row(table: &TableNode, row: usize) -> Option<&TableRow> {
+    if row == 0 || row > table.rows.len() {
+        return None;
+    }
+    Some(&table.rows[row - 1])
 }

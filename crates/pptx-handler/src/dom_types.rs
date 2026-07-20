@@ -14,6 +14,29 @@ pub struct SlideIdEntry {
     pub r_id: String,
 }
 
+/// A table node in the presentation DOM.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableNode {
+    pub rows: Vec<TableRow>,
+    pub grid_col_count: u32,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableRow {
+    pub cells: Vec<TableCell>,
+    pub height: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableCell {
+    pub text: String,
+    pub col_span: Option<u32>,
+    pub row_span: Option<u32>,
+    pub col_idx: u32,
+    pub row_idx: u32,
+}
+
 /// A parsed shape on a slide.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Shape {
@@ -29,6 +52,10 @@ pub struct Shape {
     pub paragraphs: Vec<Paragraph>,
     /// Bounding box from <a:xfrm> (position/size in EMU, converted to points)
     pub bbox: Option<handler_common::BBoxSpan>,
+    /// Whether this shape is a table (<p:graphicFrame> containing <a:tbl>)
+    pub is_table: bool,
+    /// Table data if this shape is a table
+    pub table: Option<TableNode>,
 }
 
 /// A paragraph within a shape's text body.

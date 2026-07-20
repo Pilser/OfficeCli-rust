@@ -7,6 +7,7 @@ pub mod navigation;
 pub mod query;
 pub mod raw;
 pub mod svg_preview;
+pub mod table_ops;
 pub mod text_offset;
 pub mod view;
 
