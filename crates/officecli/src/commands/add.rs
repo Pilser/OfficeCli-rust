@@ -33,6 +33,10 @@ pub struct AddCommand {
     #[arg(long)]
     pub range_paths: Option<String>,
 
+    /// CSS properties (e.g., "font-weight: bold; color: #FF0000; font-size: 18pt")
+    #[arg(long)]
+    pub css: Option<String>,
+
     /// Emit the refreshed text+offset map after the edit (JSON output only).
     #[arg(long)]
     pub emit_map: bool,
@@ -43,6 +47,14 @@ pub fn handle_add(cmd: AddCommand, format: OutputFormat) -> Result<String, Handl
 
     let position = parse_position(cmd.position.as_deref());
     let mut properties = parse_properties(&cmd.properties);
+
+    // Merge CSS properties into the property map
+    if let Some(css) = &cmd.css {
+        let css_map = handler_common::css::parse_css(css);
+        for (k, v) in css_map {
+            properties.entry(k).or_insert(v);
+        }
+    }
 
     // Merge range_paths into properties (same pattern as set command)
     if let Some(rp) = &cmd.range_paths {
