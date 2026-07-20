@@ -1,35 +1,8 @@
-
-fn parse_hex_digit(c: u8) -> Option<u8> {
-    match c {
-        b'0'..=b'9' => Some(c - b'0'),
-        b'a'..=b'f' => Some(c - b'a' + 10),
-        b'A'..=b'F' => Some(c - b'A' + 10),
-        _ => None,
-    }
-}
-
-fn parse_hex_pair(a: u8, b: u8) -> Option<u8> {
-    Some(parse_hex_digit(a)? * 16 + parse_hex_digit(b)?)
-}
-
 pub fn hex_to_rgb(hex: &str) -> Option<(u8, u8, u8)> {
     let s = hex.strip_prefix('#').unwrap_or(hex);
-    let b = s.as_bytes();
-    match b.len() {
-        6 => {
-            let r = parse_hex_pair(b[0], b[1])?;
-            let g = parse_hex_pair(b[2], b[3])?;
-            let bl = parse_hex_pair(b[4], b[5])?;
-            Some((r, g, bl))
-        }
-        3 => {
-            let r = parse_hex_digit(b[0])? * 17;
-            let g = parse_hex_digit(b[1])? * 17;
-            let bl = parse_hex_digit(b[2])? * 17;
-            Some((r, g, bl))
-        }
-        _ => None,
-    }
+    cssparser::color::parse_hash_color(s.as_bytes())
+        .ok()
+        .map(|(r, g, b, _)| (r, g, b))
 }
 
 pub fn rgb_to_hex(r: u8, g: u8, b: u8) -> String {

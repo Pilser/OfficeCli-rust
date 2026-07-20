@@ -11,3 +11,4 @@ regex = "1"
 pulldown-cmark = { workspace = true }
 chrono = { workspace = true }
 image = { workspace = true }
+cssparser = { workspace = true }

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use cssparser::{Parser, ParserInput, Token};
 
 const NAMED_COLORS: &[(&str, &str)] = &[
     ("red", "FF0000"),
@@ -91,78 +92,116 @@ pub fn parse_css_color(color: &str) -> Option<String> {
     if c.is_empty() {
         return None;
     }
-    if c.starts_with('#') {
-        let hex = &c[1..];
-        if hex.len() == 3 || hex.len() == 6 {
-            if crate::color::hex_to_rgb(hex).is_some() {
-                return Some(hex.to_uppercase());
+
+    if let Some(hex) = c.strip_prefix('#') {
+        return cssparser::color::parse_hash_color(hex.as_bytes())
+            .ok()
+            .map(|(r, g, b, _)| crate::color::rgb_to_hex(r, g, b));
+    }
+
+    let mut input = ParserInput::new(c);
+    let mut parser = Parser::new(&mut input);
+
+    let token = parser.next().ok()?.clone();
+
+    match token {
+        Token::Function(name) => {
+            let name_lower = name.as_ref().to_lowercase();
+            match name_lower.as_str() {
+                "rgb" | "rgba" => parse_rgb_inner(&mut parser),
+                "hsl" | "hsla" => parse_hsl_inner(&mut parser),
+                _ => None,
             }
         }
-        if hex.len() == 8 {
-            let hex6 = &hex[..6];
-            if crate::color::hex_to_rgb(hex6).is_some() {
-                return Some(hex6.to_uppercase());
+        Token::Ident(ident) => {
+            let name = ident.as_ref();
+            if name.eq_ignore_ascii_case("transparent") {
+                return Some("none".to_string());
             }
+            css_named_color(name)
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    cssparser::color::parse_named_color(name)
+                        .ok()
+                        .map(|(r, g, b)| crate::color::rgb_to_hex(r, g, b))
+                })
         }
-        return None;
+        _ => None,
     }
-    if c.starts_with("rgb(") && c.ends_with(')') {
-        return parse_rgb_function(c);
-    }
-    if c.starts_with("rgba(") && c.ends_with(')') {
-        return parse_rgb_function(c);
-    }
-    if c.starts_with("hsl(") && c.ends_with(')') {
-        return parse_hsl_function(c);
-    }
-    if c.starts_with("hsla(") && c.ends_with(')') {
-        return parse_hsl_function(c);
-    }
-    css_named_color(c).map(|s| s.to_string())
 }
 
-fn parse_rgb_function(input: &str) -> Option<String> {
-    let paren = input.find('(')?;
-    let inner = input[paren + 1..input.len() - 1].trim();
-    let parts: Vec<&str> = inner.split(',').collect();
-    if parts.len() < 3 {
-        return None;
-    }
-    let r = parse_rgb_component(parts[0].trim())?;
-    let g = parse_rgb_component(parts[1].trim())?;
-    let b = parse_rgb_component(parts[2].trim())?;
-    Some(crate::color::rgb_to_hex(r, g, b))
+fn parse_rgb_inner<'i>(parser: &mut Parser<'i, '_>) -> Option<String> {
+    parser.parse_nested_block(
+        |p: &mut Parser<'i, '_>| -> Result<String, cssparser::ParseError<'i, ()>> {
+            let r = parse_rgb_value(p).map_err(|e| p.new_error::<()>(e.kind))?;
+            let _ = p.try_parse(|p: &mut Parser<'i, '_>| {
+                p.expect_comma().map_err(|e| p.new_error::<()>(e.kind))
+            });
+            let g = parse_rgb_value(p).map_err(|e| p.new_error::<()>(e.kind))?;
+            let _ = p.try_parse(|p: &mut Parser<'i, '_>| {
+                p.expect_comma().map_err(|e| p.new_error::<()>(e.kind))
+            });
+            let b = parse_rgb_value(p).map_err(|e| p.new_error::<()>(e.kind))?;
+            // consume optional alpha (rgba)
+            let _: Result<(), cssparser::ParseError<'i, ()>> = p.try_parse(|p: &mut Parser<'i, '_>| {
+                p.expect_comma().map_err(|e| p.new_error::<()>(e.kind))?;
+                p.expect_number().map_err(|e| p.new_error::<()>(e.kind))?;
+                Ok(())
+            });
+            Ok(crate::color::rgb_to_hex(r, g, b))
+        },
+    )
+    .ok()
 }
 
-fn parse_rgb_component(s: &str) -> Option<u8> {
-    let s = s.trim();
-    if s.ends_with('%') {
-        let pct = s[..s.len() - 1].parse::<f64>().ok()?;
-        return Some((pct.clamp(0.0, 100.0) / 100.0 * 255.0).round() as u8);
-    }
-    s.parse::<u8>().ok()
-}
-
-fn parse_hsl_function(input: &str) -> Option<String> {
-    let paren = input.find('(')?;
-    let inner = input[paren + 1..input.len() - 1].trim();
-    let parts: Vec<&str> = inner.split(',').collect();
-    if parts.len() < 3 {
-        return None;
-    }
-    let h = parts[0].trim().parse::<f64>().ok()? % 360.0;
-    let s = parse_percentage(parts[1].trim())? / 100.0;
-    let l = parse_percentage(parts[2].trim())? / 100.0;
-    let (r, g, b) = hsl_to_rgb(h / 360.0, s, l);
-    Some(crate::color::rgb_to_hex(r, g, b))
-}
-
-fn parse_percentage(s: &str) -> Option<f64> {
-    let s = s.trim();
-    if s.ends_with('%') {
-        s[..s.len() - 1].parse::<f64>().ok()
+fn parse_rgb_value<'i>(input: &mut Parser<'i, '_>) -> Result<u8, cssparser::BasicParseError<'i>> {
+    if let Ok(pct) = input.try_parse(|p: &mut Parser<'i, '_>| p.expect_percentage()) {
+        Ok((pct.clamp(0.0, 1.0) * 255.0).round() as u8)
+    } else if let Ok(num) = input.try_parse(|p: &mut Parser<'i, '_>| p.expect_number()) {
+        Ok(num.clamp(0.0, 255.0).round() as u8)
     } else {
-        s.parse::<f64>().ok().map(|v| v * 100.0)
+        let i = input.expect_integer()?;
+        Ok(i.clamp(0, 255) as u8)
+    }
+}
+
+fn parse_hsl_inner<'i>(parser: &mut Parser<'i, '_>) -> Option<String> {
+    parser.parse_nested_block(
+        |p: &mut Parser<'i, '_>| -> Result<String, cssparser::ParseError<'i, ()>> {
+            let h = parse_hue_value(p).map_err(|e| p.new_error::<()>(e.kind))?;
+            let _ = p.try_parse(|p: &mut Parser<'i, '_>| {
+                p.expect_comma().map_err(|e| p.new_error::<()>(e.kind))
+            });
+            let s = p.expect_percentage().map_err(|e| p.new_error::<()>(e.kind))?;
+            let _ = p.try_parse(|p: &mut Parser<'i, '_>| {
+                p.expect_comma().map_err(|e| p.new_error::<()>(e.kind))
+            });
+            let l = p.expect_percentage().map_err(|e| p.new_error::<()>(e.kind))?;
+            let (r, g, b) = hsl_to_rgb(h, s as f64, l as f64);
+            Ok(crate::color::rgb_to_hex(r, g, b))
+        },
+    )
+    .ok()
+}
+
+fn parse_hue_value<'i>(input: &mut Parser<'i, '_>) -> Result<f64, cssparser::BasicParseError<'i>> {
+    let token = input.next()?;
+    match token {
+        Token::Number { value, .. } => Ok((*value as f64) % 360.0),
+        Token::Dimension { value, unit, .. } => {
+            let val = *value as f64;
+            Ok(match unit.as_ref().to_lowercase().as_str() {
+                "deg" => val,
+                "grad" => val * 360.0 / 400.0,
+                "rad" => val * 180.0 / std::f64::consts::PI,
+                "turn" => val * 360.0,
+                _ => val,
+            } % 360.0)
+        }
+        _ => {
+            let kind = cssparser::BasicParseErrorKind::UnexpectedToken(token.clone());
+            Err(input.new_basic_error(kind))
+        }
     }
 }
 
@@ -207,23 +246,47 @@ fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (u8, u8, u8) {
 
 pub fn parse_css(css: &str) -> HashMap<String, String> {
     let mut result = HashMap::new();
-    for decl in css.split(';') {
-        let decl = decl.trim();
-        if decl.is_empty() {
-            continue;
+    let mut parser_input = ParserInput::new(css);
+    let mut parser = Parser::new(&mut parser_input);
+
+    loop {
+        parser.skip_whitespace();
+        if parser.is_exhausted() {
+            break;
         }
-        let colon = match decl.find(':') {
-            Some(c) => c,
-            None => continue,
+
+        let name = match parser.try_parse(|p| {
+            p.expect_ident().map(|ident| ident.as_ref().to_string())
+        }) {
+            Ok(name) => name,
+            Err(_) => break,
         };
-        let prop = decl[..colon].trim();
-        let value = decl[colon + 1..].trim();
-        if prop.is_empty() || value.is_empty() {
+
+        if parser.try_parse(|p| p.expect_colon()).is_err() {
+            while let Ok(token) = parser.next_including_whitespace_and_comments() {
+                if matches!(token, Token::Semicolon) {
+                    break;
+                }
+            }
             continue;
         }
-        let normalized = normalize_property(prop);
-        process_property(&normalized, value, &mut result);
+
+        let value = parser
+            .parse_until_before::<_, _, ()>(cssparser::Delimiter::Semicolon, |p| {
+                let start = p.position();
+                while p.next().is_ok() {}
+                Ok(p.slice_from(start).trim().to_string())
+            })
+            .unwrap_or_default();
+
+        if !value.is_empty() {
+            let normalized = normalize_property(&name);
+            process_property(&normalized, &value, &mut result);
+        }
+
+        parser.try_parse(|p| p.expect_semicolon()).ok();
     }
+
     result
 }
 
@@ -505,7 +568,7 @@ mod tests {
     #[test]
     fn test_parse_css_color_hex() {
         assert_eq!(parse_css_color("#FF0000"), Some("FF0000".to_string()));
-        assert_eq!(parse_css_color("#f00"), Some("F00".to_string()));
+        assert_eq!(parse_css_color("#f00"), Some("FF0000".to_string()));
     }
 
     #[test]
