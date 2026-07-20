@@ -1641,18 +1641,6 @@ fn add_paragraph(
     position: InsertPosition,
     properties: &HashMap<String, String>,
 ) -> Result<String, HandlerError> {
-    let segments = parse_path(parent)?;
-    let first_seg = segments.first().ok_or_else(|| {
-        HandlerError::InvalidPath("parent path must start with /body".to_string())
-    })?;
-
-    if first_seg.name != "body" {
-        return Err(HandlerError::InvalidPath(format!(
-            "paragraphs can only be added under /body, got: {}",
-            parent
-        )));
-    }
-
     let para_id = crate::helpers::generate_para_id();
     let mut para = WordNode::new(WordElementType::Paragraph).with_attribute("paraId", &para_id);
 
@@ -1689,47 +1677,43 @@ fn add_paragraph(
         para.children.push(run);
     }
 
-    // Get body and determine insertion index
-    let body_idx = dom
-        .root
-        .children
-        .iter()
-        .position(|c| c.element_type == WordElementType::Body)
-        .ok_or_else(|| HandlerError::OperationFailed("body element not found".to_string()))?;
+    // Count existing paragraphs in parent to determine insertion position
+    let existing_count = {
+        let parent_node = navigate_to_element(dom, parent)?;
+        parent_node
+            .children
+            .iter()
+            .filter(|c| c.element_type == WordElementType::Paragraph)
+            .count()
+    };
 
-    let content_items: Vec<usize> = dom.root.children[body_idx]
+    let parent_node = navigate_to_element_mut(dom, parent)?;
+
+    let para_indices: Vec<usize> = parent_node
         .children
         .iter()
         .enumerate()
-        .filter(|(_, c)| c.element_type.is_body_child())
+        .filter(|(_, c)| c.element_type == WordElementType::Paragraph)
         .map(|(i, _)| i)
         .collect();
 
-    let insert_idx = resolve_insert_index_simple(&position, content_items.len());
+    let insert_idx = resolve_insert_index_simple(&position, para_indices.len());
 
     match insert_idx {
         Some(idx) => {
-            let real_idx = if idx < content_items.len() {
-                content_items[idx]
+            let real_idx = if idx < para_indices.len() {
+                para_indices[idx]
             } else {
-                dom.root.children[body_idx].children.len()
+                parent_node.children.len()
             };
-            dom.root.children[body_idx].children.insert(real_idx, para);
+            parent_node.children.insert(real_idx, para);
         }
         None => {
-            dom.root.children[body_idx].children.push(para);
+            parent_node.children.push(para);
         }
     }
 
-    // Calculate the path of the new paragraph
-    let mut new_para_idx = 0;
-    for child in &dom.root.children[body_idx].children {
-        if child.element_type == WordElementType::Paragraph {
-            new_para_idx += 1;
-        }
-    }
-
-    Ok(format!("/body/p[{}]", new_para_idx))
+    Ok(format!("{}/p[{}]", parent, existing_count + 1))
 }
 
 /// Add a run to a paragraph.
@@ -1798,7 +1782,7 @@ fn add_run(
     Ok(format!("{}/r[{}]", parent, existing_run_count + 1))
 }
 
-/// Add an empty table to the body.
+/// Add an empty table to a paragraph or table cell. Supports nested tables.
 fn add_table(
     dom: &mut WordDom,
     parent: &str,
@@ -1810,10 +1794,19 @@ fn add_table(
         HandlerError::InvalidPath("parent path must start with /body".to_string())
     })?;
 
-    if first_seg.name != "body" {
-        return Err(HandlerError::InvalidPath(
-            "tables can only be added under /body".to_string(),
-        ));
+    // Allow parents: /body, paragraphs, and table cells
+    let parent_node_type = {
+        let p = navigate_to_element(dom, parent)?;
+        p.element_type.clone()
+    };
+    let is_valid_parent = first_seg.name == "body"
+        || parent_node_type == crate::dom_types::WordElementType::Paragraph
+        || parent_node_type == crate::dom_types::WordElementType::TableCell;
+    if !is_valid_parent {
+        return Err(HandlerError::InvalidPath(format!(
+            "tables can only be added under /body, paragraphs, or table cells, got: {}",
+            parent
+        )));
     }
 
     // Parse cols/rows properties (default 1 col x 1 row if not specified)
@@ -1925,44 +1918,56 @@ fn add_table(
         table.children.push(row);
     }
 
-    let body_idx = dom
-        .root
-        .children
-        .iter()
-        .position(|c| c.element_type == WordElementType::Body)
-        .ok_or_else(|| HandlerError::OperationFailed("body element not found".to_string()))?;
+    if first_seg.name == "body" {
+        let body_idx = dom
+            .root
+            .children
+            .iter()
+            .position(|c| c.element_type == WordElementType::Body)
+            .ok_or_else(|| HandlerError::OperationFailed("body element not found".to_string()))?;
 
-    let content_items: Vec<usize> = dom.root.children[body_idx]
-        .children
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| c.element_type.is_body_child())
-        .map(|(i, _)| i)
-        .collect();
+        let content_items: Vec<usize> = dom.root.children[body_idx]
+            .children
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.element_type.is_body_child())
+            .map(|(i, _)| i)
+            .collect();
 
-    let insert_idx = resolve_insert_index_simple(&position, content_items.len());
+        let insert_idx = resolve_insert_index_simple(&position, content_items.len());
 
-    match insert_idx {
-        Some(idx) => {
-            let real_idx = if idx < content_items.len() {
-                content_items[idx]
-            } else {
-                dom.root.children[body_idx].children.len()
-            };
-            dom.root.children[body_idx].children.insert(real_idx, table);
+        match insert_idx {
+            Some(idx) => {
+                let real_idx = if idx < content_items.len() {
+                    content_items[idx]
+                } else {
+                    dom.root.children[body_idx].children.len()
+                };
+                dom.root.children[body_idx].children.insert(real_idx, table);
+            }
+            None => {
+                dom.root.children[body_idx].children.push(table);
+            }
         }
-        None => {
-            dom.root.children[body_idx].children.push(table);
+
+        let mut tbl_idx = 0;
+        for child in &dom.root.children[body_idx].children {
+            if child.element_type == WordElementType::Table {
+                tbl_idx += 1;
+            }
         }
+        Ok(format!("/body/tbl[{}]", tbl_idx))
+    } else {
+        let parent_node = navigate_to_element_mut(dom, parent)?;
+        parent_node.children.push(table);
+
+        let tbl_idx = parent_node
+            .children
+            .iter()
+            .filter(|c| c.element_type == WordElementType::Table)
+            .count();
+        Ok(format!("{}/tbl[{}]", parent, tbl_idx))
     }
-
-    let mut tbl_idx = 0;
-    for child in &dom.root.children[body_idx].children {
-        if child.element_type == WordElementType::Table {
-            tbl_idx += 1;
-        }
-    }
-    Ok(format!("/body/tbl[{}]", tbl_idx))
 }
 
 /// Add a row to a table.
@@ -2046,7 +2051,8 @@ fn add_table_cell(
         para.children.push(run);
     }
 
-    let cell = WordNode::new(WordElementType::TableCell).with_children(vec![para]);
+    let tc_pr = WordNode::new(WordElementType::TableCellProperties);
+    let cell = WordNode::new(WordElementType::TableCell).with_children(vec![tc_pr, para]);
 
     let row = navigate_to_element_mut(dom, parent)?;
 

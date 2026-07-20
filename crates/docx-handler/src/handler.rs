@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::add::add_element;
 use crate::dom_types::{WordDom, WordElementType, WordNode};
+use crate::headers;
 use crate::mutations::{self, move_element, remove_element, set_properties, swap_elements};
 use crate::navigation::{navigate_to_element, navigate_to_element_mut, parse_path};
 use crate::query::query_elements;
@@ -581,6 +582,21 @@ impl DocumentHandler for WordHandler {
                 parent,
                 properties,
             );
+        }
+        // Headers and footers require part-aware work (separate parts + rels + Content Types).
+        if matches!(element_type, "header") {
+            let content_xml = properties.get("text").map(|t| {
+                headers::build_paragraph_xml(t, properties)
+            }).unwrap_or_default();
+            headers::add_header(&mut self.package.borrow_mut(), properties.get("type").map(|s| s.as_str()).unwrap_or("default"), &content_xml)?;
+            return Ok(String::new());
+        }
+        if matches!(element_type, "footer") {
+            let content_xml = properties.get("text").map(|t| {
+                headers::build_paragraph_xml(t, properties)
+            }).unwrap_or_default();
+            headers::add_footer(&mut self.package.borrow_mut(), properties.get("type").map(|s| s.as_str()).unwrap_or("default"), &content_xml)?;
+            return Ok(String::new());
         }
         let mut dom = self.parse_dom()?;
         let new_path = add_element(&mut dom, parent, element_type, position, properties, wrap)?;

@@ -1,6 +1,7 @@
 pub mod add;
 pub mod dom_types;
 pub mod handler;
+pub mod headers;
 pub mod helpers;
 pub mod html_preview;
 pub mod layout;

@@ -298,6 +298,18 @@ impl WordNode {
         }
     }
 
+    /// Recursively count all descendant nodes matching a given element type (excludes self).
+    pub fn count_descendants_by_type(&self, target: &WordElementType) -> usize {
+        let mut count = 0;
+        for child in &self.children {
+            if &child.element_type == target {
+                count += 1;
+            }
+            count += child.count_descendants_by_type(target);
+        }
+        count
+    }
+
     /// Get all runs (w:r) that are direct children.
     pub fn runs(&self) -> Vec<&WordNode> {
         self.children
@@ -567,17 +579,11 @@ impl WordDom {
             }
         }
 
-        // Count inline images
-        let mut image_count = 0;
-        for para in &paragraphs {
-            for run in para.runs() {
-                for run_child in &run.children {
-                    if run_child.element_type == WordElementType::Drawing {
-                        image_count += 1;
-                    }
-                }
-            }
-        }
+        // Count inline images (walk entire body recursively)
+        let image_count = self
+            .body()
+            .map(|b| b.count_descendants_by_type(&WordElementType::Drawing))
+            .unwrap_or(0);
 
         WordStats {
             paragraph_count: paragraphs.len(),
