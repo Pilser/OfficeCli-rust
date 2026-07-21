@@ -1,4 +1,5 @@
 use handler_common::DocumentHandler;
+use image::ImageEncoder;
 use std::path::Path;
 
 /// Extract all images from a document, saving each to dest_dir as PNG.
@@ -197,7 +198,9 @@ pub fn convert_image(input: &str, output: &str, format: &str) -> Result<(), Stri
     if fmt == image::ImageFormat::Jpeg {
         let mut buf = std::io::Cursor::new(Vec::new());
         let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 85);
-        img.write_with_encoder(encoder)
+        let rgb = img.to_rgb8();
+        encoder
+            .write_image(rgb.as_raw(), rgb.width(), rgb.height(), image::ColorType::Rgb8.into())
             .map_err(|e| format!("encode jpeg: {}", e))?;
         std::fs::write(output, buf.into_inner())
             .map_err(|e| format!("write '{}': {}", output, e))

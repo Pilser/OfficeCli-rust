@@ -1,4 +1,4 @@
-use pulldown_cmark::{Event, HeadingLevel, Parser, Tag, TagEnd};
+use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use std::collections::HashMap;
 
 /// An element operation to be applied via `DocumentHandler::add`.
@@ -43,7 +43,10 @@ struct InlineSpan {
 /// Tables are emitted as `"tbl"`, `"tr"`, `"tc"` elements in sequence.
 /// Each `"tc"` element has a `text` property for the cell content.
 pub fn markdown_to_docx(markdown: &str) -> Result<Vec<MdElement>, String> {
-    let parser = Parser::new(markdown);
+    let mut opts = Options::empty();
+    opts.insert(Options::ENABLE_TABLES);
+    opts.insert(Options::ENABLE_STRIKETHROUGH);
+    let parser = Parser::new_ext(markdown, opts);
     let mut out: Vec<MdElement> = Vec::new();
 
     let mut bold = false;

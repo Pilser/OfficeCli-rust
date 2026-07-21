@@ -26,6 +26,4 @@ cargo test -p <crate-name>     # Run unit tests for the specific crate
 2. `cargo test -p <crate-name>` — must pass for the crate being modified
 3. Report back: what was created/changed, whether both commands passed, and any remaining errors
 
-## Test Note
 
-Pre-existing test failures in `handler-common` (chart::tests and markdown::tests) are known and unrelated to Phase 3 work. Ignore them.

@@ -2,6 +2,72 @@ use image::ImageEncoder;
 use plotters::coord::Shift;
 use plotters::prelude::*;
 
+/// Ensure at least one font is registered with plotters' ab_glyph backend.
+/// Without a registered font, plotters panics when rendering text.
+fn ensure_font() {
+    use std::sync::OnceLock;
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
+        // Try known font paths first
+        let candidates = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+            "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+            "/System/Library/Fonts/SFNS.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+        ];
+        for path in &candidates {
+            if let Ok(data) = std::fs::read(path) {
+                let bytes: &'static [u8] = Box::leak(data.into_boxed_slice());
+                if plotters::style::register_font(
+                    "sans-serif",
+                    plotters::style::FontStyle::Normal,
+                    bytes,
+                )
+                .is_ok()
+                {
+                    return;
+                }
+            }
+        }
+        // Fallback: use fontdb to find any system font
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+        let families = [
+            fontdb::Family::SansSerif,
+            fontdb::Family::Serif,
+            fontdb::Family::Monospace,
+        ];
+        for family in &families {
+            let query = fontdb::Query {
+                families: &[*family],
+                ..Default::default()
+            };
+            if let Some(face_id) = db.query(&query) {
+                if let Some(face_info) = db.face(face_id) {
+                    if let fontdb::Source::File(ref path) = &face_info.source {
+                        if let Ok(data) = std::fs::read(path) {
+                            let bytes: &'static [u8] = Box::leak(data.into_boxed_slice());
+                            if plotters::style::register_font(
+                                "sans-serif",
+                                plotters::style::FontStyle::Normal,
+                                bytes,
+                            )
+                            .is_ok()
+                            {
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
 /// Supported chart types
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ChartType {
@@ -75,6 +141,7 @@ fn resolve_colors(config: &ChartConfig) -> Vec<RGBColor> {
 
 /// Render chart to PNG bytes. Returns (png_bytes, width, height).
 pub fn render_chart_png(config: &ChartConfig) -> Result<(Vec<u8>, u32, u32), String> {
+    ensure_font();
     if config.data.is_empty() {
         return Err("cannot render chart with empty data".to_string());
     }
@@ -108,6 +175,7 @@ pub fn render_chart_png(config: &ChartConfig) -> Result<(Vec<u8>, u32, u32), Str
 
 /// Render chart to SVG string.
 pub fn render_chart_svg(config: &ChartConfig) -> Result<String, String> {
+    ensure_font();
     if config.data.is_empty() {
         return Err("cannot render chart with empty data".to_string());
     }

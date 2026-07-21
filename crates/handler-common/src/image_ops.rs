@@ -1,4 +1,4 @@
-use image::DynamicImage;
+use image::{DynamicImage, ImageEncoder};
 use std::io::Cursor;
 
 /// Image processing operations specification
@@ -63,8 +63,10 @@ fn encode_image(
 
     if fmt == image::ImageFormat::Jpeg {
         let q = quality.unwrap_or(85).min(100).max(1);
+        let rgb = img.to_rgb8();
         let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, q);
-        img.write_with_encoder(encoder)
+        encoder
+            .write_image(rgb.as_raw(), rgb.width(), rgb.height(), image::ColorType::Rgb8.into())
             .map_err(|e| format!("failed to encode jpeg: {}", e))?;
     } else {
         img.write_to(&mut cursor, fmt)
@@ -227,9 +229,9 @@ mod tests {
 
     fn make_test_jpeg(w: u32, h: u32) -> Vec<u8> {
         let mut buf = Vec::new();
-        let img = DynamicImage::new_rgba8(w, h);
+        let img = DynamicImage::new_rgba8(w, h).to_rgb8();
         let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 85);
-        img.write_with_encoder(encoder).unwrap();
+        encoder.write_image(img.as_raw(), w, h, image::ColorType::Rgb8.into()).unwrap();
         buf
     }
 
