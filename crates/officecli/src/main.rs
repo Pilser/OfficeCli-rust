@@ -7,6 +7,8 @@
 mod clipboard;
 mod commands;
 mod mcp;
+#[cfg(feature = "ai")]
+mod ai_adapter;
 #[cfg(unix)]
 mod resident;
 #[cfg(not(unix))]
@@ -42,6 +44,8 @@ mod watch;
 
 use clap::Parser;
 use handler_common::{DocumentHandler, HandlerError, OutputFormat};
+use odg_handler::OdgHandler;
+use svg_handler::SvgHandler;
 use std::path::PathBuf;
 
 /// OfficeCLI — CLI tool for Office documents (docx/xlsx/pptx) and PDF
@@ -300,6 +304,15 @@ pub(crate) fn open_handler(
             let handler = pdf_handler::PdfHandler::open(file, editable)?;
             Ok(Box::new(handler))
         }
+        "odg" => {
+            let handler = OdgHandler::open(file, editable)?;
+            Ok(Box::new(handler))
+        }
+        "svg" => {
+            let handler = SvgHandler::open(file, editable)?;
+            Ok(Box::new(handler))
+        }
+        "ai" => open_ai_handler(file, editable),
         other => {
             // Last-resort: any installed format-handler plugin that owns
             // this extension (e.g. .hwpx). See plugins/plugin-protocol.md §2.3.
@@ -313,4 +326,15 @@ pub(crate) fn open_handler(
             )))
         }
     }
+}
+
+#[cfg(feature = "ai")]
+fn open_ai_handler(file: &str, editable: bool) -> Result<Box<dyn DocumentHandler>, HandlerError> {
+    let handler = crate::ai_adapter::AiHandlerAdapter::open(file, editable)?;
+    Ok(Box::new(handler))
+}
+
+#[cfg(not(feature = "ai"))]
+fn open_ai_handler(_file: &str, _editable: bool) -> Result<Box<dyn DocumentHandler>, HandlerError> {
+    Err(HandlerError::UnsupportedMode("ai".to_string()))
 }

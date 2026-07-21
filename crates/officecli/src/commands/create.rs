@@ -1,13 +1,13 @@
 use clap::Args;
-use handler_common::HandlerError;
+use handler_common::{DocumentHandler, HandlerError};
 
-/// Create a blank document (docx, xlsx, pptx, pdf)
+/// Create a blank document (docx, xlsx, pptx, pdf, odg)
 #[derive(Args)]
 pub struct CreateCommand {
     /// File path to create
     pub file: String,
 
-    /// Format: docx, xlsx, pptx
+    /// Format: docx, xlsx, pptx, odg
     #[arg(long)]
     pub format: Option<String>,
 }
@@ -29,6 +29,7 @@ pub fn handle_create(
         "xlsx" => create_blank_xlsx(&cmd.file)?,
         "pptx" => create_blank_pptx(&cmd.file)?,
         "pdf" => create_blank_pdf(&cmd.file)?,
+        "odg" => create_blank_odg(&cmd.file)?,
         other => {
             return Err(HandlerError::UnsupportedMode(format!(
                 "create {} not supported",
@@ -247,4 +248,10 @@ pub(crate) fn create_blank_pdf(path: &str) -> Result<String, HandlerError> {
         .map_err(|e| HandlerError::SaveError(e.to_string()))?;
 
     Ok(format!("Created blank PDF document: {}", path))
+}
+
+pub(crate) fn create_blank_odg(path: &str) -> Result<String, HandlerError> {
+    let handler = odg_handler::OdgHandler::create(path, None)?;
+    handler.save()?;
+    Ok(format!("Created blank ODG drawing: {}", path))
 }

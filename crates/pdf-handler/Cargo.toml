@@ -3,8 +3,13 @@ name = "pdf-handler"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+png = ["resvg", "tiny-skia", "usvg"]
+
 [dependencies]
 handler-common = { path = "../handler-common" }
+pdf_oxide = "0.3"
 lopdf = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
@@ -13,3 +18,6 @@ jpeg-decoder = "0.3"
 flate2 = "1"
 ttf-parser = "0.21"
 subsetter = "0.2"
+resvg = { workspace = true, optional = true }
+tiny-skia = { workspace = true, optional = true }
+usvg = { workspace = true, optional = true }

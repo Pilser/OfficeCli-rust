@@ -13,8 +13,10 @@ members = [
     "crates/document-diff",
     "crates/workflow-runner",
     "crates/layout-engine",
+    "crates/svg-handler",
     "crates/render-png",
     "crates/render-pdf",
+    "crates/odg-handler",
 ]
 
 [workspace.package]
@@ -101,4 +103,4 @@ tiny-skia = "0.11"
 rustybuzz = "0.14"
 fontdue = "0.9"
 pdf-writer = "0.11"
-resvg = "0.43"
+resvg = "0.44"

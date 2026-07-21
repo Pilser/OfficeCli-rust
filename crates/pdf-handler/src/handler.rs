@@ -67,7 +67,14 @@ impl DocumentHandler for PdfHandler {
 
     fn view_as_svg(&self) -> Result<String, HandlerError> {
         let reader = self.reader.borrow();
-        crate::render::PdfRenderer::render_page_to_svg(reader.file_path(), 1)
+        let page_count = reader.page_count();
+        crate::render::PdfRenderer::render_all_pages_to_svg(reader.file_path(), page_count)
+    }
+
+    fn view_as_forms(&self) -> Result<String, HandlerError> {
+        let reader = self.reader.borrow();
+        let viewer = crate::view::PdfViewer::new(PdfReader::open(reader.file_path())?);
+        viewer.view_as_forms()
     }
 
     fn view_as_text_json(&self, opts: ViewOptions) -> Result<serde_json::Value, HandlerError> {
@@ -515,6 +522,57 @@ impl DocumentHandler for PdfHandler {
                 )?;
                 Ok(format!("/page[{}]/text", page_num))
             }
+            "image" => {
+                let parent = _parent.to_string();
+                let page_num = page_num_from_parent(&parent)?;
+                let image_path = properties.get("path").ok_or_else(|| {
+                    HandlerError::InvalidArgument("path property required for image".to_string())
+                })?;
+                let x = properties
+                    .get("x")
+                    .and_then(|s| s.parse::<f32>().ok())
+                    .unwrap_or(0.0);
+                let y = properties
+                    .get("y")
+                    .and_then(|s| s.parse::<f32>().ok())
+                    .unwrap_or(0.0);
+                let w = properties
+                    .get("width")
+                    .and_then(|s| s.parse::<f32>().ok())
+                    .unwrap_or(-1.0);
+                let h = properties
+                    .get("height")
+                    .and_then(|s| s.parse::<f32>().ok())
+                    .unwrap_or(-1.0);
+                let mut reader = self.reader.borrow_mut();
+                crate::modifier::add_image(
+                    reader.document_mut(),
+                    page_num,
+                    image_path,
+                    x,
+                    y,
+                    w,
+                    h,
+                )?;
+                Ok(format!("/page[{}]/image", page_num))
+            }
+            "shape" => {
+                let parent = _parent.to_string();
+                let page_num = page_num_from_parent(&parent)?;
+                let shape_type = properties.get("shape").map(|s| s.as_str()).ok_or_else(|| {
+                    HandlerError::InvalidArgument(
+                        "shape property required (rect, circle, line)".to_string(),
+                    )
+                })?;
+                let mut reader = self.reader.borrow_mut();
+                crate::modifier::add_shape(
+                    reader.document_mut(),
+                    page_num,
+                    shape_type,
+                    properties,
+                )?;
+                Ok(format!("/page[{}]/shape", page_num))
+            }
             other => Err(HandlerError::UnsupportedType(format!(
                 "PDF does not support adding {}",
                 other
@@ -527,6 +585,17 @@ impl DocumentHandler for PdfHandler {
             return Err(HandlerError::SaveError(
                 "PDF opened in read-only mode".to_string(),
             ));
+        }
+
+        // Check if path targets a text block: /page[N]/text[M]
+        let text_path = parse_text_block_path(path);
+        if let Some((page_num, text_index)) = text_path {
+            let mut reader = self.reader.borrow_mut();
+            crate::modifier::remove_text_block(reader.document_mut(), page_num, text_index)?;
+            return Ok(Some(format!(
+                "removed text[{}] from page {}",
+                text_index, page_num
+            )));
         }
 
         let nav = PdfNavigator::new(self.reader.borrow().page_count());
@@ -590,6 +659,60 @@ impl DocumentHandler for PdfHandler {
             crate::modifier::copy_page_from(reader.document_mut(), &source_doc, src_page)?;
         reader.recount_pages();
         Ok(format!("/page[{}]", new_page))
+    }
+
+    fn merge(&self, data: &HashMap<String, String>) -> Result<MergeResult, HandlerError> {
+        if !self.editable {
+            return Err(HandlerError::SaveError(
+                "PDF opened in read-only mode".to_string(),
+            ));
+        }
+
+        let file = data.get("file").ok_or_else(|| {
+            HandlerError::InvalidArgument(
+                "merge requires 'file' property (path to source PDF)".to_string(),
+            )
+        })?;
+
+        let pages = data.get("pages").map(|s| s.as_str()).unwrap_or("all");
+
+        let position = data
+            .get("position")
+            .map(|s| s.as_str())
+            .unwrap_or("append");
+
+        let after_page = if position == "append" {
+            let reader = self.reader.borrow();
+            reader.page_count()
+        } else if position.starts_with("after:") {
+            let anchor = position.trim_start_matches("after:");
+            PdfNavigator::page_number_from_path(anchor).map_err(HandlerError::InvalidPath)?
+        } else if position.starts_with("before:") {
+            let anchor = position.trim_start_matches("before:");
+            let n =
+                PdfNavigator::page_number_from_path(anchor).map_err(HandlerError::InvalidPath)?;
+            n.saturating_sub(1)
+        } else {
+            return Err(HandlerError::InvalidArgument(format!(
+                "invalid position '{}' (use after:/page[N], before:/page[N], or append)",
+                position
+            )));
+        };
+
+        let mut reader = self.reader.borrow_mut();
+        let total_pages = reader.page_count();
+        crate::modifier::merge_pages(
+            reader.document_mut(),
+            file,
+            pages,
+            if position == "append" { total_pages } else { after_page },
+        )?;
+        reader.recount_pages();
+
+        Ok(MergeResult {
+            replaced_count: 0,
+            unresolved_count: 0,
+        })
     }
 
     fn raw(&self, part_path: &str, _opts: RawOptions) -> Result<String, HandlerError> {

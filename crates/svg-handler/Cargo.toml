@@ -1,0 +1,14 @@
+[package]
+name = "svg-handler"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+handler-common = { path = "../handler-common" }
+usvg = { workspace = true }
+svgtypes = { workspace = true }
+quick-xml = { workspace = true, features = ["serialize"] }
+roxmltree = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

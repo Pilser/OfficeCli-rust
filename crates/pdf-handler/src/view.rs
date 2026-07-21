@@ -143,6 +143,32 @@ impl PdfViewer {
         Ok(issues)
     }
 
+    /// Format form fields as a human-readable string.
+    pub fn view_as_forms(&self) -> Result<String, HandlerError> {
+        let fields = crate::modifier::get_form_fields(self.reader.document())?;
+        let mut result = String::new();
+        result.push_str("PDF Form Fields\n");
+        if fields.is_empty() {
+            result.push_str("  (no form fields found)\n");
+            return Ok(result);
+        }
+        for field in &fields {
+            result.push_str(&format!("  {}\n", field.name));
+            result.push_str(&format!("    Type: {}\n", field.field_type));
+            if !field.value.is_empty() {
+                result.push_str(&format!("    Value: {}\n", field.value));
+            }
+            if let Some(page) = field.page {
+                result.push_str(&format!("    Page: {}\n", page));
+            }
+            if let Some(ref rect) = field.rect {
+                result.push_str(&format!("    Rect: {}\n", rect));
+            }
+        }
+        result.push_str(&format!("\nTotal fields: {}\n", fields.len()));
+        Ok(result)
+    }
+
     /// Validate the PDF document structure.
     pub fn validate(&self) -> Result<Vec<ValidationError>, HandlerError> {
         let mut errors = Vec::new();
